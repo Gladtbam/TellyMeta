@@ -1,6 +1,6 @@
 PyYAML~=6.0.1
 dataclasses-json~=0.6.7
-SQLAlchemy~=2.0.29
+SQLAlchemy~=2.0.30
 asyncmy~=0.2.9
 Telethon~=1.35.0
 cryptg~=0.4.0
