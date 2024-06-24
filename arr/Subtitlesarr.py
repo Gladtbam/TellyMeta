@@ -50,7 +50,7 @@ async def subtitle(event):
                             zip_ref.extractall(path='/tmp')
                         os.remove(file_path)
                         await analyse_subtitle(_calss, dbId, subtitle_names, event)
-                        shutil.rmtree('/tmp' + dbId)
+                        shutil.rmtree('/tmp/' + dbId)
                     else:
                         await conv.send_message('请发送一个 zip 文件')
                 else:
