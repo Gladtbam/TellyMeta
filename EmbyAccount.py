@@ -1,13 +1,16 @@
-from Telegram import client
-from LoadConfig import init_config
-from telethon import events, types
-from datetime import datetime, timedelta
-import DataBase
-import EmbyAPI
-import GenCode
+'''
+Emby 帐户管理
+'''
 import re
-import asyncio
 import logging
+from datetime import datetime, timedelta
+import asyncio
+from telethon import events, types
+from telegram import client
+from loadconfig import init_config
+import embyapi
+import gencode
+import database
 
 config = init_config()
 
@@ -16,11 +19,16 @@ signup_message = None
 
 @client.on(events.NewMessage(pattern=fr'^/signup(?:{config.telegram.BotName})?(\s.*)?$'))
 async def signup_method(event):
+    '''
+    设置注册方法
+    管理员可执行设置注册人数（限额注册）或注册时间（限时注册）
+    非管理员执行注册
+    '''
     global signup_message
     _, *args = event.message.text.split(' ')
     current_time = datetime.now().timestamp()
-    user = await DataBase.GetUser(event.sender_id)
-    signup_value = await DataBase.GetRenewValue() * config.other.Ratio
+    user = await database.get_user(event.sender_id)
+    signup_value = await database.get_renew_value() * config.other.Ratio
     try:
         if event.sender_id in config.other.AdminId:
             if len(args) > 0:
@@ -48,11 +56,11 @@ async def signup_method(event):
                 await signup(event, event.sender_id)
             elif user is not None and user.Score >= signup_value:
                 await signup(event, event.sender_id)
-                await DataBase.ChangeScore(event.sender_id, -signup_value)
+                await database.change_score(event.sender_id, -signup_value)
             else:
                 await event.reply(f'注册失败, 积分不足, 当前积分: {user.Score if user is not None else 0}, 注册所需积分: {signup_value}')
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("signup_method: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
@@ -62,6 +70,7 @@ async def signup_method(event):
         # raise events.StopPropagation
 
 async def signup(event, TelegramId):
+    '''注册'''
     message = None
     try:
         user = await event.client.get_entity(TelegramId)
@@ -69,39 +78,41 @@ async def signup(event, TelegramId):
         BlockMedia = ("Japan")
 
         if TelegramName is None:
-            message = await event.reply(f'注册失败, 请先设置 Telegram 用户名')
+            message = await event.reply('注册失败, 请先设置 Telegram 用户名')
             return False
         else:
-            emby = await DataBase.GetEmby(TelegramId)
+            emby = await database.get_emby(TelegramId)
             if emby is None:
-                EmbyId = await EmbyAPI.NewUser(TelegramName)
+                EmbyId = await embyapi.new_user(TelegramName)
                 if EmbyId is not None:
-                    await EmbyAPI.User_Policy(EmbyId, BlockMeida=BlockMedia)
-                    Pw = await EmbyAPI.Password(EmbyId)
-                    _bool = await DataBase.CreateEmby(TelegramId, EmbyId, TelegramName)
+                    await embyapi.user_policy(EmbyId, BlockMeida=BlockMedia)
+                    Pw = await embyapi.post_password(EmbyId)
+                    _bool = await database.create_emby(TelegramId, EmbyId, TelegramName)
                     if _bool:
                         message = await event.reply(f'注册成功, \nEMBY ID: `{EmbyId}`\n用户名: `{TelegramName}`\n初始密码: `{Pw}`\n\n请及时修改密码')
                         return True
                     else:
-                        message = await event.reply(f'注册失败, ⚠️数据库错误，请联系管理员')
+                        message = await event.reply('注册失败, ⚠️数据库错误，请联系管理员')
                         return False
                 else:
-                    message = await event.reply(f'注册失败, 无法创建账户，请联系管理员')
+                    message = await event.reply('注册失败, 无法创建账户，请联系管理员')
                     return False
             else:
-                message = await event.reply(f'用户已存在')
+                message = await event.reply('用户已存在')
                 return False
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("signup: %s", e)
         return False
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation
 
 @client.on(events.NewMessage(pattern=fr'^/code({config.telegram.BotName})?\s+(.*)$'))
-async def codeCheck(event):
+async def code_check(event):
+    '''接收 Telegram 用户的 码'''
     _, *args = event.message.text.split(' ')
     message = None
     try:
@@ -111,51 +122,55 @@ async def codeCheck(event):
             else:
                 message = await event.reply(f'请私聊 {config.telegram.BotName} 机器人')
         else:
-            message = await event.reply(f'请回复 “码”')
-    except Exception as e:
-        logging.error(e)
+            message = await event.reply('请回复 “码”')
+    except ImportError as e:
+        logging.error("code_check: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation
 
 async def code(event, code):
+    '''处理 码'''
     message = None
     try:
-        plaintext = await GenCode.decrypt_code(code)
+        plaintext = await gencode.decrypt_code(code)
         if plaintext is not None:
             if plaintext == 'signup':
                 await signup(event, event.sender_id)
-                await DataBase.DeleteCode(code)
+                await database.delete_code(code)
             elif plaintext == 'renew':
-                emby = await DataBase.GetEmby(event.sender_id)
+                emby = await database.get_emby(event.sender_id)
                 if emby is not None:
                     remain_day = emby.LimitDate.date() - datetime.now().date()
                     if remain_day.days <= 7:
-                        await DataBase.UpdateLimitDate(event.sender_id)
-                        await DataBase.DeleteCode(code)
+                        await database.update_limit_date(event.sender_id)
+                        await database.delete_code(code)
                         if emby.Ban is True:
-                            await EmbyAPI.User_Policy(emby.EmbyId, BlockMeida=("Japan"))
-                        message = await event.reply(f'续期成功')
+                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                        message = await event.reply('续期成功')
                     else:
                         message = await event.reply(f'离到期还有 {remain_day.days} 天\n目前小于 7 天才允许续期')
                 else:
-                    message = await event.reply(f'用户不存在, 请注册')
+                    message = await event.reply('用户不存在, 请注册')
             else:
                 message = await event.reply(f'不存在对应的：{plaintext}, 码无效, 请联系管理员')
         else:
-            message = await event.reply(f'码无效')
-    except Exception as e:
-        logging.error(e)
+            message = await event.reply('码无效')
+    except ImportError as e:
+        logging.error("code: %s", e)
     finally:
         await asyncio.sleep(30)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation
 
 @client.on(events.NewMessage(pattern=fr'^/del({config.telegram.BotName})?$'))
 async def delete(event):
+    '''删除用户指令'''
     messages = None
     try:
         if event.sender_id in config.other.AdminId:
@@ -163,122 +178,131 @@ async def delete(event):
                 message = await event.get_reply_message()
                 if isinstance(message, types.Message) and isinstance(message.from_id, types.PeerUser):
                     user_id = message.from_id.user_id
-                    emby = await DataBase.GetEmby(user_id)
+                    emby = await database.get_emby(user_id)
                     if emby is not None:
-                        _bool_db = await DataBase.DeleteEmby(user_id)
-                        _bool_emby = await EmbyAPI.DeleteEmbyUser(emby.EmbyId)
+                        _bool_db = await database.delete_emby(user_id)
+                        _bool_emby = await embyapi.delete_emby_user(emby.EmbyId)
                         if _bool_db and _bool_emby:
                             messages = await event.reply(f'用户 {emby.EmbyId} 删除成功')
                         else:
                             messages = await event.reply(f'用户 {emby.EmbyId} 删除失败, 原因: db: {_bool_db}, emby: {_bool_emby}')
                     else:
-                        messages = await event.reply(f'用户不存在')
+                        messages = await event.reply('用户不存在')
                 else:
-                    messages = await event.reply(f'请回复一个用户')
+                    messages = await event.reply('请回复一个用户')
             else:
-                messages = await event.reply(f'请回复一个用户')
+                messages = await event.reply('请回复一个用户')
         else:
-            messages = await event.reply(f'非管理员, 权限不足')
-            await DataBase.ChangeWarning(event.sender_id)
-    except Exception as e:
-        logging.error(e)
+            messages = await event.reply('非管理员, 权限不足')
+            await database.change_warning(event.sender_id)
+    except ImportError as e:
+        logging.error("delete: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await messages.delete() if messages is not None else None
+        if messages is not None:
+            await messages.delete()
         raise events.StopPropagation
 
 @client.on(events.CallbackQuery(data='renew'))
 async def renew(event):
+    '''接收 续期 按钮'''
     message = None
     try:
-        emby = await DataBase.GetEmby(event.sender_id)
+        emby = await database.get_emby(event.sender_id)
         if emby is not None:
             remain_day = emby.LimitDate.date() - datetime.now().date()
             if remain_day.days <= 7:
-                user = await DataBase.GetUser(event.sender_id)
-                played_ratio = await EmbyAPI.UserPlaylist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
+                user = await database.get_user(event.sender_id)
+                played_ratio = await embyapi.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
                 if played_ratio is not None:
                     if played_ratio >= 1:
                         renew_value = 0
                     else:
-                        renew_value = int(await DataBase.GetRenewValue()) * (1 - (0.5 * played_ratio))
+                        renew_value = int(await database.get_renew_value()) * (1 - (0.5 * played_ratio))
                     if user is not None and user.Score >= renew_value:
-                        await DataBase.UpdateLimitDate(event.sender_id)
-                        await DataBase.ChangeScore(event.sender_id, -renew_value)
+                        await database.update_limit_date(event.sender_id)
+                        await database.change_score(event.sender_id, -renew_value)
                         if emby.Ban is True:
-                            await EmbyAPI.User_Policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         message = await event.respond(f'续期成功, 扣除积分: {renew_value}')
                     else:
                         message = await event.respond(f'续期失败, 积分不足, 当前积分: {user.Score if user is not None else 0}, 续期所需积分: {renew_value}')
                 else:
-                    message = await event.respond(f'续期失败, 未查询到观看度, 请稍后重试')
+                    message = await event.respond('续期失败, 未查询到观看度, 请稍后重试')
             else:
                 message = await event.respond(f'离到期还有 {remain_day.days} 天\n目前小于 7 天才允许续期')
         else:
-            message = await event.respond(f'用户不存在, 请注册')
-    except Exception as e:
-        logging.error(e)
+            message = await event.respond('用户不存在, 请注册')
+    except ImportError as e:
+        logging.error("renew: %s", e)
     finally:
         await asyncio.sleep(20)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation
 
 @client.on(events.CallbackQuery(data='nfsw'))
 async def nfsw(event):
+    '''接收 NSFW 按钮'''
     message = None
     try:
-        emby = await DataBase.GetEmby(event.sender_id)
+        emby = await database.get_emby(event.sender_id)
         if emby is not None:
-            emby_info = await EmbyAPI.GetUserInfo(emby.EmbyId)
+            emby_info = await embyapi.get_user_info(emby.EmbyId)
             if len(emby_info['Policy']['BlockedMediaFolders']) > 0:
-                await EmbyAPI.User_Policy(emby.EmbyId, BlockMeida=())
-                message = await event.respond(f'NSFW On')
+                await embyapi.user_policy(emby.EmbyId, BlockMeida=())
+                message = await event.respond('NSFW On')
             else:
-                await EmbyAPI.User_Policy(emby.EmbyId, BlockMeida=("Japan"))
-                message = await event.respond(f'NSFW Off')
+                await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                message = await event.respond('NSFW Off')
         else:
-            message = await event.respond(f'用户不存在, 请注册')
-    except Exception as e:
-        logging.error(e)
+            message = await event.respond('用户不存在, 请注册')
+    except ImportError as e:
+        logging.error("nfsw: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation
 
 @client.on(events.CallbackQuery(data='forget_password'))
 async def forget_password(event):
+    '''接收 忘记密码 按钮'''
     message = None
     try:
-        emby = await DataBase.GetEmby(event.sender_id)
+        emby = await database.get_emby(event.sender_id)
         if emby is not None:
-            _bool = await EmbyAPI.Password(emby.EmbyId, ResetPassword=True)
+            _bool = await embyapi.post_password(emby.EmbyId, ResetPassword=True)
             if _bool:
-                Pw = await EmbyAPI.Password(emby.EmbyId)
+                Pw = await embyapi.post_password(emby.EmbyId)
                 await event.respond(f'密码已重置:\n `{Pw}`\n请及时修改密码')
             else:
-                message = await event.respond(f'密码重置失败')
+                message = await event.respond('密码重置失败')
         else:
-            message = await event.respond(f'用户不存在, 请注册')
-    except Exception as e:
-        logging.error(e)
+            message = await event.respond('用户不存在, 请注册')
+    except ImportError as e:
+        logging.error("forget_password: %s", e)
     finally:
         await asyncio.sleep(60)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
 
 @client.on(events.CallbackQuery(data='query_renew'))
 async def query_renew(event):
+    '''接收 查询续期积分 按钮'''
     message = None
     try:
-        value = await DataBase.GetRenewValue()
+        value = await database.get_renew_value()
         message = await event.respond(f'当前续期积分: {value}')
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("query_renew: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation

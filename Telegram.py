@@ -1,14 +1,12 @@
-from LoadConfig import init_config
-from telethon import TelegramClient, events, Button
-from telethon.tl.types import PeerUser, PeerChat, PeerChannel
-from telethon.tl.functions.messages import GetHistoryRequest
-from telethon.tl.functions.channels import GetParticipantsRequest
-from telethon.tl.types import ChannelParticipantsSearch
-from telethon.tl.functions.users import GetFullUserRequest
-import DataBase
-import EmbyAPI
-import asyncio
+'''
+Telegram Bot
+'''
 import logging
+import asyncio
+from telethon import TelegramClient, events, Button
+from loadconfig import init_config
+import database
+import embyapi
 
 config = init_config()
 
@@ -16,20 +14,23 @@ client = TelegramClient('session', config.telegram.ApiId, config.telegram.ApiHas
 
 @client.on(events.NewMessage(pattern=fr'^/start({config.telegram.BotName})?$'))
 async def start(event):
+    '''欢迎信息'''
     message = None
     try:
         message = await event.respond(f'欢迎使用 {config.telegram.BotName} 机器人！')
-        await help(event)
-    except Exception as e:
-        logging.error(e)
+        await help_handle(event)
+    except ImportError as e:
+        logging.error("start error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation
 
 @client.on(events.NewMessage(pattern=fr'^/help({config.telegram.BotName})?$'))
-async def help(event):
+async def help_handle(event):
+    '''帮助信息'''
     message = None
     try:
         messages = f'''
@@ -48,16 +49,18 @@ async def help(event):
             message = await event.respond(messages)
         else:
             message = await event.reply(f'请私聊 {config.telegram.BotName} 机器人使用')
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("help error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation
 
 @client.on(events.NewMessage(pattern=fr'^/me({config.telegram.BotName})?$'))
 async def me(event, TelegramId = None):
+    '''查询用户信息，发送按钮'''
     messages = None
     keyboard = [
         [
@@ -78,8 +81,8 @@ async def me(event, TelegramId = None):
     if TelegramId is None:
         TelegramId = event.sender_id
     try:
-        emby = await DataBase.GetEmby(TelegramId)
-        user = await DataBase.GetUser(TelegramId)
+        emby = await database.get_emby(TelegramId)
+        user = await database.get_user(TelegramId)
         if user is not None:
             message = f'''
 **Telegram ID**: `{user.TelegramId}`
@@ -94,7 +97,7 @@ async def me(event, TelegramId = None):
 '''
 
         if emby is not None:
-            played_ratio = await EmbyAPI.UserPlaylist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
+            played_ratio = await embyapi.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
             if played_ratio is not None:
                 played_ratio = "{:.4f}%".format(played_ratio * 100)
             message += f'''
@@ -117,16 +120,18 @@ async def me(event, TelegramId = None):
             messages = await event.reply(message, parse_mode='Markdown')
         else:
             messages = await event.reply(f'请私聊 {config.telegram.BotName} 机器人')
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("me error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await messages.delete() if messages is not None else None
+        if messages is not None:
+            await messages.delete()
         raise events.StopPropagation
 
 @client.on(events.NewMessage(pattern=fr'^/info({config.telegram.BotName})?$'))
 async def info(event):
+    '''查询用户信息（管理员），不发送按钮'''
     message = None
     try:
         if event.sender_id in config.other.AdminId:
@@ -134,20 +139,22 @@ async def info(event):
                 reply = await event.get_reply_message()
                 await me(event, reply.sender_id)
             else:
-                message = await event.reply(f'请回复一个用户')
+                message = await event.reply('请回复一个用户')
         else:
-            message = await event.reply(f'仅管理员可用')
-            await DataBase.ChangeWarning(event.sender_id)
-    except Exception as e:
-        logging.error(e)
+            message = await event.reply('仅管理员可用')
+            await database.change_warning(event.sender_id)
+    except ImportError as e:
+        logging.error("info error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation
 
 @client.on(events.CallbackQuery(data='line'))
 async def line(event):
+    '''接收线路查询按钮'''
     message = None
     try:
         url = config.emby.Host.split(':')
@@ -159,39 +166,46 @@ async def line(event):
         else:
             url = config.emby.Host
         message = await event.respond(f'Emby 地址: `{url}`')
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("line error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation
 
 @client.on(events.ChatAction)
 async def chat_action(event):
+    '''
+    入群欢迎和离群通知
+    入群建立User表的数据
+    离群删除用户所有数据
+    '''
     message = None
     try:
         if event.user_joined or event.user_added:
             message = await client.send_message(event.chat_id, f'欢迎 [{event.user.first_name}](tg://user?id={event.user.id}) 加入本群\n 请查看[Wiki]({config.other.Wiki})了解本群规则和Bot使用方法)')
-            await DataBase.CreateUsers(event.user.id)
+            await database.create_users(event.user.id)
         if event.user_left or event.user_kicked:
             message = await client.send_message(event.chat_id, f'[{event.user.first_name}](tg://user?id={event.user.id}) 离开了本群')
-            await DataBase.DeleteUser(event.user.id)
-            emby = await DataBase.GetEmby(event.user.id)
+            await database.delete_user(event.user.id)
+            emby = await database.get_emby(event.user.id)
             if emby is not None:
-                await DataBase.DeleteEmby(event.user.id)
-                await EmbyAPI.DeleteEmbyUser(emby.EmbyId)
+                await database.delete_emby(event.user.id)
+                await embyapi.delete_emby_user(emby.EmbyId)
         if event.user_added and event.action_message.action.user_id == client.get_me().id:
             await client.send_message(event.chat_id, f'感谢使用 {config.telegram.BotName} 机器人, 请私聊机器人使用')
             async for user in client.iter_participants(config.telegram.ChatID):
                 if user.bot is False:
-                    qurey = await DataBase.GetUser(user.id)
+                    qurey = await database.get_user(user.id)
                     if qurey is None:
-                        await DataBase.CreateUsers(user.id)
-    except Exception as e:
-        logging.error(e)
+                        await database.create_users(user.id)
+    except ImportError as e:
+        logging.error("chat_action error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         # raise events.StopPropagation

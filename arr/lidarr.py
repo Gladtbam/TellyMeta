@@ -1,9 +1,10 @@
-import aiohttp
-import asyncio
-import json
+'''
+Lidarr API
+'''
 import logging
-from LoadConfig import init_config
-import re
+import aiohttp
+from loadconfig import init_config
+
 
 config = init_config()
 headers = {
@@ -12,28 +13,35 @@ headers = {
     'X-Api-Key': config.lidarr.ApiKey
     }
 
-async def artistLookup(musicBrainzId):
+async def artist_lookup(musicbrainz_id):
+    '''
+    Lookup artist by MusicBrainz ID
+    '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.lidarr.Host}/api/v1/artist/lookup?term=mbid%3A{musicBrainzId}") as resp:
+            async with session.get(f"{config.lidarr.Host}/api/v1/artist/lookup?term=mbid%3A{musicbrainz_id}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logging.info(f"Error looking up artist: {resp.status}")
+                    logging.info("Error looking up artist: %s", resp.status)
                     return None
-    except Exception as e:
-        logging.error(f"Error looking up artist: {e}")
+    except ImportError as e:
+        logging.error("Error looking up artist: %s", e)
+        return None
+
+async def album_lookup(musicbrainz_id):
+    '''
+    Lookup album by MusicBrainz ID
+    '''
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(f"{config.lidarr.Host}/api/v1/album/lookup?term=mbid%3A{musicbrainz_id}") as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logging.info("Error looking up album: %s", resp.status)
+                    return None
+    except ImportError as e:
+        logging.error("Error looking up album: %s", e)
         return None
     
-async def albumLookup(musicBrainzId):
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.lidarr.Host}/api/v1/album/lookup?term=mbid%3A{musicBrainzId}") as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    logging.info(f"Error looking up album: {resp.status}")
-                    return None
-    except Exception as e:
-        logging.error(f"Error looking up album: {e}")
-        return None

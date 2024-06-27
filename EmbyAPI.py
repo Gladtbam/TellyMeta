@@ -1,10 +1,11 @@
-import aiohttp
-import asyncio
+'''
+Emby API
+'''
 import logging
-import json
 import random
 import string
-from LoadConfig import init_config
+import aiohttp
+from loadconfig import init_config
 
 headers = {
     'Content-Type': 'application/json'
@@ -12,7 +13,8 @@ headers = {
 
 config = init_config()
 
-async def NewUser(TelegramName):
+async def new_user(TelegramName):
+    '''新建 Emby 用户'''
     url = f'{config.emby.Host}/emby/Users/New?api_key={config.emby.ApiKey}'
     try:
         async with aiohttp.ClientSession() as session:
@@ -22,11 +24,12 @@ async def NewUser(TelegramName):
                     return data['Id']  # 返回json数据
                 else:
                     return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("新建 Emby 用户失败: %s", e)
         return None
 
-async def User_Policy(EmbyId, BlockMeida):
+async def user_policy(EmbyId, BlockMeida):
+    '''设置 Emby 用户权限'''
     data = {
         "IsAdministrator": False,                   # 是否为管理员
         "IsHidden": True,                           # 用户是否隐藏
@@ -74,15 +77,18 @@ async def User_Policy(EmbyId, BlockMeida):
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
-                if resp.status == 200:
-                    return True
-                else:
-                    return False
-    except Exception as e:
-        logging.error(e)
+                _bool = resp.status == 200
+                return _bool
+                # if resp.status == 200:
+                #     return True
+                # else:
+                #     return False
+    except ImportError as e:
+        logging.error("设置 Emby 用户权限失败: %s", e)
         return False
 
-async def GetUserInfo(EmbyId):
+async def get_user_info(EmbyId):
+    '''获取 Emby 用户信息'''
     url = f"{config.emby.Host}/emby/Users/{EmbyId}?api_key={config.emby.ApiKey}"
     try:
         async with aiohttp.ClientSession() as session:
@@ -92,11 +98,12 @@ async def GetUserInfo(EmbyId):
                     return data
                 else:
                     return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("获取 Emby 用户信息失败: %s", e)
         return None
 
-async def Password(EmbyId, ResetPassword=False):
+async def post_password(EmbyId, ResetPassword=False):
+    '''创建/重置 Emby 用户密码'''
     Pw = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(12))
     data = {
         "Id": EmbyId,
@@ -109,34 +116,40 @@ async def Password(EmbyId, ResetPassword=False):
         async with aiohttp.ClientSession() as session:
             if ResetPassword is True:
                 async with session.post(url, json={"ResetPassword": ResetPassword}, headers=headers) as resp:
-                    if resp.status in [200, 204]:
-                        return True
-                    else:
-                        return False
+                    _bool = resp.status in [200, 204]
+                    return _bool
+                    # if resp.status in [200, 204]:
+                    #     return True
+                    # else:
+                    #     return False
             else:
                 async with session.post(url, json=data, headers=headers) as resp:
                     if resp.status in [200, 204]:
                         return Pw
                     else:
                         return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("创建/重置 Emby 用户密码失败: %s", e)
         return None
 
-async def DeleteEmbyUser(EmbyId):
+async def delete_emby_user(EmbyId):
+    '''删除 Emby 用户'''
     url = f"{config.emby.Host}/emby/Users/{EmbyId}?api_key={config.emby.ApiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.delete(url, headers=headers) as resp:
-                if resp.status == 200:
-                    return True
-                else:
-                    return False
-    except Exception as e:
-        logging.error(e)
+                _bool = resp.status == 200
+                return _bool
+                # if resp.status == 200:
+                #     return True
+                # else:
+                #     return False
+    except ImportError as e:
+        logging.error("删除 Emby 用户失败: %s", e)
         return False
 
-async def BanEmbyUser(EmbyIds):
+async def ban_emby_user(EmbyIds):
+    '''禁用 Emby 用户'''
     try:
         async with aiohttp.ClientSession() as session:
             for EmbyId in EmbyIds:
@@ -145,11 +158,12 @@ async def BanEmbyUser(EmbyIds):
                     if resp.status != 200:
                         return False
             return True
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("禁用 Emby 用户失败: %s", e)
         return False
 
-async def DeleteBanUser(EmbyIds):
+async def delete_ban_user(EmbyIds):
+    '''删除已禁用 Emby 用户'''
     try:
         async with aiohttp.ClientSession() as session:
             for EmbyId in EmbyIds:
@@ -158,11 +172,12 @@ async def DeleteBanUser(EmbyIds):
                     if resp.status != 200:
                         return False
             return True
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("删除已禁用 Emby 用户失败: %s", e)
         return False
 
-async def UserPlaylist(EmbyId, LimitDate):
+async def user_playlist(EmbyId, LimitDate):
+    '''获取 Emby 用户播放记录'''
     url = f"{config.emby.Host}/emby/user_usage_stats/UserPlaylist?user_id={EmbyId}&aggregate_data=false&days=30&end_date={LimitDate}&api_key={config.emby.ApiKey}"
     total_duration = 0
     try:
@@ -176,11 +191,12 @@ async def UserPlaylist(EmbyId, LimitDate):
                     return total_ratio
                 else:
                     return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("获取 Emby 用户播放记录失败: %s", e)
         return None
 
-async def SessionList():
+async def session_list():
+    '''获取 Emby 用户在线数量'''
     url = f"{config.emby.Host}/emby/user_usage_stats/session_list?api_key={config.emby.ApiKey}"
     try:
         async with aiohttp.ClientSession() as session:
@@ -194,12 +210,13 @@ async def SessionList():
                     return now_playing
                 else:
                     return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("获取 Emby 用户在线数量失败: %s", e)
         return None
 
 # 基于哪吒探针
-async def GetServerInfo():
+async def get_server_info():
+    '''获取服务器信息'''
     url = f"{config.probe.Host}/api/v1/server/details?id={config.probe.Id}"
     try:
         async with aiohttp.ClientSession() as session:
@@ -209,6 +226,6 @@ async def GetServerInfo():
                     return data
                 else:
                     return None
-    except Exception as e:
-        logging.error(e)
+    except ImportError as e:
+        logging.error("获取服务器信息失败: %s", e)
         return None

@@ -1,14 +1,14 @@
-from arr import *
-from Telegram import client
-from LoadConfig import init_config
-import aiohttp
-import asyncio
+'''
+WebHook通知
+'''
 import logging
-import traceback
 import json
 import os
 from aiohttp import web
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from telegram import client
+from loadconfig import init_config
+import arr
 
 config = init_config()
 print(os.getcwd() + '/notify/templates')
@@ -20,6 +20,9 @@ routes = web.RouteTableDef()
 
 @routes.post('/webhook')
 async def handle_webhook(request):
+    '''
+    定义webhook处理函数
+    '''
     if request.body_exists:
         try:
             payload = await request.json()
@@ -36,13 +39,13 @@ app = web.Application()
 app.add_routes(routes)
 
 async def run_webhook():
+    '''
+    启动webhook服务
+    '''
     try:
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, 'localhost', 5000)
         await site.start()
-    except Exception as e:
-        logging.error(traceback.format_exc())
-        logging.error(e)
-
-
+    except ImportError as e:
+        logging.error("Run webhook error: %s", e)

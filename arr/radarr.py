@@ -1,9 +1,9 @@
-import aiohttp
-import asyncio
-import json
+'''
+Radarr API
+'''
 import logging
-from LoadConfig import init_config
-import re
+import aiohttp
+from loadconfig import init_config
 
 config = init_config()
 headers = {
@@ -12,33 +12,42 @@ headers = {
     'X-Api-Key': config.radarr.ApiKey
     }
 
-async def movieLookup(tmdbId):
+async def movie_lookup(tmdbId):
+    '''
+    从 TheMovieDB 搜索电影
+    '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(f"{config.radarr.Host}/api/v3/movie/lookup/tmdb?tmdbId={tmdbId}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logging.info(f"Error looking up movie: {resp.status}")
+                    logging.info("Error looking up movie: %s", resp.status)
                     return None
-    except Exception as e:
-        logging.error(f"Error looking up movie: {e}")
+    except ImportError as e:
+        logging.error("Error looking up movie: %s", e)
         return None
-    
-async def GetMovieInfo(tmdbId):
+
+async def get_movie_info(tmdbId):
+    '''
+    从 Radarr 获取电影信息
+    '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(f"{config.radarr.Host}/api/v3/movie?tmdbId={tmdbId}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
-                    logging.info(f"Error looking up movie: {resp.status}")
+                    logging.info("Error looking up movie: %s", resp.status)
                     return None
-    except Exception as e:
-        logging.error(f"Error looking up movie: {e}")
+    except ImportError as e:
+        logging.error("Error looking up movie: %s", e)
         return None
-    
-async def AddMovie(movieInfo, rootFolderPath):
+
+async def add_movie(movieInfo, rootFolderPath):
+    '''
+    添加电影到 Radarr
+    '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post(f"{config.radarr.Host}/api/v3/movie", json={
@@ -57,8 +66,9 @@ async def AddMovie(movieInfo, rootFolderPath):
                 if resp.status == 201:
                     return await resp.json()
                 else:
-                    logging.info(f"Error adding movie: {resp.status}")
+                    logging.info("Error adding movie: %s", resp.status)
                     return None
-    except Exception as e:
-        logging.error(f"Error adding movie: {e}")
+    except ImportError as e:
+        logging.error("Error adding movie: %s", e)
         return None
+    

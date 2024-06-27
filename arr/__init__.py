@@ -1,5 +1,6 @@
-__all__ = ["radarr", "sonarr", "Searcharr", "Subtitlesarr"]
+'''
+导入 arr 模块的所有子模块
+'''
+__all__ = ["radarr", "sonarr", "searcharr", "subtitlesarr"]
 
-from . import radarr, sonarr, Searcharr, Subtitlesarr
-
-
+from . import radarr, sonarr, searcharr, subtitlesarr

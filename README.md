@@ -62,7 +62,7 @@ RestartSec=10
 WantedBy=default.target
 ```
 
-# LoadConfig 程序配置解释
+# loadconfig 程序配置解释
 
 <table>
     <tr>

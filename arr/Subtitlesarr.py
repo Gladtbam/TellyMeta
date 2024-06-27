@@ -1,21 +1,23 @@
-from . import sonarr, radarr
+'''
+字幕上传
+'''
 import logging
-import asyncio
-import aiohttp
-from Telegram import client
-from LoadConfig import init_config
-from telethon import events, types, Button
-from telethon.tl.types import PeerUser, PeerChat, PeerChannel
-from datetime import datetime, timedelta
-import traceback
 import os
 import zipfile
 import shutil
+import asyncio
+from telethon import events, Button
+from telegram import client
+from loadconfig import init_config
+from . import sonarr, radarr
 
 config = init_config()
 
 @client.on(events.CallbackQuery(data='subtitle'))
 async def request_subtitle(event):
+    '''
+    发送字幕上传按钮
+    '''
     keyboard = [
         Button.inline('电影', data='movie_subtitle'),
         Button.inline('剧集', data='tv_subtitle'),
@@ -24,16 +26,20 @@ async def request_subtitle(event):
     message = None
     try:
         message = await event.respond('请选择上传类型', buttons=keyboard)
-    except Exception as e:
-        logging.error(traceback.format_exc())
+    except ImportError as e:
+        logging.error("Request subtitle error: %s", e)
     finally:
         await asyncio.sleep(10)
         await event.delete()
-        await message.delete() if message is not None else None
+        if message is not None:
+            await message.delete()
         raise events.StopPropagation
 
 @client.on(events.CallbackQuery(pattern=r'.*_subtitle$'))
 async def subtitle(event):
+    '''
+    识别后缀_subtitle的按钮，发送提示信息
+    '''
     try:
         _calss = event.data.decode().split('_')[0]
         async with client.conversation(event.chat_id, timeout=60) as conv:
@@ -59,22 +65,25 @@ async def subtitle(event):
                 await conv.send_message('超时未收到文件')
     except asyncio.TimeoutError:
         await event.respond('超时未收到文件')
-    except Exception as e:
-        logging.error(traceback.format_exc())
+    except ImportError as e:
+        logging.error("subtitle file error: %s", e)
         await event.respond('处理文件时发生错误')
 
 async def analyse_subtitle(_calss, dbId, subtitle_names, event):
+    '''
+    处理字幕文件
+    '''
     try:
         if _calss == 'movie':
-            Info = await radarr.GetMovieInfo(dbId)
+            Info = await radarr.get_movie_info(dbId)
         elif _calss == 'tv' or _calss == 'anime':
-            Info = await sonarr.GetSeriesInfo(dbId, _calss)
+            Info = await sonarr.get_series_info(dbId, _calss)
         # elif _calss == 'anime':
         #     Info = await sonarr.GetAnimeInfo(dbId)
         else:
             Info = None
             await event.respond('未知的类型')
-            
+
         if Info is not None and Info:
             message = await client.send_message(event.sender_id,'正在处理字幕文件...')
             if _calss == 'movie':
@@ -90,7 +99,7 @@ async def analyse_subtitle(_calss, dbId, subtitle_names, event):
                     else:
                         await client.edit_message(message, message.text + f'\n{subtitle_name} ...... fail')
             elif _calss == 'tv' or _calss == 'anime':
-                seriesInfo = await sonarr.GetEpisodeInfo(Info[0]['id'], _calss)
+                seriesInfo = await sonarr.get_episode_info(Info[0]['id'], _calss)
                 if seriesInfo is not None and seriesInfo:
                     # episodesInfo = [{'id': episode['id'], 'seasonNumber': episode['seasonNumber'], 'episodeNumber': episode['episodeNumber']} for episode in seriesInfo]
                     episodesInfo = {}
@@ -107,7 +116,7 @@ async def analyse_subtitle(_calss, dbId, subtitle_names, event):
                         language = subtitle_name[subtitle_name.index('.')+1:subtitle_name.rindex('.')]
                         episodeId = episodesInfo.get(season, {}).get(episode, None)
                         if episodeId is not None:
-                            episodeInfo = await sonarr.GetEpisodeId(episodeId, _calss)
+                            episodeInfo = await sonarr.get_episode_id(episodeId, _calss)
                             if episodeInfo and episodeInfo['seasonNumber'] == season and episodeInfo['episodeNumber'] == episode:
                                 episodeFilePath = episodeInfo['episodeFile']['path'].rpartition('.')[0]
                                 destination = f"{episodeFilePath}.{language}.{subtitle_suffix}"
@@ -124,11 +133,10 @@ async def analyse_subtitle(_calss, dbId, subtitle_names, event):
                 await client.edit_message(message, message.text + '\n未知的类型')
         else:
             await event.respond('未找到对应的电影/剧集/动画')
-    except Exception as e:
-        logging.error(traceback.format_exc())
+    except ImportError as e:
+        logging.error("analyse subtitle error: %s", e)
         await event.respond('处理字幕文件时发生错误, 请检查文件名是否正确')
     finally:
         await asyncio.sleep(10)
         await event.delete()
         # raise events.StopPropagation
-        

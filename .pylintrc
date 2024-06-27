@@ -1,0 +1,22 @@
+[MASTER]
+
+[MESSAGES CONTROL]
+
+# Disable specific pylint messages
+#disable=
+
+[FORMAT]
+
+# Set the maximum line length
+max-line-length=200
+
+[TYPECHECK]
+
+# Enable type checking
+generated-members=typing.TYPE_CHECKING
+
+#[REPORTS]
+
+# Generate reports in HTML format
+#output-format=html
+#reports=no
