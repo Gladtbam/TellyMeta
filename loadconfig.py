@@ -10,11 +10,12 @@ from dataclasses_json import dataclass_json
 @dataclass
 class DataBase:
     '''定义数据库配置数据结构'''
-    Host: Optional[str] = 'localhost'
-    Port: Optional[int] = 3066
-    User: Optional[str] = None
-    Password: Optional[str] = None
-    DatabaseName: Optional[str] = None
+    DataBaseType: str = 'sqlite'
+    Host: str = 'localhost'
+    Port: int = 3066
+    User: str = 'root'
+    Password: str = 'password'
+    DatabaseName: str = 'bot'
 
 @dataclass_json
 @dataclass
@@ -115,7 +116,7 @@ def get_user_input(cls):
     '''获取用户输入'''
     instance = cls()
     for field in cls.__dataclass_fields__.keys():
-        value = input(f"请输入 {cls.__name__} 的 {field} 配置：")
+        value = input(f"请输入 {cls.__name__} 的 {field} { '(mysql|sqlite - Default)' if field == 'DataBaseType' else '' } 配置：")
         if value:
             setattr(instance, field, value)
     return instance

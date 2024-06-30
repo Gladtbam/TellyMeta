@@ -11,7 +11,10 @@ from loadconfig import init_config
 
 config = init_config()
 
-engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.User}:{config.dataBase.Password}@{config.dataBase.Host}:{config.dataBase.Port}/{config.dataBase.DatabaseName}')
+if config.dataBase.DataBaseType == 'sqlite':
+    engine = create_async_engine('sqlite+aiosqlite:///embybot.db')
+else:
+    engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.User}:{config.dataBase.Password}@{config.dataBase.Host}:{config.dataBase.Port}/{config.dataBase.DatabaseName}')
 
 Base = declarative_base()
 class User(Base):
