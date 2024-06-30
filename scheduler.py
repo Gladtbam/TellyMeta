@@ -6,7 +6,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loadconfig import init_config
 from telegram import client
-from ScoreManager import calculate_ratio, user_msg_count
+from scoremanager import calculate_ratio, user_msg_count
 import database
 import embyapi
 
