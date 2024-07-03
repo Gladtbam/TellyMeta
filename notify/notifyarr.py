@@ -29,7 +29,7 @@ async def handle_webhook(request):
             if payload.get('eventType') == 'Test':
                 template = env.get_template('test.html')
                 response = template.render(payload=payload)
-                await client.send_message(config.telegram.NotifyChannel, response, parse_mode='HTML')
+                await client.send_message(config.telegram.notifyChannel, response, parse_mode='HTML')
         except json.decoder.JSONDecodeError:
             return web.Response(text='Invalid JSON payload')
 

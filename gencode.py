@@ -80,11 +80,11 @@ async def right_code(event):
         user = await get_user(event.sender_id)
         value = await get_renew_value()
         await event.answer(f"正在生成 {'续期码' if s == 'renew' else '注册码'}")
-        if event.sender_id in config.other.AdminId or (user is not None and user.Score >= value):
+        if event.sender_id in config.other.adminId or (user is not None and user.Score >= value):
             code = await generate_code(s)
             if code is not None:
                 await client.send_message(event.sender_id, f"{'续期码' if s == 'renew' else '注册码'}生成成功\n`{code}`")
-                await change_score(event.sender_id, -(value if event.sender_id not in config.other.AdminId else 0))
+                await change_score(event.sender_id, -(value if event.sender_id not in config.other.adminId else 0))
             else:
                 await event.respond(f"{'续期码' if s == 'renew' else '注册码'}生成失败")
         else:

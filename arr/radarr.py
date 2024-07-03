@@ -9,7 +9,7 @@ config = init_config()
 headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'X-Api-Key': config.radarr.ApiKey
+    'X-Api-Key': config.radarr.apiKey
     }
 
 async def movie_lookup(tmdbId):
@@ -18,7 +18,7 @@ async def movie_lookup(tmdbId):
     '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.radarr.Host}/api/v3/movie/lookup/tmdb?tmdbId={tmdbId}") as resp:
+            async with session.get(f"{config.radarr.host}/api/v3/movie/lookup/tmdb?tmdbId={tmdbId}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
@@ -34,7 +34,7 @@ async def get_movie_info(tmdbId):
     '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.radarr.Host}/api/v3/movie?tmdbId={tmdbId}") as resp:
+            async with session.get(f"{config.radarr.host}/api/v3/movie?tmdbId={tmdbId}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
@@ -50,7 +50,7 @@ async def add_movie(movieInfo, rootFolderPath):
     '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.post(f"{config.radarr.Host}/api/v3/movie", json={
+            async with session.post(f"{config.radarr.host}/api/v3/movie", json={
                 "title": movieInfo['title'],
                 "tmdbId": movieInfo['tmdbId'],
                 "year": movieInfo['year'],

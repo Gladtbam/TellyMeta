@@ -196,7 +196,7 @@ async def send_info(event, info, _class):
             user = await client.get_entity(event.sender_id)
             username = user.first_name + ' ' + user.last_name if user.last_name else user.first_name
             message += f'\n<a herf="tg://user?id={event.sender_id}">求片人{username}</a>'
-            channel = await client.get_input_entity(config.telegram.RequiredChannel)
+            channel = await client.get_input_entity(config.telegram.requiredChannel)
             await client.send_message(channel, message, parse_mode='html', file=image)
         else:
             await client.send_message(event.chat_id, message , parse_mode='html', file=image)

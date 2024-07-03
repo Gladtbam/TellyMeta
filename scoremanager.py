@@ -17,7 +17,7 @@ user_msg_count = {}
 user_id_old = None
 oldsum = 0
 
-@client.on(events.NewMessage(pattern=fr'^/checkin({config.telegram.BotName})?$'))
+@client.on(events.NewMessage(pattern=fr'^/checkin({config.telegram.botName})?$'))
 async def checkin(event):
     '''
     签到, 签到成功后, 会根据签到天数, 随机获得积分, 每签到 7 天, 会有一定概率额外奖励
@@ -103,14 +103,14 @@ async def checkin(event):
             logging.warning('MessageDeleteForbiddenError')
         # raise events.StopPropagation
 
-@client.on(events.NewMessage(chats=config.telegram.ChatID))
+@client.on(events.NewMessage(chats=config.telegram.chatID))
 async def new_message(event):
     '''接收消息, 计算用户积分'''
     global user_id_old
     global oldsum
     if isinstance(event.message, types.Message) and isinstance(event.message.from_id, types.PeerUser):
         user_id = event.message.from_id.user_id
-        if user_id not in config.other.AdminId:
+        if user_id not in config.other.adminId:
             if not event.message.text.startswith('/') and not any(word in event.message.text for word in ['冒泡', '冒个泡', '好', '签到', '观看度']):
                 if user_id_old != user_id:
                     user_id_old = user_id
@@ -128,7 +128,7 @@ async def new_message(event):
                     if _bool:
                         await event.reply(f"用户 [{username}](tg://user?id={user_id}) 发送消息过于频繁, 警告一次")
                     else:
-                        await client.send_message(config.telegram.ChatID, f"用户 [{username}](tg://user?id={user_id}) 发送消息过于频繁, 警告失败, 管理员手动处理")
+                        await client.send_message(config.telegram.chatID, f"用户 [{username}](tg://user?id={user_id}) 发送消息过于频繁, 警告失败, 管理员手动处理")
 
 async def calculate_ratio():
     '''计算总积分和用户积分比例'''
@@ -148,12 +148,12 @@ async def calculate_ratio():
 
     return UserRatio, TotalScore
 
-@client.on(events.NewMessage(pattern=fr'^/change({config.telegram.BotName})?\s+(.*)$'))
+@client.on(events.NewMessage(pattern=fr'^/change({config.telegram.botName})?\s+(.*)$'))
 async def change(evnet):
     '''接收修改用户积分的指令, 修改用户积分'''
     message = None
     try:
-        if evnet.sender_id in config.other.AdminId:
+        if evnet.sender_id in config.other.adminId:
             _, *args = evnet.message.text.split(' ')
             if len(args) > 0:
                 reply = await evnet.get_reply_message()
@@ -177,21 +177,21 @@ async def change(evnet):
             await message.delete()
         raise events.StopPropagation
 
-@client.on(events.NewMessage(pattern=fr'^/settle({config.telegram.BotName})?$'))
+@client.on(events.NewMessage(pattern=fr'^/settle({config.telegram.botName})?$'))
 async def settle(event):
     '''接收结算积分指令, 结算积分'''
     try:
-        if event.sender_id in config.other.AdminId:
+        if event.sender_id in config.other.adminId:
             UserRatio, TotalScore = await calculate_ratio()
             userScore = await database.settle_score(UserRatio, TotalScore)
             if userScore is not None:
-                message = await client.send_message(config.telegram.ChatID, f"积分结算完成, 共结算 {TotalScore} 分\n\t结算后用户积分如下:\n")
+                message = await client.send_message(config.telegram.chatID, f"积分结算完成, 共结算 {TotalScore} 分\n\t结算后用户积分如下:\n")
                 for userId, userValue in userScore.items():
                     user = await client.get_entity(userId)
                     username = user.first_name + ' ' + user.last_name if user.last_name else user.first_name
                     # message += f"[{username}](tg://user?id={userId}) 获得 {userValue} 分\n"
                     message = await client.edit_message(message, message.text + f"\n[{username}](tg://user?id={userId}) 获得: {userValue} 积分")
-                # await client.send_message(config.telegram.ChatID, message, parse_mode='Markdown')
+                # await client.send_message(config.telegram.chatID, message, parse_mode='Markdown')
                 user_msg_count.clear()
             else:
                 await event.reply('结算失败, 无可结算积分')
@@ -205,12 +205,12 @@ async def settle(event):
         await event.delete()
         # raise events.StopPropagation
 
-@client.on(events.NewMessage(pattern=fr'^/warn({config.telegram.BotName})?$'))
+@client.on(events.NewMessage(pattern=fr'^/warn({config.telegram.botName})?$'))
 async def warnning(evnet):
     '''警告用户, 扣除积分'''
     message = None
     try:
-        if evnet.sender_id in config.other.AdminId:
+        if evnet.sender_id in config.other.adminId:
             reply = await evnet.get_reply_message()
             _bool = await database.change_warning(reply.sender_id)
             if _bool:

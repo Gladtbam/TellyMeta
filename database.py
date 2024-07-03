@@ -11,10 +11,10 @@ from loadconfig import init_config
 
 config = init_config()
 
-if config.dataBase.DataBaseType == 'sqlite':
+if config.dataBase.dataBaseType == 'sqlite':
     engine = create_async_engine('sqlite+aiosqlite:///embybot.db')
 else:
-    engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.User}:{config.dataBase.Password}@{config.dataBase.Host}:{config.dataBase.Port}/{config.dataBase.DatabaseName}')
+    engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.user}:{config.dataBase.password}@{config.dataBase.host}:{config.dataBase.port}/{config.dataBase.databaseName}')
 
 Base = declarative_base()
 class User(Base):
@@ -179,7 +179,7 @@ async def create_emby(TelegramId, EmbyId, EmbyName):
     async with AsyncSession(engine) as session:
         async with session.begin():
             try:
-                if TelegramId in config.other.AdminId:
+                if TelegramId in config.other.adminId:
                     LimitDate = datetime.now() + timedelta(weeks=4752)
                 else:
                     LimitDate = datetime.now() + timedelta(days=30)

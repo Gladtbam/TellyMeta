@@ -10,7 +10,7 @@ config = init_config()
 headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'X-Api-Key': config.lidarr.ApiKey
+    'X-Api-Key': config.lidarr.apiKey
     }
 
 async def artist_lookup(musicbrainz_id):
@@ -19,7 +19,7 @@ async def artist_lookup(musicbrainz_id):
     '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.lidarr.Host}/api/v1/artist/lookup?term=mbid%3A{musicbrainz_id}") as resp:
+            async with session.get(f"{config.lidarr.host}/api/v1/artist/lookup?term=mbid%3A{musicbrainz_id}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:
@@ -35,7 +35,7 @@ async def album_lookup(musicbrainz_id):
     '''
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(f"{config.lidarr.Host}/api/v1/album/lookup?term=mbid%3A{musicbrainz_id}") as resp:
+            async with session.get(f"{config.lidarr.host}/api/v1/album/lookup?term=mbid%3A{musicbrainz_id}") as resp:
                 if resp.status == 200:
                     return await resp.json()
                 else:

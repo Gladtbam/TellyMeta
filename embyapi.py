@@ -15,7 +15,7 @@ config = init_config()
 
 async def new_user(TelegramName):
     '''新建 Emby 用户'''
-    url = f'{config.emby.Host}/emby/Users/New?api_key={config.emby.ApiKey}'
+    url = f'{config.emby.host}/emby/Users/New?api_key={config.emby.apiKey}'
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json={'Name': TelegramName}, headers=headers) as resp:
@@ -73,7 +73,7 @@ async def user_policy(EmbyId, BlockMeida):
         "EnabledDevices": [],                       # 允许访问的设备列表
         "EnableAllDevices": True                    # 是否允许访问所有设备
     }
-    url = f"{config.emby.Host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
@@ -89,7 +89,7 @@ async def user_policy(EmbyId, BlockMeida):
 
 async def get_user_info(EmbyId):
     '''获取 Emby 用户信息'''
-    url = f"{config.emby.Host}/emby/Users/{EmbyId}?api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
@@ -111,7 +111,7 @@ async def post_password(EmbyId, ResetPassword=False):
         "NewPw": Pw,
         "ResetPassword": ResetPassword
     }
-    url = f"{config.emby.Host}/emby/Users/{EmbyId}/Password?api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/Users/{EmbyId}/Password?api_key={config.emby.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             if ResetPassword is True:
@@ -134,7 +134,7 @@ async def post_password(EmbyId, ResetPassword=False):
 
 async def delete_emby_user(EmbyId):
     '''删除 Emby 用户'''
-    url = f"{config.emby.Host}/emby/Users/{EmbyId}?api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.delete(url, headers=headers) as resp:
@@ -153,7 +153,7 @@ async def ban_emby_user(EmbyIds):
     try:
         async with aiohttp.ClientSession() as session:
             for EmbyId in EmbyIds:
-                url = f"{config.emby.Host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.ApiKey}"
+                url = f"{config.emby.host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.apiKey}"
                 async with session.post(url, json={"IsDisabled": True}, headers=headers) as resp:
                     if resp.status != 200:
                         return False
@@ -167,7 +167,7 @@ async def delete_ban_user(EmbyIds):
     try:
         async with aiohttp.ClientSession() as session:
             for EmbyId in EmbyIds:
-                url = f"{config.emby.Host}/emby/Users/{EmbyId}?api_key={config.emby.ApiKey}"
+                url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
                 async with session.delete(url, headers=headers) as resp:
                     if resp.status != 200:
                         return False
@@ -178,7 +178,7 @@ async def delete_ban_user(EmbyIds):
 
 async def user_playlist(EmbyId, LimitDate):
     '''获取 Emby 用户播放记录'''
-    url = f"{config.emby.Host}/emby/user_usage_stats/UserPlaylist?user_id={EmbyId}&aggregate_data=false&days=30&end_date={LimitDate}&api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/user_usage_stats/UserPlaylist?user_id={EmbyId}&aggregate_data=false&days=30&end_date={LimitDate}&api_key={config.emby.apiKey}"
     total_duration = 0
     try:
         async with aiohttp.ClientSession() as session:
@@ -197,7 +197,7 @@ async def user_playlist(EmbyId, LimitDate):
 
 async def session_list():
     '''获取 Emby 用户在线数量'''
-    url = f"{config.emby.Host}/emby/user_usage_stats/session_list?api_key={config.emby.ApiKey}"
+    url = f"{config.emby.host}/emby/user_usage_stats/session_list?api_key={config.emby.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
@@ -217,10 +217,10 @@ async def session_list():
 # 基于哪吒探针
 async def get_server_info():
     '''获取服务器信息'''
-    url = f"{config.probe.Host}/api/v1/server/details?id={config.probe.Id}"
+    url = f"{config.probe.host}/api/v1/server/details?id={config.probe.Id}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers={'Authorization': config.probe.Token}) as resp:
+            async with session.get(url, headers={'Authorization': config.probe.token}) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return data

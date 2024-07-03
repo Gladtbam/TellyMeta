@@ -136,7 +136,7 @@ WantedBy=default.target
     </tr>
     <tr>
         <td rowspan="4">Other</td>
-        <td>AdminId</td>
+        <td>adminId</td>
         <td>机器人管理员的Telegram Id列表</td>
     </tr>
     <tr>
@@ -185,10 +185,10 @@ WantedBy=default.target
     </tr>
 </table>
 
-> **AdminId 存在BUG，其无法正常生成为列表，请自行修改为列表的格式，示例如下**
+> **adminId 存在BUG，其无法正常生成为列表，请自行修改为列表的格式，示例如下**
 ```
 other:
-  AdminId:
+  adminId:
     - 管理员1_ID
     - 管理员2_ID
 ```

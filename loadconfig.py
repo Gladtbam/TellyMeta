@@ -1,142 +1,108 @@
 '''
 定义生成并加载配置文件
 '''
-from dataclasses import dataclass, field
-from typing import Optional
-import yaml
-from dataclasses_json import dataclass_json
+import json
 
-@dataclass_json
-@dataclass
-class DataBase:
-    '''定义数据库配置数据结构'''
-    DataBaseType: str = 'sqlite'
-    Host: str = 'localhost'
-    Port: int = 3066
-    User: str = 'root'
-    Password: str = 'password'
-    DatabaseName: str = 'bot'
-
-@dataclass_json
-@dataclass
-class Telegram:
-    '''定义Telegram配置数据结构'''
-    Token: Optional[str] = None
-    ApiId: Optional[int] = None
-    ApiHash: Optional[str] = None
-    BotName: Optional[str] = None
-    ChatID: Optional[int] = None
-    RequiredChannel: Optional[str] = None
-    NotifyChannel: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Emby:
-    '''定义Emby配置数据结构'''
-    Host: Optional[str] = None
-    ApiKey: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Probe:
-    '''定义哪吒探针配置数据结构'''
-    Host: Optional[str] = None
-    Token: Optional[str] = None
-    Id: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Lidarr:
-    '''定义Lidarr配置数据结构'''
-    Host: Optional[str] = None
-    ApiKey: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Radarr:
-    '''定义Radarr配置数据结构'''
-    Host: Optional[str] = None
-    ApiKey: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Sonarr:
-    '''定义Sonarr配置数据结构'''
-    Host: Optional[str] = None
-    ApiKey: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class SonarrAnime:
-    '''定义Sonarr动画配置数据结构'''
-    Host: Optional[str] = None
-    ApiKey: Optional[str] = None
-
-@dataclass_json
-@dataclass
-class Other:
-    '''定义其他配置数据结构'''
-    AdminId: Optional[list] = None
-    OMDBApiKey: Optional[str] = None
-    Ratio: int = 1
-    Wiki: Optional[str] = None
-
-@dataclass_json
-@dataclass
+class DictToObject:
+    '''将字典转换为对象'''
+    def __init__(self, dictionary):
+        for key, value in dictionary.items():
+            if isinstance(value, dict):
+                setattr(self, key, DictToObject(value))
+            else:
+                setattr(self, key, value)
 class Config:
     '''定义配置文件数据结构'''
-    dataBase: DataBase = field(default_factory=DataBase)
-    telegram: Telegram = field(default_factory=Telegram)
-    emby: Emby = field(default_factory=Emby)
-    probe: Probe = field(default_factory=Probe)
-    lidarr: Lidarr = field(default_factory=Lidarr)
-    radarr: Radarr = field(default_factory=Radarr)
-    sonarr: Sonarr = field(default_factory=Sonarr)
-    sonarrAnime: SonarrAnime = field(default_factory=SonarrAnime)
-    other: Other = field(default_factory=Other)
+    def __init__(self):
+        '''数据库配置'''
+        self.dataBase = {
+            'dataBaseType': 'mysql',
+            'host': 'localhost',
+            'port': 3066,
+            'user': 'root',
+            'password': 'password',
+            'databaseName': 'bot'
+            }
+        '''Telegram配置'''
+        self.telegram = {
+            'token': None,
+            'apiId': None,
+            'apiHash': None,
+            'botName': None,
+            'chatID': None,
+            'requiredChannel': None,
+            'notifyChannel': None
+            }
+        '''Emby配置'''
+        self.emby = {
+            'host': None,
+            'apiKey': None
+            }
+        '''哪吒探针配置'''
+        self.probe = {
+            'host': None,
+            'token': None,
+            'id': None
+            }
+        '''Lidarr配置'''
+        self.lidarr = {
+            'host': None,
+            'apiKey': None
+            }
+        '''Radarr配置'''
+        self.radarr = {
+            'host': None,
+            'apiKey': None
+            }
+        '''Sonarr配置'''
+        self.sonarr = {
+            'host': None,
+            'apiKey': None
+            }
+        '''Sonarr动画配置'''
+        self.sonarrAnime = {
+            'host': None,
+            'apiKey': None
+            }
+        '''其他配置'''
+        self.other = {
+            'adminId': [],
+            'OMDBApiKey': None,
+            'ratio': 1,
+            'wiki': None
+            }
+
+    def prompt_for_config(self, config, name=None):
+        '''提示用户输入配置'''
+        print(f"请输入{name}:")
+        for key in config:
+            if isinstance(config[key], dict):
+                self.prompt_for_config(config[key])
+            else:
+                config[key] = input(f"请输入{key}:")
+        return config
+
+    def save_config(self):
+        '''保存配置文件'''
+        with open('config.json', 'w', encoding="utf-8") as file:
+            json.dump(self.__dict__, file, ensure_ascii=False, indent=4)
 
 def load_config():
     '''加载配置文件'''
     try:
-        with open('config.yaml', 'r', encoding="utf-8") as file:
-            config_dict = yaml.safe_load(file)
-            return Config.from_dict(config_dict) # type: ignore
+        with open('config.json', 'r', encoding="utf-8") as file:
+            config_dict = json.load(file)
+            return DictToObject(config_dict)
     except FileNotFoundError:
         return None
-
-def save_config(config):
-    '''保存配置文件'''
-    with open('config.yaml', 'w', encoding="utf-8") as file:
-        config_dict = config.to_dict()
-        yaml.dump(config_dict, file)
-    print("配置文件已保存, 当前代码存在BUG, 请手动检查配置文件是否正确")
-    exit(0)
-
-def get_user_input(cls):
-    '''获取用户输入'''
-    instance = cls()
-    for field in cls.__dataclass_fields__.keys():
-        value = input(f"请输入 {cls.__name__} 的 {field} { '(mysql|sqlite - Default)' if field == 'DataBaseType' else '' } 配置：")
-        if value:
-            setattr(instance, field, value)
-    return instance
 
 def init_config():
     '''初始化配置文件, 如果配置文件不存在则创建配置文件并返回配置文件实例, 否则返回配置文件实例'''
     config = load_config()
-    if not isinstance(config, Config):
-        print("配置文件不存在, 请按照提示填写配置文件")
-        config = Config(
-            other=get_user_input(Other),
-            dataBase=get_user_input(DataBase),
-            telegram=get_user_input(Telegram),
-            emby=get_user_input(Emby),
-            probe=get_user_input(Probe),
-            lidarr=get_user_input(Lidarr),
-            radarr=get_user_input(Radarr),
-            sonarr=get_user_input(Sonarr),
-            sonarrAnime=get_user_input(SonarrAnime)
-        )
-        save_config(config)
-    else:
-        return config
+    if config is None:
+        config = Config()
+        config.prompt_for_config(config.dataBase, "数据库配置")
+        config.prompt_for_config(config.telegram, "Telegram配置")
+        config.save_config()
+        config = load_config()
+    return config

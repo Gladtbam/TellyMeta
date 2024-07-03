@@ -9,12 +9,12 @@ config = init_config()
 headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'X-Api-Key': config.sonarr.ApiKey
+    'X-Api-Key': config.sonarr.apiKey
     }
 anime_headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json',
-    'X-Api-Key': config.sonarrAnime.ApiKey
+    'X-Api-Key': config.sonarrAnime.apiKey
     }
 
 async def series_lookup(tvdbId, seriesType):
@@ -24,10 +24,10 @@ async def series_lookup(tvdbId, seriesType):
     try:
         if seriesType == "anime":
             seriesHeaders = anime_headers
-            seriesHost = config.sonarrAnime.Host
+            seriesHost = config.sonarrAnime.host
         elif seriesType == "tv":
             seriesHeaders = headers
-            seriesHost = config.sonarr.Host
+            seriesHost = config.sonarr.host
         async with aiohttp.ClientSession(headers=seriesHeaders) as session:
             async with session.get(f"{seriesHost}/api/v3/series/lookup?term=tvdb%3A{tvdbId}") as resp:
                 if resp.status == 200:
@@ -46,10 +46,10 @@ async def get_series_info(tvdbId, seriesType):
     try:
         if seriesType == "anime":
             seriesHeaders = anime_headers
-            seriesHost = config.sonarrAnime.Host
+            seriesHost = config.sonarrAnime.host
         elif seriesType == "tv":
             seriesHeaders = headers
-            seriesHost = config.sonarr.Host
+            seriesHost = config.sonarr.host
         async with aiohttp.ClientSession(headers=seriesHeaders) as session:
             async with session.get(f"{seriesHost}/api/v3/series?tvdbId={tvdbId}&includeSeasonImages=true") as resp:
                 if resp.status == 200:
@@ -68,10 +68,10 @@ async def get_episode_info(seriesId, seriesType):
     try:
         if seriesType == "anime":
             seriesHeaders = anime_headers
-            seriesHost = config.sonarrAnime.Host
+            seriesHost = config.sonarrAnime.host
         elif seriesType == "tv":
             seriesHeaders = headers
-            seriesHost = config.sonarr.Host
+            seriesHost = config.sonarr.host
         async with aiohttp.ClientSession(headers=seriesHeaders) as session:
             async with session.get(f"{seriesHost}/api/v3/episode?seriesId={seriesId}&includeImages=true") as resp:
                 if resp.status == 200:
@@ -90,10 +90,10 @@ async def get_episode_id(episodeId, seriesType):
     try:
         if seriesType == "anime":
             seriesHeaders = anime_headers
-            seriesHost = config.sonarrAnime.Host
+            seriesHost = config.sonarrAnime.host
         elif seriesType == "tv":
             seriesHeaders = headers
-            seriesHost = config.sonarr.Host
+            seriesHost = config.sonarr.host
         async with aiohttp.ClientSession(headers=seriesHeaders) as session:
             async with session.get(f"{seriesHost}/api/v3/episode/{episodeId}") as resp:
                 if resp.status == 200:
@@ -112,7 +112,7 @@ async def add_series(seriesInfo, rootFolderPath, seriesType):
     try:
         if seriesType == "anime":
             async with aiohttp.ClientSession(headers=anime_headers) as session:
-                async with session.post(f"{config.sonarrAnime.Host}/api/v3/series", json={
+                async with session.post(f"{config.sonarrAnime.host}/api/v3/series", json={
                     "tvdbId": seriesInfo["tvdbId"],
                     "monitored": True,
                     "qualityProfileId": 1,
@@ -135,7 +135,7 @@ async def add_series(seriesInfo, rootFolderPath, seriesType):
                         return None
         elif seriesType == "standard":
             async with aiohttp.ClientSession(headers=headers) as session:
-                async with session.post(f"{config.sonarr.Host}/api/v3/series", json={
+                async with session.post(f"{config.sonarr.host}/api/v3/series", json={
                     "tvdbId": seriesInfo["tvdbId"],
                     "monitored": True,
                     "qualityProfileId": 1,

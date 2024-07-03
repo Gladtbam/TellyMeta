@@ -86,16 +86,16 @@ async def settle_score():
         UserRatio, TotalScore = await calculate_ratio()
         userScore = await database.settle_score(UserRatio, TotalScore)
         if userScore is not None:
-            message = await client.send_message(config.telegram.ChatID, f"积分结算完成, 共结算 {TotalScore} 分\n\t结算后用户积分如下:\n")
+            message = await client.send_message(config.telegram.chatID, f"积分结算完成, 共结算 {TotalScore} 分\n\t结算后用户积分如下:\n")
             for userId, userValue in userScore.items():
                 user = await client.get_entity(userId)
                 username = user.first_name + ' ' + user.last_name if user.last_name else user.first_name
                 # message += f"[{username}](tg://user?id={userId}) 获得 {userValue} 分\n"
                 message = await client.edit_message(message, message.text + f"\n[{username}](tg://user?id={userId}) 获得: {userValue} 积分")
-            # await client.send_message(config.telegram.ChatID, message, parse_mode='Markdown')
+            # await client.send_message(config.telegram.chatID, message, parse_mode='Markdown')
             user_msg_count.clear()
         else:
-            await client.send_message(config.telegram.ChatID, "无可结算积分")
+            await client.send_message(config.telegram.chatID, "无可结算积分")
             logging.info("No users to settle")
     except ImportError as e:
         logging.error("Error settling score: %s", e)
@@ -122,9 +122,9 @@ CPU负载: {"{:.3f}%".format(probe_info['result'][0]['status']['CPU'])}
 实时下载: {"{:.2f} Mbps".format(probe_info['result'][0]['status']['NetInSpeed'] * 8 / 1_000_000)}
 实时上传: {"{:.2f} Mbps".format(probe_info['result'][0]['status']['NetOutSpeed'] * 8 / 1_000_000)}
 
-**积分注册开启, 当前注册积分**: {int(await database.get_renew_value() * config.other.Ratio)}
+**积分注册开启, 当前注册积分**: {int(await database.get_renew_value() * config.other.ratio)}
 '''
-            messages = await client.send_message(config.telegram.ChatID, message, parse_mode='Markdown')
+            messages = await client.send_message(config.telegram.chatID, message, parse_mode='Markdown')
         else:
             logging.error("Error getting server status")
     except ImportError as e:

@@ -17,7 +17,7 @@ config = init_config()
 signup_info = {"time": 0, "remain_num": 0.0}      # 注册方法
 signup_message = None
 
-@client.on(events.NewMessage(pattern=fr'^/signup(?:{config.telegram.BotName})?(\s.*)?$'))
+@client.on(events.NewMessage(pattern=fr'^/signup(?:{config.telegram.botName})?(\s.*)?$'))
 async def signup_method(event):
     '''
     设置注册方法
@@ -28,13 +28,13 @@ async def signup_method(event):
     _, *args = event.message.text.split(' ')
     current_time = datetime.now().timestamp()
     user = await database.get_user(event.sender_id)
-    signup_value = await database.get_renew_value() * config.other.Ratio
+    signup_value = await database.get_renew_value() * config.other.ratio
     try:
-        if event.sender_id in config.other.AdminId:
+        if event.sender_id in config.other.adminId:
             if len(args) > 0:
                 if re.match(r'^\d+$', args[0]):
                     signup_info["remain_num"] = args[0]
-                    signup_message = await client.send_message(config.telegram.ChatID, f'开启注册, 剩余 {signup_info["remain_num"]} 个名额')
+                    signup_message = await client.send_message(config.telegram.chatID, f'开启注册, 剩余 {signup_info["remain_num"]} 个名额')
                 elif re.match(r'^(\d+[hms])+$', args[0]):
                     last_time = re.match(r'(\d+h)?(\d+m)?(\d+s)?', args[0])
                     if last_time is not None:
@@ -43,15 +43,15 @@ async def signup_method(event):
                         seconds = int(last_time.group(3)[:-1]) if last_time.group(3) else 0
                         signup_info["time"] = current_time + (timedelta(hours=hours) + timedelta(minutes=minutes) + timedelta(seconds=seconds)).total_seconds()
                     dt_object = datetime.fromtimestamp(float(signup_info["time"]))
-                    signup_message = await client.send_message(config.telegram.ChatID, f'开启注册, 时间截至 {dt_object.strftime("%Y-%m-%d %H:%M:%S")}')
-                await client.pin_message(config.telegram.ChatID, signup_message, notify=True)
+                    signup_message = await client.send_message(config.telegram.chatID, f'开启注册, 时间截至 {dt_object.strftime("%Y-%m-%d %H:%M:%S")}')
+                await client.pin_message(config.telegram.chatID, signup_message, notify=True)
             else:
                 await signup(event, event.sender_id)
         else:
             if signup_info['remain_num'] > 0:
                 await signup(event, event.sender_id)
                 signup_info['remain_num'] -= 1
-                await client.edit_message(config.telegram.ChatID, signup_message, f"开启注册, 剩余注册人数: {signup_info['remain_num']}")
+                await client.edit_message(config.telegram.chatID, signup_message, f"开启注册, 剩余注册人数: {signup_info['remain_num']}")
             elif signup_info['time'] > current_time:
                 await signup(event, event.sender_id)
             elif user is not None and user.Score >= signup_value:
@@ -110,17 +110,17 @@ async def signup(event, TelegramId):
             await message.delete()
         # raise events.StopPropagation
 
-@client.on(events.NewMessage(pattern=fr'^/code({config.telegram.BotName})?\s+(.*)$'))
+@client.on(events.NewMessage(pattern=fr'^/code({config.telegram.botName})?\s+(.*)$'))
 async def code_check(event):
     '''接收 Telegram 用户的 码'''
     _, *args = event.message.text.split(' ')
     message = None
     try:
         if len(args) > 0:
-            if event.is_private or event.sender_id in config.other.AdminId:
+            if event.is_private or event.sender_id in config.other.adminId:
                 await code(event, args[0])
             else:
-                message = await event.reply(f'请私聊 {config.telegram.BotName} 机器人')
+                message = await event.reply(f'请私聊 {config.telegram.botName} 机器人')
         else:
             message = await event.reply('请回复 “码”')
     except ImportError as e:
@@ -168,12 +168,12 @@ async def code(event, code):
             await message.delete()
         # raise events.StopPropagation
 
-@client.on(events.NewMessage(pattern=fr'^/del({config.telegram.BotName})?$'))
+@client.on(events.NewMessage(pattern=fr'^/del({config.telegram.botName})?$'))
 async def delete(event):
     '''删除用户指令'''
     messages = None
     try:
-        if event.sender_id in config.other.AdminId:
+        if event.sender_id in config.other.adminId:
             if event.reply_to_msg_id is not None:
                 message = await event.get_reply_message()
                 if isinstance(message, types.Message) and isinstance(message.from_id, types.PeerUser):
