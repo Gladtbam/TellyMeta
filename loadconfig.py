@@ -11,6 +11,7 @@ class DictToObject:
                 setattr(self, key, DictToObject(value))
             else:
                 setattr(self, key, value)
+
 class Config:
     '''定义配置文件数据结构'''
     def __init__(self):
@@ -25,54 +26,59 @@ class Config:
             }
         '''Telegram配置'''
         self.telegram = {
-            'token': None,
-            'apiId': None,
-            'apiHash': None,
-            'botName': None,
-            'chatID': None,
-            'requiredChannel': None,
-            'notifyChannel': None
+            'token': 'None',
+            'apiId': 'None',
+            'apiHash': 'None',
+            'botName': 'None',
+            'chatID': 'None',
+            'requiredChannel': 'None',
+            'notifyChannel': 'None'
             }
         '''Emby配置'''
         self.emby = {
-            'host': None,
-            'apiKey': None
+            'host': 'None',
+            'apiKey': 'None'
             }
         '''哪吒探针配置'''
         self.probe = {
-            'host': None,
-            'token': None,
-            'id': None
+            'enabled': False,
+            'host': 'None',
+            'token': 'None',
+            'id': 'None'
             }
         '''Lidarr配置'''
         self.lidarr = {
-            'host': None,
-            'apiKey': None
+            'enabled': False,
+            'host': 'None',
+            'apiKey': 'None'
             }
         '''Radarr配置'''
         self.radarr = {
-            'host': None,
-            'apiKey': None
+            'enabled': False,
+            'host': 'None',
+            'apiKey': 'None'
             }
         '''Sonarr配置'''
         self.sonarr = {
-            'host': None,
-            'apiKey': None
+            'enabled': False,
+            'host': 'None',
+            'apiKey': 'None'
             }
         '''Sonarr动画配置'''
         self.sonarrAnime = {
-            'host': None,
-            'apiKey': None
+            'enabled': False,
+            'host': 'None',
+            'apiKey': 'None'
             }
         '''其他配置'''
         self.other = {
             'adminId': [],
-            'OMDBApiKey': None,
+            'OMDBApiKey': 'None',
             'ratio': 1,
-            'wiki': None
+            'wiki': 'None'
             }
 
-    def prompt_for_config(self, config, name=None):
+    def prompt_for_config(self, config, name='None'):
         '''提示用户输入配置'''
         print(f"请输入{name}:")
         for key in config:
@@ -103,6 +109,13 @@ def init_config():
         config = Config()
         config.prompt_for_config(config.dataBase, "数据库配置")
         config.prompt_for_config(config.telegram, "Telegram配置")
+        config.prompt_for_config(config.emby, "Emby配置")
+        config.prompt_for_config(config.probe, "哪吒探针配置")
+        config.prompt_for_config(config.lidarr, "Lidarr配置")
+        config.prompt_for_config(config.radarr, "Radarr配置")
+        config.prompt_for_config(config.sonarr, "Sonarr配置")
+        config.prompt_for_config(config.sonarrAnime, "Sonarr动画配置")
+        config.prompt_for_config(config.other, "其他配置")
         config.save_config()
         config = load_config()
     return config
