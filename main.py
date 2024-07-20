@@ -5,7 +5,6 @@ import arr
 import notify
 import database
 import embyaccount
-import embyapi
 import gencode
 import scheduler
 import scoremanager

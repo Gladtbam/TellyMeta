@@ -8,7 +8,7 @@ import asyncio
 from telethon import events, types
 from telegram import client
 from loadconfig import init_config
-import embyapi
+import media_api
 import gencode
 import database
 
@@ -83,10 +83,10 @@ async def signup(event, TelegramId):
         else:
             emby = await database.get_emby(TelegramId)
             if emby is None:
-                EmbyId = await embyapi.new_user(TelegramName)
+                EmbyId = await media_api.new_user(TelegramName)
                 if EmbyId is not None:
-                    await embyapi.user_policy(EmbyId, BlockMeida=BlockMedia)
-                    Pw = await embyapi.post_password(EmbyId)
+                    await media_api.user_policy(EmbyId, BlockMeida=BlockMedia)
+                    Pw = await media_api.post_password(EmbyId)
                     _bool = await database.create_emby(TelegramId, EmbyId, TelegramName)
                     if _bool:
                         message = await event.reply(f'注册成功, \nEMBY ID: `{EmbyId}`\n用户名: `{TelegramName}`\n初始密码: `{Pw}`\n\n请及时修改密码')
@@ -149,7 +149,7 @@ async def code(event, code):
                         await database.update_limit_date(event.sender_id)
                         await database.delete_code(code)
                         if emby.Ban is True:
-                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         message = await event.reply('续期成功')
                     else:
                         message = await event.reply(f'离到期还有 {remain_day.days} 天\n目前小于 7 天才允许续期')
@@ -181,7 +181,7 @@ async def delete(event):
                     emby = await database.get_emby(user_id)
                     if emby is not None:
                         _bool_db = await database.delete_emby(user_id)
-                        _bool_emby = await embyapi.delete_emby_user(emby.EmbyId)
+                        _bool_emby = await media_api.delete_user(emby.EmbyId)
                         if _bool_db and _bool_emby:
                             messages = await event.reply(f'用户 {emby.EmbyId} 删除成功')
                         else:
@@ -214,7 +214,7 @@ async def renew(event):
             remain_day = emby.LimitDate.date() - datetime.now().date()
             if remain_day.days <= 7:
                 user = await database.get_user(event.sender_id)
-                played_ratio = await embyapi.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
+                played_ratio = await media_api.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
                 if played_ratio is not None:
                     if played_ratio >= 1:
                         renew_value = 0
@@ -224,7 +224,7 @@ async def renew(event):
                         await database.update_limit_date(event.sender_id)
                         await database.change_score(event.sender_id, -renew_value)
                         if emby.Ban is True:
-                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         message = await event.respond(f'续期成功, 扣除积分: {renew_value}')
                     else:
                         message = await event.respond(f'续期失败, 积分不足, 当前积分: {user.Score if user is not None else 0}, 续期所需积分: {renew_value}')
@@ -250,12 +250,12 @@ async def nfsw(event):
     try:
         emby = await database.get_emby(event.sender_id)
         if emby is not None:
-            emby_info = await embyapi.get_user_info(emby.EmbyId)
+            emby_info = await media_api.get_user_info(emby.EmbyId)
             if len(emby_info['Policy']['BlockedMediaFolders']) > 0:
-                await embyapi.user_policy(emby.EmbyId, BlockMeida=())
+                await media_api.user_policy(emby.EmbyId, BlockMeida=())
                 message = await event.respond('NSFW On')
             else:
-                await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                 message = await event.respond('NSFW Off')
         else:
             message = await event.respond('用户不存在, 请注册')
@@ -275,9 +275,9 @@ async def forget_password(event):
     try:
         emby = await database.get_emby(event.sender_id)
         if emby is not None:
-            _bool = await embyapi.post_password(emby.EmbyId, ResetPassword=True)
+            _bool = await media_api.post_password(emby.EmbyId, reset_passwd=True)
             if _bool:
-                Pw = await embyapi.post_password(emby.EmbyId)
+                Pw = await media_api.post_password(emby.EmbyId)
                 await event.respond(f'密码已重置:\n `{Pw}`\n请及时修改密码')
             else:
                 message = await event.respond('密码重置失败')

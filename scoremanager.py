@@ -9,7 +9,7 @@ from telethon import events, types, errors
 from telegram import client
 from loadconfig import init_config
 import database
-import embyapi
+import media_api
 from gencode import generate_code
 
 config = init_config()
@@ -49,7 +49,7 @@ async def checkin(event):
                     if emby is not None:
                         _bool = await database.update_limit_date(event.sender_id, days=15)
                         if emby.Ban is True:
-                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         if _bool:
                             await database.change_checkin_day(event.sender_id)
                             await event.reply('签到成功, 续期 15 天')
@@ -62,7 +62,7 @@ async def checkin(event):
                     if emby is not None:
                         _bool = await database.update_limit_date(event.sender_id, days=7)
                         if emby.Ban is True:
-                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         if _bool:
                             await database.change_checkin_day(event.sender_id)
                             await event.reply('签到成功, 续期 7 天')
@@ -75,7 +75,7 @@ async def checkin(event):
                     if emby is not None:
                         _bool = await database.update_limit_date(event.sender_id, days=1)
                         if emby.Ban is True:
-                            await embyapi.user_policy(emby.EmbyId, BlockMeida=("Japan"))
+                            await media_api.user_policy(emby.EmbyId, BlockMeida=("Japan"))
                         if _bool:
                             await database.change_checkin_day(event.sender_id)
                             await event.reply('签到成功, 续期 1 天')

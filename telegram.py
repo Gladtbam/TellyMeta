@@ -6,7 +6,7 @@ import asyncio
 from telethon import TelegramClient, events, Button
 from loadconfig import init_config
 import database
-import embyapi
+import media_api
 
 config = init_config()
 
@@ -97,7 +97,7 @@ async def me(event, TelegramId = None):
 '''
 
         if emby is not None:
-            played_ratio = await embyapi.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
+            played_ratio = await media_api.user_playlist(emby.EmbyId, emby.LimitDate.strftime("%Y-%m-%d"))
             if played_ratio is not None:
                 played_ratio = "{:.4f}%".format(played_ratio * 100)
             message += f'''
@@ -157,14 +157,14 @@ async def line(event):
     '''接收线路查询按钮'''
     message = None
     try:
-        url = config.emby.host.split(':')
+        url = config.media.host.split(':')
         if len(url) == 2:
             if url[0] == 'https':
-                url = config.emby.host + ':443'
+                url = config.media.host + ':443'
             else:
-                url = config.emby.host + ':80'
+                url = config.media.host + ':80'
         else:
-            url = config.emby.host
+            url = config.media.host
         message = await event.respond(f'Emby 地址: `{url}`')
     except ImportError as e:
         logging.error("line error: %s", e)
@@ -193,7 +193,7 @@ async def chat_action(event):
             emby = await database.get_emby(event.user.id)
             if emby is not None:
                 await database.delete_emby(event.user.id)
-                await embyapi.delete_emby_user(emby.EmbyId)
+                await media_api.delete_user(emby.EmbyId)
         if event.user_added and event.action_message.action.user_id == client.get_me().id:
             await client.send_message(event.chat_id, f'感谢使用 {config.telegram.botName} 机器人, 请私聊机器人使用')
             async for user in client.iter_participants(config.telegram.chatID):

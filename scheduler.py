@@ -8,7 +8,7 @@ from loadconfig import init_config
 from telegram import client
 from scoremanager import calculate_ratio, user_msg_count
 import database
-import embyapi
+import media_api
 
 config = init_config()
 scheduler = AsyncIOScheduler()
@@ -23,9 +23,9 @@ async def ban_users():
         logging.info("Starting ban users job")
         embyIds = await database.limit_emby_ban()
         if embyIds is not None:
-            _bool = await embyapi.ban_emby_user(embyIds)
+            _bool = await media_api.ban_user(embyIds)
             if _bool:
-                logging.info(f"Banned {len(embyIds)} users")
+                logging.info("Banned %s users", len(embyIds))
             else:
                 logging.error("Error banning users")
         else:
@@ -45,7 +45,7 @@ async def delete_ban_users():
         logging.info("Starting delete ban users job")
         embyIds = await database.limit_emby_delete()
         if embyIds is not None:
-            _bool = await embyapi.delete_ban_user(embyIds)
+            _bool = await media_api.delete_ban_user(embyIds)
             if _bool:
                 logging.info(f"Deleted {len(embyIds)} users")
             else:
@@ -111,8 +111,8 @@ async def server_status():
     messages = None
     try:
         logging.info("Starting server status job")
-        probe_info = await embyapi.get_server_info()
-        session_list = await embyapi.session_list()
+        probe_info = await media_api.get_server_info()
+        session_list = await media_api.session_list()
         if probe_info is not None and session_list is not None:
             message = f'''
 当前在线人数: {session_list}

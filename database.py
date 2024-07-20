@@ -1,6 +1,7 @@
 '''
 数据库操作 API
 '''
+import os
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, select, delete, func
@@ -13,6 +14,11 @@ config = init_config()
 
 if config.dataBase.dataBaseType == 'sqlite':
     engine = create_async_engine('sqlite+aiosqlite:///embybot.db')
+    if os.path.exists('/var/lib/jellyfin/data/playback_reporting.db'):
+        only_read_engine = create_async_engine('sqlite+aiosqlite:///var/lib/jellyfin/data/playback_reporting.db')
+    else:
+        logging.error('Playback Reporting Database not found')
+        # exit(1)
 else:
     engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.user}:{config.dataBase.password}@{config.dataBase.host}:{config.dataBase.port}/{config.dataBase.databaseName}')
 

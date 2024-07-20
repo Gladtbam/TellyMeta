@@ -34,39 +34,39 @@ class Config:
             'requiredChannel': 'None',
             'notifyChannel': 'None'
             }
-        '''Emby配置'''
-        self.emby = {
+        '''Emby/Jellyfin配置'''
+        self.media = {
             'host': 'None',
             'apiKey': 'None'
             }
         '''哪吒探针配置'''
         self.probe = {
-            'enabled': False,
+            # 'enabled': False,
             'host': 'None',
             'token': 'None',
             'id': 'None'
             }
         '''Lidarr配置'''
         self.lidarr = {
-            'enabled': False,
+            # 'enabled': False,
             'host': 'None',
             'apiKey': 'None'
             }
         '''Radarr配置'''
         self.radarr = {
-            'enabled': False,
+            # 'enabled': False,
             'host': 'None',
             'apiKey': 'None'
             }
         '''Sonarr配置'''
         self.sonarr = {
-            'enabled': False,
+            # 'enabled': False,
             'host': 'None',
             'apiKey': 'None'
             }
         '''Sonarr动画配置'''
         self.sonarrAnime = {
-            'enabled': False,
+            # 'enabled': False,
             'host': 'None',
             'apiKey': 'None'
             }
@@ -75,7 +75,8 @@ class Config:
             'adminId': [],
             'OMDBApiKey': 'None',
             'ratio': 1,
-            'wiki': 'None'
+            'wiki': 'None',
+            'paltform': 'jellyfin'
             }
 
     def prompt_for_config(self, config, name='None'):
@@ -107,9 +108,9 @@ def init_config():
     config = load_config()
     if config is None:
         config = Config()
-        config.prompt_for_config(config.dataBase, "数据库配置")
+        config.prompt_for_config(config.dataBase, "数据库配置(sqlite/mysql)")
         config.prompt_for_config(config.telegram, "Telegram配置")
-        config.prompt_for_config(config.emby, "Emby配置")
+        config.prompt_for_config(config.media, "Emby/Jellyfin配置")
         config.prompt_for_config(config.probe, "哪吒探针配置")
         config.prompt_for_config(config.lidarr, "Lidarr配置")
         config.prompt_for_config(config.radarr, "Radarr配置")

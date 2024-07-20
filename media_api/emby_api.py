@@ -15,7 +15,7 @@ config = init_config()
 
 async def new_user(TelegramName):
     '''新建 Emby 用户'''
-    url = f'{config.emby.host}/emby/Users/New?api_key={config.emby.apiKey}'
+    url = f'{config.media.host}/emby/Users/New?api_key={config.media.apiKey}'
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json={'Name': TelegramName}, headers=headers) as resp:
@@ -23,12 +23,13 @@ async def new_user(TelegramName):
                     data = await resp.json()  # 获取返回的json
                     return data['Id']  # 返回json数据
                 else:
+                    logging.warning("新建 Emby 用户失败: %s", resp.status)
                     return None
     except ImportError as e:
         logging.error("新建 Emby 用户失败: %s", e)
         return None
 
-async def user_policy(EmbyId, BlockMeida):
+async def user_policy(emby_id, BlockMeida):
     '''设置 Emby 用户权限'''
     data = {
         "IsAdministrator": False,                   # 是否为管理员
@@ -73,23 +74,24 @@ async def user_policy(EmbyId, BlockMeida):
         "EnabledDevices": [],                       # 允许访问的设备列表
         "EnableAllDevices": True                    # 是否允许访问所有设备
     }
-    url = f"{config.emby.host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/Users/{emby_id}/Policy?api_key={config.media.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=data, headers=headers) as resp:
-                _bool = resp.status == 200
-                return _bool
-                # if resp.status == 200:
-                #     return True
-                # else:
-                #     return False
+                # _bool = resp.status == 200
+                # return _bool
+                if resp.status == 200:
+                    return True
+                else:
+                    logging.warning("设置 Emby 用户权限失败: %s", resp.status)
+                    return False
     except ImportError as e:
         logging.error("设置 Emby 用户权限失败: %s", e)
         return False
 
-async def get_user_info(EmbyId):
+async def get_user_info(emby_id):
     '''获取 Emby 用户信息'''
-    url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/Users/{emby_id}?api_key={config.media.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
@@ -97,25 +99,26 @@ async def get_user_info(EmbyId):
                     data = await resp.json()
                     return data
                 else:
+                    logging.warning("获取 Emby 用户信息失败: %s", resp.status)
                     return None
     except ImportError as e:
         logging.error("获取 Emby 用户信息失败: %s", e)
         return None
 
-async def post_password(EmbyId, ResetPassword=False):
+async def post_password(emby_id, reset_passwd=False):
     '''创建/重置 Emby 用户密码'''
-    Pw = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(12))
+    passwd = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(12))
     data = {
-        "Id": EmbyId,
+        "Id": emby_id,
         "CurrentPw": "",
-        "NewPw": Pw,
-        "ResetPassword": ResetPassword
+        "NewPw": passwd,
+        "ResetPassword": reset_passwd
     }
-    url = f"{config.emby.host}/emby/Users/{EmbyId}/Password?api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/Users/{emby_id}/Password?api_key={config.media.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
-            if ResetPassword is True:
-                async with session.post(url, json={"ResetPassword": ResetPassword}, headers=headers) as resp:
+            if reset_passwd is True:
+                async with session.post(url, json={"ResetPassword": reset_passwd}, headers=headers) as resp:
                     _bool = resp.status in [200, 204]
                     return _bool
                     # if resp.status in [200, 204]:
@@ -125,16 +128,16 @@ async def post_password(EmbyId, ResetPassword=False):
             else:
                 async with session.post(url, json=data, headers=headers) as resp:
                     if resp.status in [200, 204]:
-                        return Pw
+                        return passwd
                     else:
                         return None
     except ImportError as e:
         logging.error("创建/重置 Emby 用户密码失败: %s", e)
         return None
 
-async def delete_emby_user(EmbyId):
+async def delete_user(emby_id):
     '''删除 Emby 用户'''
-    url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/Users/{emby_id}?api_key={config.media.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.delete(url, headers=headers) as resp:
@@ -148,37 +151,39 @@ async def delete_emby_user(EmbyId):
         logging.error("删除 Emby 用户失败: %s", e)
         return False
 
-async def ban_emby_user(EmbyIds):
+async def ban_user(emby_ids):
     '''禁用 Emby 用户'''
     try:
         async with aiohttp.ClientSession() as session:
-            for EmbyId in EmbyIds:
-                url = f"{config.emby.host}/emby/Users/{EmbyId}/Policy?api_key={config.emby.apiKey}"
+            for emby_id in emby_ids:
+                url = f"{config.media.host}/emby/Users/{emby_id}/Policy?api_key={config.media.apiKey}"
                 async with session.post(url, json={"IsDisabled": True}, headers=headers) as resp:
                     if resp.status != 200:
+                        logging.warning("禁用 Emby 用户 %s 失败: %s", emby_id, resp.status)
                         return False
             return True
     except ImportError as e:
         logging.error("禁用 Emby 用户失败: %s", e)
         return False
 
-async def delete_ban_user(EmbyIds):
+async def delete_ban_user(emby_ids):
     '''删除已禁用 Emby 用户'''
     try:
         async with aiohttp.ClientSession() as session:
-            for EmbyId in EmbyIds:
-                url = f"{config.emby.host}/emby/Users/{EmbyId}?api_key={config.emby.apiKey}"
+            for emby_id in emby_ids:
+                url = f"{config.media.host}/emby/Users/{emby_id}?api_key={config.media.apiKey}"
                 async with session.delete(url, headers=headers) as resp:
                     if resp.status != 200:
+                        logging.warning("删除已禁用 Emby 用户 %s 失败: %s", emby_id, resp.status)
                         return False
             return True
     except ImportError as e:
         logging.error("删除已禁用 Emby 用户失败: %s", e)
         return False
 
-async def user_playlist(EmbyId, LimitDate):
+async def user_playlist(emby_id, limit_date):
     '''获取 Emby 用户播放记录'''
-    url = f"{config.emby.host}/emby/user_usage_stats/UserPlaylist?user_id={EmbyId}&aggregate_data=false&days=30&end_date={LimitDate}&api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/user_usage_stats/UserPlaylist?user_id={emby_id}&aggregate_data=false&days=30&end_date={limit_date}&api_key={config.media.apiKey}"
     total_duration = 0
     try:
         async with aiohttp.ClientSession() as session:
@@ -197,7 +202,7 @@ async def user_playlist(EmbyId, LimitDate):
 
 async def session_list():
     '''获取 Emby 用户在线数量'''
-    url = f"{config.emby.host}/emby/user_usage_stats/session_list?api_key={config.emby.apiKey}"
+    url = f"{config.media.host}/emby/user_usage_stats/session_list?api_key={config.media.apiKey}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
