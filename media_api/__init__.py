@@ -9,3 +9,5 @@ if config.other.paltform == 'emby':
     from . import emby_api as media_api
 elif config.other.paltform == 'jellyfin':
     from . import jellyfin_api as media_api
+else:
+    raise ValueError('未知的平台')

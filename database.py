@@ -18,7 +18,7 @@ if config.dataBase.dataBaseType == 'sqlite':
         only_read_engine = create_async_engine('sqlite+aiosqlite:///var/lib/jellyfin/data/playback_reporting.db')
     else:
         logging.error('Playback Reporting Database not found')
-        # exit(1)
+        exit(1)
 else:
     engine = create_async_engine(f'mysql+asyncmy://{config.dataBase.user}:{config.dataBase.password}@{config.dataBase.host}:{config.dataBase.port}/{config.dataBase.databaseName}')
 
