@@ -1,4 +1,4 @@
-SQLAlchemy~=2.0.37
+SQLAlchemy~=2.0.38
 asyncmy~=0.2.10
 Telethon~=1.38.1
 cryptg~=0.5.0
