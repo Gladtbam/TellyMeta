@@ -1,6 +1,6 @@
 SQLAlchemy~=2.0.40
 asyncmy~=0.2.10
-Telethon~=1.39.0
+Telethon~=1.40.0
 cryptg~=0.5.0
 Pillow~=11.2.1
 aiohttp~=3.11.16
