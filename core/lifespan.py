@@ -1,0 +1,152 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
+import httpx
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi import FastAPI
+
+from clients.ai_client import AIClientWarper
+from clients.emby_client import EmbyClient
+from clients.qb_client import QbittorrentClient
+from clients.tmdb_client import TmdbService
+from clients.tvdb_client import TvdbClient
+from core.config import get_settings
+from core.database import DATABASE_URL, Base, async_engine, async_session
+from core.initialization import (check_sqlite_version, initialize_admin,
+                                 initialize_bot_configuration)
+from core.scheduler_jobs import (ban_expired_users,
+                                 delete_expired_banned_users, settle_scores)
+from core.telegram_manager import TelethonClientWarper
+from services.score_service import MessageTrackingState
+from workers.mkv_worker import mkv_merge_task
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    check_sqlite_version()
+
+    logger.info("启动应用程序生命周期上下文")
+
+    app.state.task_queue = asyncio.Queue()
+
+    app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
+
+    app.state.ai_client = AIClientWarper(
+        base_url=settings.ai_base_url,
+        api_key=settings.ai_api_key,
+        model=settings.ai_model
+    )
+
+    app.state.qb_client = QbittorrentClient(
+        client=httpx.AsyncClient(base_url=settings.qbittorrent_base_url),
+        username=settings.qbittorrent_username,
+        password=settings.qbittorrent_password
+    )
+
+    app.state.tmdb_client = TmdbService(
+        client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
+        api_key=settings.tmdb_api_key
+    )
+
+    app.state.tvdb_client = TvdbClient(
+        client=httpx.AsyncClient(base_url='https://api4.thetvdb.com/v4'),
+        api_key=settings.tvdb_api_key
+    )
+
+    if settings.media_server == 'emby':
+        app.state.media_client = EmbyClient(
+            client=httpx.AsyncClient(base_url=settings.media_server_url),
+            api_key=settings.media_api_key
+        )
+    elif settings.media_server == 'jellyfin':
+        pass  # TODO: Implement Jellyfin client
+    else:
+        raise ValueError(f"不支持的媒体服务器类型: {settings.media_server}")
+
+    # await app.state.qb_client.login()
+    # await app.state.tvdb_client.login()
+
+    app.state.db_engine = async_engine
+    async with app.state.db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    app.state.telethon_client = TelethonClientWarper(app)
+    await app.state.telethon_client.connect()
+
+    # 初始化管理员用户
+    async with async_session() as session:
+        admin_ids = await initialize_admin(session, app.state.telethon_client)
+        app.state.admin_ids = set(admin_ids)
+        await initialize_bot_configuration(session)
+        await session.close()
+
+    app.state.scheduler = AsyncIOScheduler(
+        jobstores={'default': SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))}
+        )
+    app.state.scheduler.start()
+
+    app.state.message_tracker = MessageTrackingState()
+
+    app.state.scheduler.add_job(
+        ban_expired_users,
+        'cron',
+        hour=0, minute=15,
+        id='ban_expired_users',
+        replace_existing=True
+    )
+
+    app.state.scheduler.add_job(
+        delete_expired_banned_users,
+        'cron',
+        hour=0, minute=30,
+        id='delete_expired_banned_users',
+        replace_existing=True
+    )
+
+    app.state.scheduler.add_job(
+        settle_scores,
+        'cron',
+        hour='8, 20',
+        id='settle_scores',
+        replace_existing=True
+    )
+
+    yield
+
+    logger.info("关闭应用程序生命周期上下文")
+    app.state.mkv_worker.cancel()
+    try:
+        await app.state.mkv_worker
+    except asyncio.CancelledError:
+        logger.info("MKV 工作线程已取消")
+
+    await app.state.qb_client.close()
+    await app.state.tvdb_client.close()
+    if hasattr(app.state, 'media_client'):
+        await app.state.media_client.close()
+
+    if await app.state.telethon_client.is_connected():
+        await app.state.telethon_client.disconnect()
+
+    if app.state.scheduler.running:
+        app.state.scheduler.shutdown(wait=True)
+
+    if app.state.db_engine:
+        await app.state.db_engine.dispose()
+    logger.info("应用程序生命周期上下文已关闭")
+    # try:
+    #     yield
+    # finally:
+    #     logger.info("Shutting down application lifespan context")
+    #     await app.state.http_client.aclose()
+    #     app.state.mkv_worker.cancel()
+    #     try:
+    #         await app.state.mkv_worker
+    #     except asyncio.CancelledError:
+    #         logger.info("MKV worker task cancelled")
+    #     logger.info("Application lifespan context closed")
+

@@ -1,0 +1,28 @@
+[project]
+name = "TellyMeta"
+version = "1.0.0"
+description = "A personal media management tool"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "aiosqlite>=0.21.0",
+    "apscheduler>=3.11.0",
+    "fastapi>=0.116.1",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "openai>=1.95.1",
+    "pillow>=11.3.0",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "sqlalchemy[asyncio]>=2.0.41",
+    "telethon>=1.40.0",
+    "uvicorn[standard]>=0.35.0",
+]
+
+[tool.pyright]
+exclude = ["__pycache__"]
+typeCheckingMode = "standard"
+strictDictionaryInference = true
+strictListInference = true
+deprecateTypingAliases = true
