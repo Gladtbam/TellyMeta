@@ -22,7 +22,7 @@ class TelegramRepository:
          """
         return await self.session.get(TelegramUser, user_id)
 
-    async def create_by_id(self, user_id: int) -> TelegramUser:
+    async def __create_by_id(self, user_id: int) -> TelegramUser:
         """创建Telegram用户
         Args:
             user_id (int): Telegram用户ID
@@ -31,8 +31,6 @@ class TelegramRepository:
          """
         new_user = TelegramUser(id=user_id)
         self.session.add(new_user)
-        await self.session.commit()
-        await self.session.refresh(new_user)
         return new_user
 
     async def get_or_create(self, user_id: int) -> TelegramUser:
@@ -41,7 +39,7 @@ class TelegramRepository:
 
         user = await self.get_by_id(user_id)
         if user is None:
-            user = await self.create_by_id(user_id)
+            user = await self.__create_by_id(user_id)
             await self.session.commit()
             await self.session.refresh(user)
         return user
