@@ -26,3 +26,6 @@ typeCheckingMode = "standard"
 strictDictionaryInference = true
 strictListInference = true
 deprecateTypingAliases = true
+
+[tool.pylint.format]
+max-line-length = 120

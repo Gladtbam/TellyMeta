@@ -338,7 +338,7 @@ async def group_message_handler(app: FastAPI, event: events.NewMessage.Event, se
 
     if not event.message.text.startswith('/'):
         return
-    
+
     if not any(word in event.message.text for word in IGNORED_KEYWORDS):
         return
 
@@ -349,7 +349,7 @@ async def group_message_handler(app: FastAPI, event: events.NewMessage.Event, se
         await safe_reply(event, flood_result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/(.+)({settings.telegram_bot_name})?$',
+    pattern=fr'^/(\w+)(?:@\w+)?$',
     incoming=True
     ))
 async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
@@ -358,12 +358,16 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     删除所有命令消息
     """
     known_commands = [
-        'start', 'help', 'me', 'info', 'line', 'chat_id',
+        'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup'
     ]
-    command = event.pattern_match.group(1).lower() # type: ignore
-    if command not in known_commands:
-        await safe_reply(event, f"未知命令: /{command}. 使用 /help 获取帮助。")
+    try:
+        command = event.pattern_match.group(1).lower()  # type: ignore
+        if command not in known_commands:
+            await safe_reply(event, f"未知命令: /{command}. 使用 /help 获取帮助。")
+    except IndexError:
+        logger.warning("group(1) 不存在")
+
     try:
         await asyncio.sleep(1)
         await event.delete()
@@ -386,7 +390,10 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
         return
 
     user_id = event.sender_id
-    args_str = (event.pattern_match.group(1) or "").strip() # type: ignore
+    try:
+        args_str = event.pattern_match.group(1).strip() # type: ignore
+    except IndexError:
+        args_str = None
 
     registration_service = AccountService(session, app.state.media_client)
     client: TelethonClientWarper = app.state.telethon_client
@@ -413,12 +420,12 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
         await safe_reply(event, "请私聊我以使用码。")
         return
 
-    args_str = (event.pattern_match.group(1) or "").strip() # type: ignore
-
-    if not args_str:
+    try:
+        args_str = event.pattern_match.group(1).strip() # type: ignore
+    except IndexError:
         await safe_reply(event, "请在命令后添加激活码，例如: /code YOUR_CODE")
         return
-    
+
     user_id = event.sender_id
     client: TelethonClientWarper = app.state.telethon_client
     user_entity = await client.client.get_entity(user_id)
