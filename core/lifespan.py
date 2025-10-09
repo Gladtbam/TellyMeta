@@ -32,8 +32,8 @@ async def lifespan(app: FastAPI):
     logger.info("启动应用程序生命周期上下文")
 
     app.state.task_queue = asyncio.Queue()
-
     app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
+    app.state.message_tracker = MessageTrackingState()
 
     app.state.ai_client = AIClientWarper(
         base_url=settings.ai_base_url,
@@ -67,15 +67,18 @@ async def lifespan(app: FastAPI):
     else:
         raise ValueError(f"不支持的媒体服务器类型: {settings.media_server}")
 
-    # await app.state.qb_client.login()
-    # await app.state.tvdb_client.login()
-
     app.state.db_engine = async_engine
-    async with app.state.db_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
     app.state.telethon_client = TelethonClientWarper(app)
-    await app.state.telethon_client.connect()
+
+    async def create_db_tables():
+        async with app.state.db_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    await asyncio.gather(
+        create_db_tables(),
+        app.state.telethon_client.connect()
+    )
+    app.state.telethon_worker = asyncio.create_task(app.state.telethon_client.run_until_disconnected())
 
     # 初始化管理员用户
     async with async_session() as session:
@@ -87,9 +90,6 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = AsyncIOScheduler(
         jobstores={'default': SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))}
         )
-    app.state.scheduler.start()
-
-    app.state.message_tracker = MessageTrackingState()
 
     app.state.scheduler.add_job(
         ban_expired_users,
@@ -115,6 +115,8 @@ async def lifespan(app: FastAPI):
         replace_existing=True
     )
 
+    app.state.scheduler.start()
+
     yield
 
     logger.info("关闭应用程序生命周期上下文")
@@ -124,6 +126,10 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         logger.info("MKV 工作线程已取消")
 
+    if app.state.scheduler.running:
+        app.state.scheduler.shutdown(wait=True)
+        logger.info("任务计划程序已关闭")
+
     await app.state.qb_client.close()
     await app.state.tvdb_client.close()
     if hasattr(app.state, 'media_client'):
@@ -131,22 +137,12 @@ async def lifespan(app: FastAPI):
 
     if await app.state.telethon_client.is_connected():
         await app.state.telethon_client.disconnect()
-
-    if app.state.scheduler.running:
-        app.state.scheduler.shutdown(wait=True)
+    app.state.telethon_worker.cancel()
+    try:
+        await app.state.telethon_worker
+    except asyncio.CancelledError:
+        logger.info("Telethon 工作线程已取消")
 
     if app.state.db_engine:
         await app.state.db_engine.dispose()
     logger.info("应用程序生命周期上下文已关闭")
-    # try:
-    #     yield
-    # finally:
-    #     logger.info("Shutting down application lifespan context")
-    #     await app.state.http_client.aclose()
-    #     app.state.mkv_worker.cancel()
-    #     try:
-    #         await app.state.mkv_worker
-    #     except asyncio.CancelledError:
-    #         logger.info("MKV worker task cancelled")
-    #     logger.info("Application lifespan context closed")
-
