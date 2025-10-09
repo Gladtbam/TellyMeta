@@ -1,5 +1,4 @@
 import logging
-from math import exp
 import re
 from datetime import datetime, timedelta
 import textwrap

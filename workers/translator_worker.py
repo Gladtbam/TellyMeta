@@ -6,7 +6,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from clients.ai_client import AIClientWarper
 from clients.tmdb_client import TmdbService
 from core.config import genre_mapping
-from models import tmdb
 from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 

@@ -1,8 +1,7 @@
 import logging
 import textwrap
-from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from random import choice, choices, randint
 from typing import Any
 

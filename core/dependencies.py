@@ -1,14 +1,12 @@
 import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Request
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
 from clients.tmdb_client import TmdbService
 from clients.tvdb_client import TvdbClient
-from core.database import get_db
 from core.telegram_manager import TelethonClientWarper
 from services.media_service import MediaService
 

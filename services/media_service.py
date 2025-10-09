@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from models.emby import EmbySetUserPolicy, EmbyUser
+from models.emby import EmbyUser
 
 
 class MediaService(ABC):

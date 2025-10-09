@@ -5,9 +5,7 @@ from random import randint, sample
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
-from rsa import key
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import state
 from telethon import Button
 
 from bot.utils import generate_captcha

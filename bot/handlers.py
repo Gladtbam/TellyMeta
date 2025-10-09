@@ -12,7 +12,6 @@ from bot.utils import safe_reply, safe_respond, safe_respond_keyboard
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
-from services.media_service import MediaService
 from services.account_service import AccountService
 from services.score_service import MessageTrackingState, ScoreService
 from services.user_service import UserService, Result

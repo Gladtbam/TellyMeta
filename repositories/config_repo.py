@@ -1,7 +1,5 @@
 import logging
-import re
 
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import BotConfiguration

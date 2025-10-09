@@ -1,6 +1,6 @@
 import logging
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import PendingVerification

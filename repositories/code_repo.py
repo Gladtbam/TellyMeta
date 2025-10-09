@@ -1,9 +1,8 @@
 import logging
 import secrets
-from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import ActiveCode

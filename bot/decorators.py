@@ -3,7 +3,6 @@ from collections.abc import Callable, Coroutine
 from functools import wraps
 
 from fastapi import FastAPI
-from telethon.events.common import EventBuilder
 
 from core.database import async_session
 

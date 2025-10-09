@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from telethon import TelegramClient, errors
 from telethon.events.common import EventBuilder
 from telethon.tl import functions
-from telethon.tl.types import (Channel, ChannelParticipantCreator,
+from telethon.tl.types import (ChannelParticipantCreator,
                                ChannelParticipantsAdmins, ChatBannedRights,
                                Message)
 
