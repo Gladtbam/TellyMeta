@@ -76,6 +76,7 @@ async def settle_scores() -> None:
 
             if result is None:
                 await client.send_message(settings.telegram_chat_id, "当前无积分可结算。")
+                return
 
             summary = textwrap.dedent(f"""\
                 ✅ 积分结算完成！

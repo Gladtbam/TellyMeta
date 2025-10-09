@@ -246,6 +246,7 @@ async def settle_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     if result is None:
         await safe_reply(event, "当前无积分可结算。")
+        return
 
     summary = textwrap.dedent(f"""\
         ✅ 积分结算完成！
@@ -368,7 +369,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
         await asyncio.sleep(1)
         await event.delete()
     except errors.FloodWaitError as e:
-        logger.warning("删除消息时等待错误：等待％d秒", e.seconds)
+        logger.warning("删除消息时等待错误：等待%d秒", e.seconds)
         await asyncio.sleep(e.seconds)
         await event.delete()
 

@@ -46,6 +46,7 @@ async def translate_emby_item(item_id: str) -> None:
 
     if not tmdb_info or isinstance(tmdb_info, TmdbFindPayload):
         logging.warning("No TMDB info found for item %s", item_id)
+        return
 
     fields_to_translate_item = {
         'Name': item.get('Name'),
