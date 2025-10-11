@@ -4,7 +4,8 @@ import random
 import httpx
 
 from clients.base_client import BaseClient
-from models.emby import EmbySetUserPolicy, EmbyUser
+from models.emby import (BaseItemDto, UserPolicy,
+                         QueryResult_BaseItemDto, UserDto)
 from services.media_service import MediaService
 
 logger = logging.getLogger(__name__)
@@ -25,23 +26,23 @@ class EmbyClient(BaseClient, MediaService):
         super().__init__(client)
         self._api_key = api_key
 
-    async def create(self, name: str) -> EmbyUser | None:
+    async def create(self, name: str) -> UserDto | None:
         """创建用户。
         Args:
             name (str): 用户名。
         Returns:
-            EmbyUser: 创建的 Emby 用户对象。
+            UserDto: 创建的 Emby 用户对象。
         """
         url = "/Users/New"
         params = {'api_key': self._api_key}
         payload = {'Name': name}
 
-        response = await self._client.post(url, params=params, json=payload)
+        response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
         logger.info("创建用户 %s 成功", name)
-        return EmbyUser.model_validate(response.json())
+        return UserDto.model_validate(response.json())
     
-    async def delete_by_id(self, user_id: str | list[str]) -> bool:
+    async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
         """删除用户。
 
         Args:
@@ -52,26 +53,26 @@ class EmbyClient(BaseClient, MediaService):
         if isinstance(user_id, str):
             user_id = [user_id]
         for uid in user_id:
-            url = f"/emby/Users/{uid}"
+            url = f"/Users/{uid}"
             response = await self.delete(url, params=params)
             response.raise_for_status()
             logger.info("删除用户 %s 成功", uid)
         return True
 
-    async def update_policy(self, user_id: str, policy: EmbySetUserPolicy, is_unset: bool = True) -> bool:
-        url = f"/emby/Users/{user_id}/Policy"
+    async def update_policy(self, user_id: str, policy: UserPolicy, is_none: bool = False) -> bool | None:
+        url = f"/Users/{user_id}/Policy"
         params = {'api_key': self._api_key}
-        if is_unset:
-            payload = policy.model_dump(exclude_unset=True)
+        if is_none:
+            payload = policy.model_dump(exclude_none=True)
         else:
-            payload = policy.model_dump()
+            payload = policy.model_dump(exclude_unset=True)
 
-        response = await self._client.post(url, params=params, json=payload)
+        response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
         logger.info("User policy for %s updated successfully", user_id)
         return True
 
-    async def get_item_info(self, item_id: str):
+    async def get_item_info(self, item_id: str) -> QueryResult_BaseItemDto | None:
         """获取指定媒体项的信息。
 
         Args:
@@ -80,7 +81,7 @@ class EmbyClient(BaseClient, MediaService):
         Returns:
             dict: 媒体项信息字典，如果未找到则返回 None。
         """
-        url = "/emby/Items"
+        url = "/Items"
         fields = ["ProductionYear", "Budget", "Chapters", "DateCreated", "PremiereDate",
               "Genres", "HomePageUrl", "IndexOptions", "MediaStreams", "Overview",
               "ParentId", "Path", "People", "ProviderIds", "PrimaryImageAspectRatio",
@@ -97,42 +98,43 @@ class EmbyClient(BaseClient, MediaService):
 
         response = await self.get(url, params=params)
         response.raise_for_status()
-        return response.json()
+        return QueryResult_BaseItemDto.model_validate(response.json())
 
-    async def post_item_info(self, item_id: str, item_info: dict) -> bool:
+    async def post_item_info(self, item_id: str, item_info: BaseItemDto) -> bool | None:
         """更新指定媒体项的信息。
 
         Args:
             item_id (str): 媒体项的唯一标识符。
-            item_info (dict): 要更新的媒体项信息字典。
+            item_info (BaseItemDto): 包含更新信息的媒体项对象。
 
         Returns:
             bool: 如果更新成功返回 True，否则返回 False。
         """
-        url = f"/emby/Items/{item_id}"
+        url = f"/Items/{item_id}"
         params = {'api_key': self._api_key}
 
-        response = await self._client.post(url, params=params, json=item_info)
+        response = await self.post(url, params=params,
+                                   json=item_info.model_dump(exclude_unset=True))
         response.raise_for_status()
         logger.info("Successfully updated item %s", item_id)
         return True
 
-    async def get_user_info(self, user_id: str) -> EmbyUser:
+    async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取指定用户的信息。
 
         Args:
             emby_id (str): Emby 用户的唯一标识符。
 
         Returns:
-            EmbyUser: Emby 用户对象，如果未找到则返回 None。
+            UserDto: Emby 用户对象，如果未找到则返回 None。
         """
-        url = f"/emby/Users/{user_id}"
+        url = f"/Users/{user_id}"
         params = {'api_key': self._api_key}
         response = await self.get(url, params=params)
         response.raise_for_status()
-        return EmbyUser.model_validate(response.json())
+        return UserDto.model_validate(response.json())
 
-    async def post_password(self, user_id: str, reset_password: bool = False):
+    async def post_password(self, user_id: str, reset_password: bool = False) -> str | None:
         """更新用户密码。
 
         Args:
@@ -140,14 +142,14 @@ class EmbyClient(BaseClient, MediaService):
             reset_password (bool): 是否重置密码。如果为 True，则 Emby 会生成一个新密码。
         """
         passwd = ''.join(random.sample('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=12))
-        url = f"/emby/Users/{user_id}/Password"
+        url = f"/Users/{user_id}/Password"
         params = {'api_key': self._api_key}
         payload = {
             'Id': user_id,
             'NewPw': passwd if not reset_password else None,
             'ResetPassword': reset_password
         }
-        response = await self._client.post(url, params=params, json=payload)
+        response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
         return passwd if not reset_password else None
 
@@ -161,11 +163,11 @@ class EmbyClient(BaseClient, MediaService):
         if isinstance(user_id, str):
             user_id = [user_id]
         for uid in user_id:
-            user = await self.get_user_info(uid)
+            user: UserDto | None = await self.get_user_info(uid)
             if not user:
                 logger.error("User %s not found for ban/unban operation", user_id)
                 return False
-            policy = EmbySetUserPolicy(IsDisabled=is_ban)
+            policy = user.Policy.model_copy(update={'IsDisabled': is_ban})
             await self.update_policy(uid, policy)
         return True
 
@@ -192,7 +194,7 @@ class EmbyClient(BaseClient, MediaService):
         total_ratio = total_duration / 86400
         return total_ratio
 
-    async def get_session_list(self):
+    async def get_session_list(self) -> int:
         """获取用户在线数量"""
         url = "/emby/user_usage_stats/session_list"
         params = {'api_key': self._api_key}

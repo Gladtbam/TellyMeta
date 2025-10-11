@@ -1,18 +1,18 @@
 import logging
 import re
-from datetime import datetime, timedelta
 import textwrap
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
+from core.config import get_settings
+from models.emby import UserPolicy
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import ConfigRepository
 from repositories.emby_repo import EmbyRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
-from models.emby import EmbySetUserPolicy
-from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -126,10 +126,10 @@ class AccountService:
             blocked_tags = []
 
         if settings.media_server == 'emby':
-            policy = EmbySetUserPolicy(BlockedTags=blocked_tags)
+            policy = UserPolicy(BlockedTags=blocked_tags)
         else:
-            policy = EmbySetUserPolicy(BlockedTags=blocked_tags) # 预留给 Jellyfin 未来使用
-        await self.media_service.update_policy(emby.Id, policy)
+            policy = UserPolicy(BlockedTags=blocked_tags) # 预留给 Jellyfin 未来使用
+        await self.media_service.update_policy(emby.Id, policy, is_none=True)
         passwd = await self.media_service.post_password(emby.Id)
         await self.emby_repo.create(user_id, emby.Id, username)
 
@@ -242,7 +242,7 @@ class AccountService:
             return Result(False, "管理员尚未设置 NSFW 过滤标签，无法切换 NSFW 策略。")
         nsfw = nsfw.split('|')
 
-        blocked_tags = emby_info.Policy.BlockedTags or []
+        blocked_tags = emby_info.Policy.BlockedTags
         if nsfw in blocked_tags:
             blocked_tags = []
             action = '解除'
@@ -251,9 +251,9 @@ class AccountService:
             action = '设置'
 
         if settings.media_server == 'emby':
-            policy = EmbySetUserPolicy(BlockedTags=blocked_tags)
+            policy = emby_info.Policy.model_copy(update={'BlockedTags': blocked_tags})
         else:
-            policy = EmbySetUserPolicy(BlockedTags=blocked_tags) # 预留给 Jellyfin 未来使用
+            policy = emby_info.Policy.model_copy(update={'BlockedTags': blocked_tags}) # 预留给 Jellyfin 未来使用
         await self.media_service.update_policy(emby_user.emby_id, policy)
 
         return Result(True, textwrap.dedent(f"""\

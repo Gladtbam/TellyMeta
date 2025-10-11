@@ -1,39 +1,39 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from models.emby import EmbyUser
+from models.emby import BaseItemDto, QueryResult_BaseItemDto, UserDto
 
 
 class MediaService(ABC):
     """定义媒体服务的抽象基类"""
 
     @abstractmethod
-    async def create(self, name:str) -> EmbyUser | None:
+    async def create(self, name:str) -> UserDto | None:
         """创建用户"""
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_by_id(self, user_id: str | list[str]) -> bool:
+    async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
         """删除用户"""
         raise NotImplementedError
 
     @abstractmethod
-    async def update_policy(self, user_id: str, policy: Any) -> bool:
+    async def update_policy(self, user_id: str, policy: Any, is_none: bool = False) -> bool | None:
         """更新用户策略"""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_item_info(self, item_id: str):
+    async def get_item_info(self, item_id: str) -> QueryResult_BaseItemDto | None:
         """获取媒体项信息"""
         raise NotImplementedError
 
     @abstractmethod
-    async def post_item_info(self, item_id: str, item_info: dict) -> bool:
+    async def post_item_info(self, item_id: str, item_info: BaseItemDto) -> bool | None:
         """更新媒体项信息"""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_user_info(self, user_id: str) -> EmbyUser:
+    async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取用户信息"""
         raise NotImplementedError
 
@@ -43,7 +43,7 @@ class MediaService(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def ban_or_unban(self, user_id: str, is_ban: bool = True):
+    async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> bool:
         """封禁或解封用户"""
         raise NotImplementedError
 
@@ -53,6 +53,6 @@ class MediaService(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_session_list(self):
+    async def get_session_list(self) -> int:
         """获取用户在线数量"""
         raise NotImplementedError
