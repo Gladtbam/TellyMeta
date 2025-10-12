@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -50,13 +50,13 @@ class TvdbEpisodesData(BaseModel):
     image: str | None = None
     imageType: int | None = None
     isMovie: bool
-    seasons: list['TvdbSeasonsData'] = Field(default_factory=list)
+    seasons: list[TvdbSeasonsData] = Field(default_factory=list)
     number: int
     absoluteNumber: int
     seasonNumber: int
     lastUpdated: str
     year: str
-    translations: list['TvdbTranslationsData'] = Field(default_factory=list)
+    translations: list[TvdbTranslationsData] = Field(default_factory=list)
 
 class TvdbSeriesData(BaseModel):
     id: int
@@ -94,3 +94,8 @@ class TvdbPayload(BaseModel):
     status: str
     data: TvdbData | TvdbEpisodesData | TvdbSeasonsData | TvdbSeriesData | None = None
     message: str | None = None
+
+# 为存在循环引用的模型重建
+TvdbSeasonsData.model_rebuild()
+TvdbEpisodesData.model_rebuild()
+TvdbSeriesData.model_rebuild()

@@ -31,8 +31,8 @@ async def translate_emby_item(item_id: str) -> None:
     is_translated = False
 
     item_info: QueryResult_BaseItemDto | None = await media_client.get_item_info(item_id)
-    if not item_info:
-        logging.error("No item info found for ID %s", item_id)
+    if not item_info or item_info.TotalRecordCount == 0 or item_info.TotalRecordCount == 0 or not item_info.Items:
+        logging.error("未找到 ID %s 的信息", item_id)
         return
 
     item = item_info.Items[0]
@@ -46,7 +46,7 @@ async def translate_emby_item(item_id: str) -> None:
         tmdb_info = await tmdb_client.get_info(tvdb_id=tvdb_id)
 
     if not tmdb_info:
-        logging.warning("No TMDB info found for item %s", item_id)
+        logging.warning("未找到项目 %s 的 TMDB 信息", item_id)
 
     fields_to_translate_item = {
         'Name': item.Name,
@@ -74,7 +74,7 @@ async def translate_emby_item(item_id: str) -> None:
         if translated_text:
             updates[field] = translated_text
         else:
-            logging.warning("Translation failed for field %s in item %s: %s", field, item_id, text)
+            logging.warning("项目 %s 中的字段 %s 翻译失败：%s", field, item_id, text)
 
     if sync_sort_name:
         updates['SortName'] = updates['Name']
@@ -86,7 +86,7 @@ async def translate_emby_item(item_id: str) -> None:
         item = item.model_copy(update=updates)
 
     if is_translated:
-        logging.info("Translating item %s: %s", item_id, item.Name)
+        logging.info("正在翻译项目 %s：%s", item_id, item.Name)
         await media_client.post_item_info(item_id, item)
         scheduler.add_job(
             translate_emby_item,
@@ -96,4 +96,4 @@ async def translate_emby_item(item_id: str) -> None:
             replace_existing=True,
             args=[item_id]
         )
-        logging.info("Scheduled retry for item %s in 8 days", item_id)
+        logging.info("计划在 8 天后重试项目 %s", item_id)

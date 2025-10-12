@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,12 @@ class EmbyPayload(BaseModel):
     """Emby Webhook 接收数据模型"""
     Event: str
     Item: EmbyItem | None = None
+
+class AccessSchedule(BaseModel):
+    """Emby 访问时间模型"""
+    DayOfWeek: str
+    StartHour: float
+    EndHour: float
 
 class UserPolicy(BaseModel):
     """Emby 用户策略模型"""
@@ -62,12 +68,6 @@ class UserPolicy(BaseModel):
     AllowCameraUpload: bool = False
     AllowSharingPersonalItems: bool = False
 
-class AccessSchedule(BaseModel):
-    """Emby 访问时间模型"""
-    DayOfWeek: str
-    StartHour: float
-    EndHour: float
-
 class UserConfiguration(BaseModel):
     """Emby 用户配置模型"""
     AudioLanguagePreference: str
@@ -109,10 +109,151 @@ class UserDto(BaseModel):
     PrimaryImageAspectRatio: float | None
     UserItemShareLevel: str | None
 
-class QueryResult_BaseItemDto(BaseModel):
-    """Emby 搜索结果模型"""
-    Items: list[BaseItemDto] = Field(default_factory=list)
-    TotalRecordCount: int
+class ExternalUrl(BaseModel):
+    """Emby 外部链接模型
+    MediaUrl 与其相同，直接使用
+    """
+    Name: str
+    Url: str
+
+class ChapterInfo(BaseModel):
+    """Emby 章节信息模型"""
+    StartPositionTicks: int
+    Name: str
+    ImageTag: str
+    MarkerType: str
+    ChapterIndex: int
+
+class MediaStream(BaseModel):
+    """Emby 媒体流模型"""
+    Codec: str
+    CodecTag: str
+    Language: str
+    ColorTransfer: str
+    ColorPrimaries: str
+    ColorSpace: str
+    Comment: str
+    StreamStartTimeTicks: int | None
+    TimeBase: str
+    Title: str
+    Extradata: str
+    VideoRange: str
+    DisplayTitle: str
+    DisplayLanguage: str
+    NalLengthSize: str
+    IsInterlaced: bool
+    ChannelLayout: str
+    BitRate: int | None
+    BitDepth: int | None
+    RefFrames: int | None
+    Rotation: int | None
+    Channels: int | None
+    SampleRate: int | None
+    IsDefault: bool
+    IsForced: bool
+    IsHearingImpaired: bool
+    Height: int | None
+    Width: int | None
+    AverageFrameRate: float | None
+    RealFrameRate: float | None
+    Profile: str
+    Type: str
+    AspectRatio: str
+    Index: int
+    IsExternal: bool
+    DeliveryMethod: str
+    DeliveryUrl: str
+    IsExternalUrl: bool | None
+    IsTextSubtitleStream: bool
+    SupportsExternalStream: bool
+    Path: str
+    Protocol: str
+    PixelFormat: str
+    Level: int | None
+    IsAnamorphic: bool | None
+    ExtendedVideoType: str
+    ExtendedVideoSubType: str
+    ExtendedVideoSubTypeDescription: str
+    ItemId: str
+    ServerId: str
+    AttachmentSize: int | None
+    MimeType: str
+    SubtitleLocationType: str
+
+class MediaSourceInfo(BaseModel):
+    """Emby 媒体源模型"""
+    Chapters: list[ChapterInfo] = Field(default_factory=list)
+    Protocol: str
+    Id: str
+    Path: str
+    EncoderPath: str
+    EncoderProtocol: str
+    Type: str
+    ProbePath: str
+    ProbeProtocol: str
+    Container: str
+    Size: int | None
+    Name: str
+    SortName: str
+    IsRemote: bool
+    HasMixedProtocols: bool
+    RunTimeTicks: int | None
+    ContainerStartTimeTicks: int | None
+    SupportsTranscoding: bool
+    TrancodeLiveStartIndex: int | None
+    WallClockStart: str | None
+    SupportsDirectStream: bool
+    SupportsDirectPlay: bool
+    IsInfiniteStream: bool
+    RequiresOpening: bool
+    OpenToken: str
+    RequiresClosing: bool
+    LiveStreamId: str
+    RequiresLooping: bool
+    Video3DFormat: str
+    MediaStreams: list[MediaStream] = Field(default_factory=list)
+    Formats: list[str] = Field(default_factory=list)
+    Bitrate: int | None
+    Timestamp: str
+    RequiredHttpHeaders: dict[str, str] = Field(default_factory=dict)
+    DirectStreamUrl: str
+    AddApiKeyToDirectStreamUrl: bool
+    TranscodingUrl: str
+    TranscodingSubProtocol: str
+    TranscodingContainer: str
+    DefaultAudioStreamIndex: int | None
+    DefaultSubtitleStreamIndex: int | None
+    ItemId: str
+    ServerId: str
+
+class BaseItemPerson(BaseModel):
+    """Emby 媒体项人员模型"""
+    Name: str
+    Id: str
+    Role: str
+    Type: str
+    PrimaryImageTag: str
+
+class NameLongIdPair(BaseModel):
+    """Emby 名称与长ID对模型
+    NameIdPair 的 Id 为 str
+    """
+    Name: str
+    Id: int | str
+
+class UserItemDataDto(BaseModel):
+    """Emby 用户媒体项数据模型"""
+    Rating: float | None
+    PlayedPercentage: float | None
+    UnplayedItemCount: int | None
+    PlaybackPositionTicks: int
+    PlayCount: int | None
+    IsFavorite: bool
+    LastPlayedDate: str | None
+    Played: bool
+    Key: str
+    ItemId: str
+    ServerId: str
 
 class BaseItemDto(BaseModel):
     """Emby 基础媒体项模型"""
@@ -151,7 +292,7 @@ class BaseItemDto(BaseModel):
     ForcedSortName: str
     Video3DFormat: str
     PremiereDate: str | None
-    ExternalUrls: list[ExternalUrls] = Field(default_factory=list)
+    ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None
     GameSystemId: int | None
@@ -177,7 +318,7 @@ class BaseItemDto(BaseModel):
     IndexNumber: int | None
     IndexNumberEnd: int | None
     ParentIndexNumber: int | None
-    RemoteTrailers: list[ExternalUrls] = Field(default_factory=list) # MediaUrl
+    RemoteTrailers: list[ExternalUrl] = Field(default_factory=list) # MediaUrl
     ProviderIds: dict[str, str] = Field(default_factory=dict)
     IsFolder: bool | None
     ParentId: str
@@ -263,7 +404,7 @@ class BaseItemDto(BaseModel):
     Disabled: bool | None
     ManagementId: str
     TimerId: str
-    CurrentProgram: BaseItemDto | str | None
+    # CurrentProgram: str | None # BaseItemDto
     MovieCount: int | None
     SeriesCount: int | None
     AlbumCount: int | None
@@ -278,148 +419,7 @@ class BaseItemDto(BaseModel):
     ListingsChannelNumber: str
     AffiliateCallSign: str
 
-class ExternalUrls(BaseModel):
-    """Emby 外部链接模型
-    MediaUrl 与其相同，直接使用
-    """
-    Name: str
-    Url: str
-
-class MediaSourceInfo(BaseModel):
-    """Emby 媒体源模型"""
-    Chapters: list[ChapterInfo] = Field(default_factory=list)
-    Protocol: str
-    Id: str
-    Path: str
-    EncoderPath: str
-    EncoderProtocol: str
-    Type: str
-    ProbePath: str
-    ProbeProtocol: str
-    Container: str
-    Size: int | None
-    Name: str
-    SortName: str
-    IsRemote: bool
-    HasMixedProtocols: bool
-    RunTimeTicks: int | None
-    ContainerStartTimeTicks: int | None
-    SupportsTranscoding: bool
-    TrancodeLiveStartIndex: int | None
-    WallClockStart: str | None
-    SupportsDirectStream: bool
-    SupportsDirectPlay: bool
-    IsInfiniteStream: bool
-    RequiresOpening: bool
-    OpenToken: str
-    RequiresClosing: bool
-    LiveStreamId: str
-    RequiresLooping: bool
-    Video3DFormat: str
-    MediaStreams: list[MediaStream] = Field(default_factory=list)
-    Formats: list[str] = Field(default_factory=list)
-    Bitrate: int | None
-    Timestamp: str
-    RequiredHttpHeaders: dict[str, str] = Field(default_factory=dict)
-    DirectStreamUrl: str
-    AddApiKeyToDirectStreamUrl: bool
-    TranscodingUrl: str
-    TranscodingSubProtocol: str
-    TranscodingContainer: str
-    DefaultAudioStreamIndex: int | None
-    DefaultSubtitleStreamIndex: int | None
-    ItemId: str
-    ServerId: str
-
-class ChapterInfo(BaseModel):
-    """Emby 章节信息模型"""
-    StartPositionTicks: int
-    Name: str
-    ImageTag: str
-    MarkerType: str
-    ChapterIndex: int
-
-class MediaStream(BaseModel):
-    """Emby 媒体流模型"""
-    Codec: str
-    CodecTag: str
-    Language: str
-    ColorTransfer: str
-    ColorPrimaries: str
-    ColorSpace: str
-    Comment: str
-    StreamStartTimeTicks: int | None
-    TimeBase: str
-    Title: str
-    Extradata: str
-    VideoRange: str
-    DisplayTitle: str
-    DisplayLanguage: str
-    NalLengthSize: str
-    IsInterlaced: bool
-    ChannelLayout: str
-    BitRate: int | None
-    BitDepth: int | None
-    RefFrames: int | None
-    Rotation: int | None
-    Channels: int | None
-    SampleRate: int | None
-    IsDefault: bool
-    IsForced: bool
-    IsHearingImpaired: bool
-    Height: int | None
-    Width: int | None
-    AverageFrameRate: float | None
-    RealFrameRate: float | None
-    Profile: str
-    Type: str
-    AspectRatio: str
-    Index: int
-    IsExternal: bool
-    DeliveryMethod: str
-    DeliveryUrl: str
-    IsExternalUrl: bool | None
-    IsTextSubtitleStream: bool
-    SupportsExternalStream: bool
-    Path: str
-    Protocol: str
-    PixelFormat: str
-    Level: int | None
-    IsAnamorphic: bool | None
-    ExtendedVideoType: str
-    ExtendedVideoSubType: str
-    ExtendedVideoSubTypeDescription: str
-    ItemId: str
-    ServerId: str
-    AttachmentSize: int | None
-    MimeType: str
-    SubtitleLocationType: str
-
-class BaseItemPerson(BaseModel):
-    """Emby 媒体项人员模型"""
-    Name: str
-    Id: str
-    Role: str
-    Type: str
-    PrimaryImageTag: str
-
-class NameLongIdPair(BaseModel):
-    """Emby 名称与长ID对模型
-    NameIdPair 的 Id 为 str
-    """
-    Name: str
-    Id: int | str
-
-class UserItemDataDto(BaseModel):
-    """Emby 用户媒体项数据模型"""
-    Rating: float | None
-    PlayedPercentage: float | None
-    UnplayedItemCount: int | None
-    PlaybackPositionTicks: int
-    PlayCount: int | None
-    IsFavorite: bool
-    LastPlayedDate: str | None
-    Played: bool
-    Key: str
-    ItemId: str
-    ServerId: str
+class QueryResult_BaseItemDto(BaseModel):
+    """Emby 搜索结果模型"""
+    Items: list[BaseItemDto] = Field(default_factory=list)
+    TotalRecordCount: int

@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -6,6 +6,55 @@ from core.config import genre_mapping
 from models.radarr import (CustomFormatResource, Languages, MediaCover,
                            MediaInfoResource, QualityModel)
 
+
+class AlternativeTitleResource(BaseModel):
+    """Sonarr 剧集别名模型"""
+    title: str | None = None
+    seasonNumber: int | None = None
+    sceneSeasonNumber: int | None = None
+    sceneOrigin: str | None = None
+    comment: str | None = None
+
+class SeasonStatisticsResource(BaseModel):
+    """Sonarr 季统计模型"""
+    nextAiring: str | None = None
+    previousAiring: str | None = None
+    episodeFileCount: int
+    episodeCount: int
+    totalEpisodeCount: int
+    sizeOnDisk: int
+    releaseGroups: list[str] = Field(default_factory=list)
+    percentOfEpisodes: float
+
+class SeasonResource(BaseModel):
+    """Sonarr 季模型"""
+    seasonNumber: int
+    monitored: bool
+    statistics: SeasonStatisticsResource | None = None
+    images: list[MediaCover] = Field(default_factory=list)
+
+class AddSeriesOptions(BaseModel):
+    """Sonarr 添加剧集选项模型"""
+    ignoreEpisodesWithFiles: bool
+    ignoreEpisodesWithoutFiles: bool
+    monitor: str
+    searchForMissingEpisodes: bool
+    searchForCutoffUnmetEpisodes: bool
+
+class Ratings(BaseModel):
+    """Sonarr 剧集评分模型"""
+    votes: int
+    value: float
+
+class SeriesStatisticsResource(BaseModel):
+    """Sonarr 剧集统计模型"""
+    seasonCount: int
+    episodeFileCount: int
+    episodeCount: int
+    totalEpisodeCount: int
+    sizeOnDisk: int
+    releaseGroups: list[str] = Field(default_factory=list)
+    percentOfEpisodes: float
 
 class SeriesResource(BaseModel):
     """Sonarr 剧集模型"""
@@ -62,54 +111,25 @@ class SeriesResource(BaseModel):
             return value
         return [genre_mapping.get(genre, genre) for genre in value]
 
-class AlternativeTitleResource(BaseModel):
-    """Sonarr 剧集别名模型"""
-    title: str | None = None
-    seasonNumber: int | None = None
-    sceneSeasonNumber: int | None = None
-    sceneOrigin: str | None = None
-    comment: str | None = None
-
-class SeasonResource(BaseModel):
-    """Sonarr 季模型"""
+class EpisodeFileResource(BaseModel):
+    """Sonarr 剧集文件模型"""
+    id: int
+    seriesId: int
     seasonNumber: int
-    monitored: bool
-    statistics: SeasonStatisticsResource | None = None
-    images: list[MediaCover] = Field(default_factory=list)
-
-class SeasonStatisticsResource(BaseModel):
-    """Sonarr 季统计模型"""
-    nextAiring: str | None = None
-    previousAiring: str | None = None
-    episodeFileCount: int
-    episodeCount: int
-    totalEpisodeCount: int
-    sizeOnDisk: int
-    releaseGroups: list[str] = Field(default_factory=list)
-    percentOfEpisodes: float
-
-class AddSeriesOptions(BaseModel):
-    """Sonarr 添加剧集选项模型"""
-    ignoreEpisodesWithFiles: bool
-    ignoreEpisodesWithoutFiles: bool
-    monitor: str
-    searchForMissingEpisodes: bool
-    searchForCutoffUnmetEpisodes: bool
-
-class Ratings(BaseModel):
-    """Sonarr 剧集评分模型"""
-    votes: int
-    value: float
-
-class SeriesStatisticsResource(BaseModel):
-    """Sonarr 剧集统计模型"""
-    seasonCount: int
-    episodeFileCount: int
-    episodeCount: int
-    totalEpisodeCount: int
-    sizeOnDisk: int
-    releaseGroups: list[str] = Field(default_factory=list)
-    percentOfEpisodes: float
+    relativePath: str | None = None
+    path: str | None = None
+    size: int
+    dateAdded: str
+    sceneName: str | None = None
+    releaseGroup: str | None = None
+    languages: list[Languages] = Field(default_factory=list)
+    quality: QualityModel | None = None
+    customFormats: list[CustomFormatResource] = Field(default_factory=list)
+    customFormatScore: int
+    indexerFlags: int | None = None
+    releaseType: str | None = None
+    mediaInfo: MediaInfoResource | None = None
+    qualityCutoffNotMet: bool
 
 class EpisodeResource(BaseModel):
     """Sonarr 剧集详细信息模型"""
@@ -138,27 +158,6 @@ class EpisodeResource(BaseModel):
     grabDate: str | None = None
     series: SeriesResource | None = None
     images: list[MediaCover] = Field(default_factory=list)
-
-class EpisodeFileResource(BaseModel):
-    """Sonarr 剧集文件模型"""
-    id: int
-    seriesId: int
-    seasonNumber: int
-    relativePath: str | None = None
-    path: str | None = None
-    size: int
-    dateAdded: str
-    sceneName: str | None = None
-    releaseGroup: str | None = None
-    languages: list[Languages] = Field(default_factory=list)
-    quality: QualityModel | None = None
-    customFormats: list[CustomFormatResource] = Field(default_factory=list)
-    customFormatScore: int
-    indexerFlags: int | None = None
-    releaseType: str | None = None
-    mediaInfo: MediaInfoResource | None = None
-    qualityCutoffNotMet: bool
-
 
 class SonarrSeries(BaseModel):
     """Sonarr 系列模型"""
