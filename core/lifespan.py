@@ -1,5 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
+import os
+import time
 
 import httpx
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -26,6 +28,11 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 设置时区
+    os.environ['TZ'] = settings.timezone
+    time.tzset()
+    logger.info("时区已设置为 {}", settings.timezone)
+
     check_sqlite_version()
 
     logger.info("启动应用程序生命周期上下文")
@@ -87,7 +94,8 @@ async def lifespan(app: FastAPI):
         await session.close()
 
     app.state.scheduler = AsyncIOScheduler(
-        jobstores={'default': SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))}
+        jobstores={'default': SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))},
+        timezone=settings.timezone
         )
 
     app.state.scheduler.add_job(

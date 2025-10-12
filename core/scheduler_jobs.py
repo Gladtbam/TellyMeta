@@ -27,13 +27,13 @@ async def ban_expired_users() -> None:
                 return
 
             for user in users:
-                logger.info("封禁用户: %s (ID: %s)", user.id, user.emby_id)
+                logger.info("封禁用户: {} (ID: {})", user.id, user.emby_id)
                 await media_service.ban_or_unban(
                     user_id=user.emby_id,
                     is_ban=True
                 )
         except Exception as e:
-            logger.exception("封禁过期用户时出错: %s", e)
+            logger.exception("封禁过期用户时出错: {}", e)
             await session.rollback()
         finally:
             await session.close()
@@ -54,11 +54,11 @@ async def delete_expired_banned_users() -> None:
                 return
 
             for user in users:
-                logger.info("删除封禁用户: %s (ID: %s)", user.id, user.emby_id)
+                logger.info("删除封禁用户: {} (ID: {})", user.id, user.emby_id)
                 await media_service.delete_by_id(user.emby_id)
 
         except Exception as e:
-            logger.exception("删除封禁用户时出错: %s", e)
+            logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()
         finally:
             await session.close()
@@ -94,7 +94,7 @@ async def settle_scores() -> None:
             await client.client.edit_message(summary_msg, final_summary)
 
         except Exception as e:
-            logger.exception("结算用户积分时出错: %s", e)
+            logger.exception("结算用户积分时出错: {}", e)
             await session.rollback()
         finally:
             await session.close()

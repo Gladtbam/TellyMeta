@@ -29,18 +29,18 @@ class BaseClient(ABC):
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as e:
-            logger.error("HTTP error: %s", e.response.text)
+            logger.error("HTTP error: {}", e.response.text)
             raise
         except httpx.RequestError as e:
-            logger.error("Request error: %s", e)
+            logger.error("Request error: {}", e)
             raise
         except Exception as e:
-            logger.error("Unexpected error: %s", e)
+            logger.error("Unexpected error: {}", e)
             raise
     
     async def get(self, url: str, **kwargs):
         """发送GET请求"""
-        logger.info("Sending GET request to %s", url)
+        logger.info("Sending GET request to {}", url)
         return await self._request("GET", url, **kwargs)
 
     async def post(self, url: str, **kwargs):
@@ -75,15 +75,15 @@ class AuthenticatedClient(BaseClient):
             try:
                 await self._login()
                 self._is_logged_in = True
-                logger.info("Successfully logged into %s", self.__class__.__name__)
+                logger.info("Successfully logged into {}", self.__class__.__name__)
             except httpx.HTTPStatusError as e:
-                logger.error("Login failed: %s", e.response.text)
+                logger.error("Login failed: {}", e.response.text)
                 raise
             except httpx.RequestError as e:
-                logger.error("Request error during login: %s", e)
+                logger.error("Request error during login: {}", e)
                 raise
             except Exception as e:
-                logger.error("Unexpected error during login: %s", e)
+                logger.error("Unexpected error during login: {}", e)
                 raise
 
     async def _request(self, method: str, url: str, **kwargs):
@@ -98,7 +98,7 @@ class AuthenticatedClient(BaseClient):
         try:
             return await super()._request(method, url, **kwargs)
         except AuthenticatedClientError as e:
-            logger.error("Authentication error: %s", e)
+            logger.error("Authentication error: {}", e)
             raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code in [401, 403]:
@@ -110,11 +110,11 @@ class AuthenticatedClient(BaseClient):
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
                 return await super()._request(method, url, **kwargs)
             else:
-                logger.error("HTTP error: %s", e.response.text)
+                logger.error("HTTP error: {}", e.response.text)
                 raise
         except httpx.RequestError as e:
-            logger.error("Request error: %s", e)
+            logger.error("Request error: {}", e)
             raise
         except Exception as e:
-            logger.error("Unexpected error: %s", e)
+            logger.error("Unexpected error: {}", e)
             raise

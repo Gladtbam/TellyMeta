@@ -43,7 +43,7 @@ class TelethonClientWarper:
         for func, event_builder in self._handlers:
             handler_with_app = partial(func, self.app)
             self.client.add_event_handler(handler_with_app, event_builder)
-            logger.info("Registered handler: %s for event: %s", func.__name__, event_builder)
+            logger.info("Registered handler: {} for event: {}", func.__name__, event_builder)
 
     async def connect(self) -> None:
         """连接到Telegram"""
@@ -77,7 +77,7 @@ class TelethonClientWarper:
         try:
             self.client.run_until_disconnected()
         except Exception as e:
-            logger.error("Error while running Telethon client: %s", e)
+            logger.error("Error while running Telethon client: {}", e)
             raise
 
     async def get_chat_creator_id(self):
@@ -88,10 +88,10 @@ class TelethonClientWarper:
             async for participant in self.client.iter_participants(self.chat_id):
                 if isinstance(participant.participant, ChannelParticipantCreator):
                     return participant.id
-            logger.warning("No creator found for chat ID: %s", self.chat_id)
+            logger.warning("No creator found for chat ID: {}", self.chat_id)
             return None
         except Exception as e:
-            logger.error("Failed to get channel creator for %s: %s", self.chat_id, e)
+            logger.error("Failed to get channel creator for {}: {}", self.chat_id, e)
             return None
 
     async def get_chat_admin_ids(self):
@@ -105,7 +105,7 @@ class TelethonClientWarper:
                     admin_ids.append(participant.id)
             return admin_ids
         except Exception as e:
-            logger.error("Failed to get channel admins for %s: %s", self.chat_id, e)
+            logger.error("Failed to get channel admins for {}: {}", self.chat_id, e)
             return admin_ids
 
     async def send_message(self, chat_id: str | int, message: str) -> Message:
@@ -120,7 +120,7 @@ class TelethonClientWarper:
             msg = await self.client.send_message(chat_id, message)
             return msg
         except errors.FloodWaitError as e:
-            logger.error("Failed to send message: %s", e)
+            logger.error("Failed to send message: {}", e)
             raise
 
     async def ban_user(self, user_id: int, until_date: datetime | None) -> None:
@@ -163,7 +163,7 @@ class TelethonClientWarper:
                 banned_rights=rights
             ))
         except errors.FloodWaitError as e:
-            logger.error("Failed to ban user %d: %s", user_id, e)
+            logger.error("Failed to ban user %d: {}", user_id, e)
             raise
         
     async def unban_user(self, user_id: int) -> None:
@@ -184,7 +184,7 @@ class TelethonClientWarper:
                 banned_rights=rights
             ))
         except errors.FloodWaitError as e:
-            logger.error("Failed to unban user %d: %s", user_id, e)
+            logger.error("Failed to unban user %d: {}", user_id, e)
             raise
 
     async def kick_participant(self, user_id: int) -> None:
@@ -197,5 +197,5 @@ class TelethonClientWarper:
         try:
             await self.client.kick_participant(self.chat_id, user_id)
         except errors.FloodWaitError as e:
-            logger.error("Failed to kick user %d: %s", user_id, e)
+            logger.error("Failed to kick user %d: {}", user_id, e)
             raise

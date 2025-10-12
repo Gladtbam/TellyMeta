@@ -22,7 +22,7 @@ def provide_db_session(func):
                 return await func(*args, **kwargs)
             except Exception as e:
                 await session.rollback()
-                logger.error("Error in %s for event %s: %s", func.__name__, getattr(event, 'id', 'N/A'), e)
+                logger.error("Error in {} for event {}: {}", func.__name__, getattr(event, 'id', 'N/A'), e)
                 raise e
             finally:
                 await session.close()

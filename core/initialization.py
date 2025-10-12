@@ -15,7 +15,7 @@ def check_sqlite_version():
     min_required_version = (3, 35, 0)  # 需要支持的最低版本
     version = sqlite3.sqlite_version_info
     if version < min_required_version:
-        logger.error("SQLite 版本过低，当前版本为 %s。请升级到 3.35.0 或更高版本以支持所需功能。", sqlite3.sqlite_version)
+        logger.error("SQLite 版本过低，当前版本为 {}。请升级到 3.35.0 或更高版本以支持所需功能。", sqlite3.sqlite_version)
         sys.exit(textwrap.dedent(f"""\
             ==================================================================
             |                      错误提示                       |
@@ -36,7 +36,7 @@ def check_sqlite_version():
             ==================================================================
             """))
     else:
-        logger.info("SQLite 版本检查通过，当前版本为 %s。", sqlite3.sqlite_version)
+        logger.info("SQLite 版本检查通过，当前版本为 {}。", sqlite3.sqlite_version)
 
 async def initialize_admin(
     session: AsyncSession,
@@ -48,7 +48,7 @@ async def initialize_admin(
     existing_admins = await sql_service.get_admins()
     if existing_admins:
         admin_ids = [admin.id for admin in existing_admins]
-        logger.info("已存在管理员用户: %s", admin_ids)
+        logger.info("已存在管理员用户: {}", admin_ids)
         return admin_ids
 
     logger.warning("未找到管理员用户，正在初始化...")
@@ -72,14 +72,14 @@ async def initialize_bot_configuration(session: AsyncSession):
         await config_repo.set_settings('registration_time_limit', '0')
         logger.info("设置注册模式为 积分/注册码注册。")
     else:
-        logger.info("注册模式已存在: %s", registration_mode)
+        logger.info("注册模式已存在: {}", registration_mode)
 
     code_expiry_days = await config_repo.get_settings('code_expiry_days')
     if not code_expiry_days:
         await config_repo.set_settings('code_expiry_days', '30')
         logger.info("已设置用户生成注册码/激活码过期时间为30天。")
     else:
-        logger.info("激活码过期时间已存在: %s 天", code_expiry_days)
+        logger.info("激活码过期时间已存在: {} 天", code_expiry_days)
 
     nsfw_library = await config_repo.get_settings('nsfw_library')
     if not nsfw_library:

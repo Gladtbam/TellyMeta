@@ -38,7 +38,7 @@ class EmbyClient(BaseClient, MediaService):
 
         response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
-        logger.info("创建用户 %s 成功", name)
+        logger.info("创建用户 {} 成功", name)
         return UserDto.model_validate(response.json())
     
     async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
@@ -55,7 +55,7 @@ class EmbyClient(BaseClient, MediaService):
             url = f"/Users/{uid}"
             response = await self.delete(url, params=params)
             response.raise_for_status()
-            logger.info("删除用户 %s 成功", uid)
+            logger.info("删除用户 {} 成功", uid)
         return True
 
     async def update_policy(self, user_id: str, policy: UserPolicy, is_none: bool = False) -> bool | None:
@@ -68,7 +68,7 @@ class EmbyClient(BaseClient, MediaService):
 
         response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
-        logger.info("User policy for %s updated successfully", user_id)
+        logger.info("User policy for {} updated successfully", user_id)
         return True
 
     async def get_item_info(self, item_id: str) -> QueryResult_BaseItemDto | None:
@@ -115,7 +115,7 @@ class EmbyClient(BaseClient, MediaService):
         response = await self.post(url, params=params,
                                    json=item_info.model_dump(exclude_unset=True))
         response.raise_for_status()
-        logger.info("Successfully updated item %s", item_id)
+        logger.info("Successfully updated item {}", item_id)
         return True
 
     async def get_user_info(self, user_id: str) -> UserDto | None:
@@ -164,7 +164,7 @@ class EmbyClient(BaseClient, MediaService):
         for uid in user_id:
             user: UserDto | None = await self.get_user_info(uid)
             if not user:
-                logger.error("User %s not found for ban/unban operation", user_id)
+                logger.error("User {} not found for ban/unban operation", user_id)
                 return False
             policy = user.Policy.model_copy(update={'IsDisabled': is_ban})
             await self.update_policy(uid, policy)

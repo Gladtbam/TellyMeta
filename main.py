@@ -32,7 +32,7 @@ async def sonarr_webhook(
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
 
-    logger.info("收到 Sonarr 的 Webhook：%s", payload)
+    logger.info("收到 Sonarr 的 Webhook：{}", payload)
 
     if payload.eventType == 'Test':
         logger.info("收到 Sonarr 测试事件")
@@ -47,16 +47,16 @@ async def sonarr_webhook(
                 qb_client.torrents_set_share_limits(torrent_hash=payload.downloadId, seeding_time_limit=1440) # type: ignore
             )
     elif payload.eventType in ["Grab", "Rename", "SeriesDelete", "EpisodeFileDelete", "Health", "ApplicationUpdate", "HealthRestored", "ManualInteractionRequired"]:
-        logger.info("已收到 Sonarr %s 事件", payload.eventType)
+        logger.info("已收到 Sonarr {} 事件", payload.eventType)
     else:
-        logger.warning("未处理的 Sonarr 事件类型：%s", payload.eventType)
+        logger.warning("未处理的 Sonarr 事件类型：{}", payload.eventType)
 
     return Response(content="Webhook received", status_code=200)
 
 @app.post("/webhooks/emby", status_code=202)
 async def emby_webhook(payload: EmbyPayload) -> Response:
     """处理来自 Emby 的 Webhook"""
-    logger.info("收到 Emby 的 Webhook：%s", payload)
+    logger.info("收到 Emby 的 Webhook：{}", payload)
 
     if payload.Event == 'library.new' and payload.Item:
         asyncio.create_task(

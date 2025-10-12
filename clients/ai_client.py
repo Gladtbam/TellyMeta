@@ -41,8 +41,8 @@ class AIClientWarper:
             if response_text and any('\u4e00' <= char <= '\u9fff' for char in response_text):
                 return response_text
 
-            logger.warning("Translation did not return valid Chinese text: %s", response_text)
+            logger.warning("Translation did not return valid Chinese text: {}", response_text)
             return text
         except Exception as e:
-            logger.error("Error during AI translation: %s", e)
+            logger.error("Error during AI translation: {}", e)
             return text

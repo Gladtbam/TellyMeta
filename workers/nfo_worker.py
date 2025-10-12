@@ -43,7 +43,7 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
 
     async with aiofiles.open(Path(payload.series.path) / 'tvshow.nfo', 'w', encoding='utf-8') as nfo_file:
         await nfo_file.write(nfo_content)
-    logger.info("已为系列 %s 创建 tvshow.nfo", payload.series.title)
+    logger.info("已为系列 {} 创建 tvshow.nfo", payload.series.title)
 
 async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     """创建剧集 NFO 文件
@@ -73,4 +73,4 @@ async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     nfo_content = reparsed.toprettyxml(indent="  ", encoding='utf-8', standalone=True).decode('utf-8')
     async with aiofiles.open(Path(payload.episodeFile.path).with_suffix('.nfo'), 'w', encoding='utf-8') as nfo_file:
         await nfo_file.write(nfo_content)
-    logger.info("已为剧集 %s 创建 NFO 文件", tmdb_payload.tv_episode_results[0].name if tmdb_payload and isinstance(tmdb_payload, TmdbFindPayload) and tmdb_payload.tv_episode_results else "未知剧集")
+    logger.info("已为剧集 {} 创建 NFO 文件", tmdb_payload.tv_episode_results[0].name if tmdb_payload and isinstance(tmdb_payload, TmdbFindPayload) and tmdb_payload.tv_episode_results else "未知剧集")

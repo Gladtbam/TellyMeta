@@ -69,7 +69,7 @@ class AccountService:
         await self.config_repo.set_settings('registration_time_limit', str(time.timestamp()))
         await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
 
-        return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-%d %H:%M:%S')}**。")
+        return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-%d %H:%M:{}')}**。")
 
     async def _set_closed(self) -> Result:
         """关闭开放注册，仅允许注册码和积分注册"""
@@ -167,7 +167,7 @@ class AccountService:
         if emby_info.Policy.IsDisabled:
             await self.media_service.ban_or_unban(emby_user.emby_id, is_ban=False)
 
-        return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-%d %H:%M:%S')}**。")
+        return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-%d %H:%M:{}')}**。")
 
     async def redeem_code(self, user_id: int, username: str, code_str: str) -> Result:
         """使用注册码或续期码注册或续期

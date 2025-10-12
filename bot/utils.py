@@ -18,7 +18,7 @@ async def safe_respond(event, msg: str, delete_after: int = 10) -> None:
         await asyncio.sleep(delete_after)
         await message.delete()
     except errors.FloodWaitError as e:
-        logger.error("发送消息失败: %s", e)
+        logger.error("发送消息失败: {}", e)
 
 async def safe_reply(event, msg: str, delete_after: int = 10) -> None:
     """安全回复消息并在指定时间后删除"""
@@ -30,7 +30,7 @@ async def safe_reply(event, msg: str, delete_after: int = 10) -> None:
         await asyncio.sleep(delete_after)
         await message.delete()
     except errors.FloodWaitError as e:
-        logger.error("发送消息失败: %s", e)
+        logger.error("发送消息失败: {}", e)
 
 async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 60) -> None:
     """安全发送带按钮的消息并在指定时间后删除"""
@@ -43,7 +43,7 @@ async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 6
         await asyncio.sleep(delete_after)
         await message.delete()
     except errors.FloodWaitError as e:
-        logger.error("发送消息失败: %s", e)
+        logger.error("发送消息失败: {}", e)
 
 def generate_captcha():
     num1, num2 = randint(1, 50), randint(1, 50)

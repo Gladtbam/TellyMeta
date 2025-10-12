@@ -95,7 +95,7 @@ class VerificationService:
         try:
             self.scheduler.remove_job(challenge.scheduler_job_id)
         except Exception as e:
-            logger.warning("移除定时任务失败: %s", e)
+            logger.warning("移除定时任务失败: {}", e)
 
         # 删除验证记录
         await self.verification_repo.delete(user_id)
