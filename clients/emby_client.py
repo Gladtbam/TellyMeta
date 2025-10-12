@@ -1,14 +1,13 @@
-import logging
 import random
 
 import httpx
+from loguru import logger
 
 from clients.base_client import BaseClient
-from models.emby import (BaseItemDto, UserPolicy,
-                         QueryResult_BaseItemDto, UserDto)
+from models.emby import (BaseItemDto, QueryResult_BaseItemDto, UserDto,
+                         UserPolicy)
 from services.media_service import MediaService
 
-logger = logging.getLogger(__name__)
 
 class EmbyClient(BaseClient, MediaService):
     """Emby 客户端

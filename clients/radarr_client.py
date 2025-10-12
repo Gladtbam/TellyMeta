@@ -1,12 +1,9 @@
-import logging
-
 import httpx
 
 from clients.base_client import AuthenticatedClient
-from models.radarr import MovieResource
 from core.config import get_settings
+from models.radarr import MovieResource
 
-logger = logging.getLogger(__name__)
 setting = get_settings()
 
 class RadarrClient(AuthenticatedClient):

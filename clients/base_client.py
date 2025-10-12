@@ -1,10 +1,9 @@
 import asyncio
-import logging
 from abc import ABC, abstractmethod
 
 import httpx
+from loguru import logger
 
-logger = logging.getLogger(__name__)
 
 class AuthenticatedClientError(Exception):
     """自定义认证失败异常"""
@@ -23,25 +22,25 @@ class BaseClient(ABC):
     async def _request(self, method: str, url: str, **kwargs):
         """发送HTTP请求，子类可以重写此方法以实现特定的认证逻辑"""
         if self._client is None:
-            raise RuntimeError("HTTP client is not initialized. Call login() first.")
+            raise RuntimeError("HTTP 客户端未初始化。首先调用login()。")
 
         try:
             response = await self._client.request(method, url, **kwargs)
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as e:
-            logging.error("HTTP error: %s", e.response.text)
+            logger.error("HTTP error: %s", e.response.text)
             raise
         except httpx.RequestError as e:
-            logging.error("Request error: %s", e)
+            logger.error("Request error: %s", e)
             raise
         except Exception as e:
-            logging.error("Unexpected error: %s", e)
+            logger.error("Unexpected error: %s", e)
             raise
     
     async def get(self, url: str, **kwargs):
         """发送GET请求"""
-        logging.info("Sending GET request to %s", url)
+        logger.info("Sending GET request to %s", url)
         return await self._request("GET", url, **kwargs)
 
     async def post(self, url: str, **kwargs):
@@ -76,15 +75,15 @@ class AuthenticatedClient(BaseClient):
             try:
                 await self._login()
                 self._is_logged_in = True
-                logging.info("Successfully logged into %s", self.__class__.__name__)
+                logger.info("Successfully logged into %s", self.__class__.__name__)
             except httpx.HTTPStatusError as e:
-                logging.error("Login failed: %s", e.response.text)
+                logger.error("Login failed: %s", e.response.text)
                 raise
             except httpx.RequestError as e:
-                logging.error("Request error during login: %s", e)
+                logger.error("Request error during login: %s", e)
                 raise
             except Exception as e:
-                logging.error("Unexpected error during login: %s", e)
+                logger.error("Unexpected error during login: %s", e)
                 raise
 
     async def _request(self, method: str, url: str, **kwargs):
@@ -99,11 +98,11 @@ class AuthenticatedClient(BaseClient):
         try:
             return await super()._request(method, url, **kwargs)
         except AuthenticatedClientError as e:
-            logging.error("Authentication error: %s", e)
+            logger.error("Authentication error: %s", e)
             raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code in [401, 403]:
-                logging.warning("Session expired, re-logging in")
+                logger.warning("Session expired, re-logging in")
                 self._is_logged_in = False
                 await self.login()
                 auth_headers = await self._apply_auth()
@@ -111,11 +110,11 @@ class AuthenticatedClient(BaseClient):
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
                 return await super()._request(method, url, **kwargs)
             else:
-                logging.error("HTTP error: %s", e.response.text)
+                logger.error("HTTP error: %s", e.response.text)
                 raise
         except httpx.RequestError as e:
-            logging.error("Request error: %s", e)
+            logger.error("Request error: %s", e)
             raise
         except Exception as e:
-            logging.error("Unexpected error: %s", e)
+            logger.error("Unexpected error: %s", e)
             raise

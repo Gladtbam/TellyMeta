@@ -1,5 +1,4 @@
 import json
-import logging
 
 import httpx
 
@@ -7,7 +6,6 @@ from clients.base_client import AuthenticatedClient
 from models.qbittorrent import (QbittorrentPreference,
                                 QbittorrentTorrentProperties)
 
-logger = logging.getLogger(__name__)
 
 class QbittorrentClient(AuthenticatedClient):
     def __init__(self, client: httpx.AsyncClient, username: str, password: str):
@@ -21,7 +19,7 @@ class QbittorrentClient(AuthenticatedClient):
             'password': self.password
         }
         if self._client is None:
-            raise RuntimeError("HTTP client is not initialized. Call login() first.")
+            raise RuntimeError("HTTP 客户端未初始化。首先调用login()。")
         response = await self._client.post("/api/v2/auth/login", data=data)
         response.raise_for_status()
         return response.text  # Returns the session cookie on successful login

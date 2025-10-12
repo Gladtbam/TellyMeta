@@ -1,5 +1,6 @@
-import logging
 import textwrap
+
+from loguru import logger
 
 from core.config import get_settings
 from core.database import async_session
@@ -8,7 +9,6 @@ from repositories.emby_repo import EmbyRepository
 from services.media_service import MediaService
 from services.score_service import ScoreService
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 async def ban_expired_users() -> None:
@@ -23,11 +23,11 @@ async def ban_expired_users() -> None:
 
             users = await emby_repo.find_expired_for_ban()
             if not users:
-                logging.info("没有需要封禁的用户。")
+                logger.info("没有需要封禁的用户。")
                 return
 
             for user in users:
-                logging.info("封禁用户: %s (ID: %s)", user.id, user.emby_id)
+                logger.info("封禁用户: %s (ID: %s)", user.id, user.emby_id)
                 await media_service.ban_or_unban(
                     user_id=user.emby_id,
                     is_ban=True
@@ -50,11 +50,11 @@ async def delete_expired_banned_users() -> None:
 
             users = await emby_repo.find_ban()
             if not users:
-                logging.info("没有需要删除的封禁用户。")
+                logger.info("没有需要删除的封禁用户。")
                 return
 
             for user in users:
-                logging.info("删除封禁用户: %s (ID: %s)", user.id, user.emby_id)
+                logger.info("删除封禁用户: %s (ID: %s)", user.id, user.emby_id)
                 await media_service.delete_by_id(user.emby_id)
 
         except Exception as e:

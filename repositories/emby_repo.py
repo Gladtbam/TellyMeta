@@ -1,13 +1,11 @@
-import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import Emby
 
-logger = logging.getLogger(__name__)
 
 class EmbyRepository:
     def __init__(self, session: AsyncSession):

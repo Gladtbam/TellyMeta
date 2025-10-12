@@ -3,7 +3,7 @@ name = "TellyMeta"
 version = "1.0.0"
 description = "A personal media management tool"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=24.1.0",
     "aiosqlite>=0.21.0",
@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.116.1",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
+    "loguru>=0.7.3",
     "openai>=1.95.1",
     "pillow>=11.3.0",
     "pydantic>=2.11.7",

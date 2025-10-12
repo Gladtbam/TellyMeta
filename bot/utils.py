@@ -1,13 +1,12 @@
 import asyncio
 import io
-import logging
 import operator
 from random import choice, randint
 
+from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 from telethon import errors
 
-logger = logging.getLogger(__name__)
 
 async def safe_respond(event, msg: str, delete_after: int = 10) -> None:
     """安全发送消息并在指定时间后删除"""

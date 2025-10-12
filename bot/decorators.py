@@ -1,12 +1,11 @@
-import logging
 from collections.abc import Callable, Coroutine
 from functools import wraps
 
 from fastapi import FastAPI
+from loguru import logger
 
 from core.database import async_session
 
-logger = logging.getLogger(__name__)
 
 def provide_db_session(func):
     """

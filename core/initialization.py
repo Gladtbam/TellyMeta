@@ -1,15 +1,14 @@
-import logging
 import sqlite3
 import sys
 import textwrap
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 
-logger = logging.getLogger(__name__)
 
 def check_sqlite_version():
     """检查SQLite版本，确保其支持所需的功能"""

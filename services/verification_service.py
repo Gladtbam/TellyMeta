@@ -1,10 +1,10 @@
-import logging
 import textwrap
 from datetime import datetime, timedelta
 from random import randint, sample
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import Button
 
@@ -15,7 +15,6 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.verification_repo import VerificationRepository
 from services.user_service import Result
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 

@@ -1,9 +1,8 @@
-import logging
 import textwrap
 
+from loguru import logger
 from openai import AsyncOpenAI
 
-logger = logging.getLogger(__name__)
 
 class AIClientWarper:
     def __init__(self, base_url, api_key, model) -> None:
@@ -42,8 +41,8 @@ class AIClientWarper:
             if response_text and any('\u4e00' <= char <= '\u9fff' for char in response_text):
                 return response_text
 
-            logging.warning("Translation did not return valid Chinese text: %s", response_text)
+            logger.warning("Translation did not return valid Chinese text: %s", response_text)
             return text
         except Exception as e:
-            logging.error("Error during AI translation: %s", e)
+            logger.error("Error during AI translation: %s", e)
             return text

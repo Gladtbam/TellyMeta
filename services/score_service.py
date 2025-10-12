@@ -1,4 +1,3 @@
-import logging
 import textwrap
 from dataclasses import dataclass, field
 from typing import Literal
@@ -8,7 +7,6 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 from repositories.telegram_repo import TelegramRepository
 from services.user_service import Result
 
-logger = logging.getLogger(__name__)
 
 @dataclass
 class MessageTrackingState:

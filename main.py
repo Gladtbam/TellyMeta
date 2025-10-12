@@ -1,9 +1,9 @@
 import asyncio
-import logging
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response
+from loguru import logger
 
 import bot.handlers
 from clients.ai_client import AIClientWarper
@@ -20,7 +20,6 @@ from workers.nfo_worker import create_episode_nfo, create_series_nfo
 from workers.translator_worker import translate_emby_item
 
 setup_logging()
-logger = logging.getLogger(__name__)
 
 app = FastAPI(lifespan=lifespan)
 
@@ -33,10 +32,10 @@ async def sonarr_webhook(
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
 
-    logging.info("Webhook received for Sonarr: %s", payload)
+    logger.info("收到 Sonarr 的 Webhook：%s", payload)
 
     if payload.eventType == 'Test':
-        logging.info("Sonarr Test Event Received")
+        logger.info("收到 Sonarr 测试事件")
     elif payload.eventType == 'SeriesAdd':
         asyncio.create_task(create_series_nfo(payload, tmdb_client))
     elif payload.eventType == 'Download':
@@ -48,16 +47,16 @@ async def sonarr_webhook(
                 qb_client.torrents_set_share_limits(torrent_hash=payload.downloadId, seeding_time_limit=1440) # type: ignore
             )
     elif payload.eventType in ["Grab", "Rename", "SeriesDelete", "EpisodeFileDelete", "Health", "ApplicationUpdate", "HealthRestored", "ManualInteractionRequired"]:
-        logging.info("Sonarr %s Event Received", payload.eventType)
+        logger.info("已收到 Sonarr %s 事件", payload.eventType)
     else:
-        logging.warning("Unhandled Sonarr event type: %s", payload.eventType)
+        logger.warning("未处理的 Sonarr 事件类型：%s", payload.eventType)
 
     return Response(content="Webhook received", status_code=200)
 
 @app.post("/webhooks/emby", status_code=202)
 async def emby_webhook(payload: EmbyPayload) -> Response:
     """处理来自 Emby 的 Webhook"""
-    logging.info("Webhook received for Emby: %s", payload)
+    logger.info("收到 Emby 的 Webhook：%s", payload)
 
     if payload.Event == 'library.new' and payload.Item:
         asyncio.create_task(

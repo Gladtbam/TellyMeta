@@ -1,9 +1,9 @@
 import asyncio
-import logging
 import textwrap
 from typing import Any
 
 from fastapi import FastAPI
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
 
@@ -14,10 +14,9 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.score_service import MessageTrackingState, ScoreService
-from services.user_service import UserService, Result
+from services.user_service import Result, UserService
 from services.verification_service import VerificationService
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # 定义不需要计数的关键词

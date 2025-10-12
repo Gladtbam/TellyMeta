@@ -1,13 +1,10 @@
-import logging
-
 import httpx
 from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
-from models.sonarr import SeriesResource, EpisodeResource
 from core.config import get_settings
+from models.sonarr import EpisodeResource, SeriesResource
 
-logger = logging.getLogger(__name__)
 setting = get_settings()
 
 class SonarrClient(AuthenticatedClient):

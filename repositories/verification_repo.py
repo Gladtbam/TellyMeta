@@ -1,11 +1,8 @@
-import logging
-
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import PendingVerification
 
-logger = logging.getLogger(__name__)
 
 class VerificationRepository:
     def __init__(self, session: AsyncSession) -> None:

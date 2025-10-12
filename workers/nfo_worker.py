@@ -1,15 +1,14 @@
-import logging
 from pathlib import Path
 from xml.dom import minidom
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 import aiofiles
+from loguru import logger
 
 from clients.tmdb_client import TmdbService
 from models.sonarr import SonarrPayload
 from models.tmdb import TmdbFindPayload, TmdbTv
 
-logger = logging.getLogger(__name__)
 
 async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     """创建剧集 NFO 文件
@@ -17,7 +16,7 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
         payload (SonarrPayload): Sonarr Webhook 负载数据。
         tmdb (TmdbService): 用于获取 TMDB 信息的客户端实例。
     """
-    tmdb_payload = await tmdb.get_info(tmdb_id=payload.series.tmdbId)
+    tmdb_payload = await tmdb.get_info(tmdb_id=str(payload.series.tmdbId))
     root = Element('tvshow')
     if tmdb_payload and isinstance(tmdb_payload, TmdbTv):
         if tmdb_payload.name:
@@ -44,6 +43,7 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
 
     async with aiofiles.open(Path(payload.series.path) / 'tvshow.nfo', 'w', encoding='utf-8') as nfo_file:
         await nfo_file.write(nfo_content)
+    logger.info("已为系列 %s 创建 tvshow.nfo", payload.series.title)
 
 async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     """创建剧集 NFO 文件
@@ -53,7 +53,7 @@ async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     """
     if not payload.episodes or not payload.episodeFile:
         return
-    tmdb_payload = await tmdb.get_info(tvdb_id=payload.episodes[0].tvdbId)
+    tmdb_payload = await tmdb.get_info(tvdb_id=str(payload.episodes[0].tvdbId))
     root = Element('episodedetails')
     if tmdb_payload and isinstance(tmdb_payload, TmdbFindPayload) and tmdb_payload.tv_episode_results:
         episode_info = tmdb_payload.tv_episode_results[0]
@@ -73,3 +73,4 @@ async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     nfo_content = reparsed.toprettyxml(indent="  ", encoding='utf-8', standalone=True).decode('utf-8')
     async with aiofiles.open(Path(payload.episodeFile.path).with_suffix('.nfo'), 'w', encoding='utf-8') as nfo_file:
         await nfo_file.write(nfo_content)
+    logger.info("已为剧集 %s 创建 NFO 文件", tmdb_payload.tv_episode_results[0].name if tmdb_payload and isinstance(tmdb_payload, TmdbFindPayload) and tmdb_payload.tv_episode_results else "未知剧集")

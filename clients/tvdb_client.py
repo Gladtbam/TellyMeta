@@ -1,11 +1,8 @@
-import logging
-
 import httpx
 
 from clients.base_client import AuthenticatedClient
 from models.tvdb import TvdbPayload
 
-logger = logging.getLogger(__name__)
 
 class TvdbClient(AuthenticatedClient):
     def __init__(self, client: httpx.AsyncClient, api_key: str) -> None:

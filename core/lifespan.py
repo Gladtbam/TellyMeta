@@ -1,11 +1,11 @@
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 
 import httpx
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from loguru import logger
 
 from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
@@ -22,7 +22,6 @@ from core.telegram_manager import TelethonClientWarper
 from services.score_service import MessageTrackingState
 from workers.mkv_worker import mkv_merge_task
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 @asynccontextmanager

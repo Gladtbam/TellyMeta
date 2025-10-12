@@ -1,12 +1,10 @@
-import logging
-
 import httpx
+from loguru import logger
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
 from models.tmdb import TmdbFindPayload, TmdbTv
 
-logger = logging.getLogger(__name__)
 setting = get_settings()
 
 class TmdbService(AuthenticatedClient):
@@ -46,7 +44,7 @@ class TmdbService(AuthenticatedClient):
         elif tvdb_id:
             url = f"/find/{tvdb_id}?external_source=tvdb_id&language=zh-CN"
         else:
-            logging.error("没有提供有效的 ID（TMDB ID、IMDB ID 或 TVDB ID）进行查询")
+            logger.error("没有提供有效的 ID（TMDB ID、IMDB ID 或 TVDB ID）进行查询")
             return None
 
         response = await self.get(url)

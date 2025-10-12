@@ -1,4 +1,3 @@
-import logging
 import textwrap
 from dataclasses import dataclass
 from datetime import date
@@ -14,7 +13,6 @@ from repositories.emby_repo import EmbyRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 
-logger = logging.getLogger(__name__)
 
 @dataclass
 class Result:

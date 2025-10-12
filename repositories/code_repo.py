@@ -1,4 +1,3 @@
-import logging
 import secrets
 from datetime import datetime, timedelta
 
@@ -7,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import ActiveCode
 
-logger = logging.getLogger(__name__)
 
 class CodeRepository:
     def __init__(self, session: AsyncSession) -> None:

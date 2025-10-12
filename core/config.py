@@ -1,21 +1,57 @@
 import logging
-from pathlib import Path
+import sys
 from functools import lru_cache
+from pathlib import Path
 
+from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def setup_logging():
-    log_file = Path(__file__).parent.parent / 'bot.log'
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()
-        ]
+    settings = get_settings()
+    LOGS_DIR = Path(__file__).parent.parent / 'logs'
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    logger.remove()
+
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+               "<level>{level: <8}</level> | "
+               "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        colorize=True
     )
+
+    logger.add(
+        LOGS_DIR / "tellymeta_{time:YYYY-MM-DD}.log",
+        level=settings.log_level,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
+        rotation="00:00",  # 每天生成一个新的日志文件
+        retention="7 days",  # 保留最近7天的日志文件
+        compression="zip",  # 压缩旧的日志文件
+        encoding="utf-8",
+        enqueue=True,  # 异步写日志，防止阻塞主线程
+        backtrace=True,  # 启用堆栈追踪，方便调试
+        diagnose=True  # 启用诊断信息，帮助识别日志记录中的问题
+    )
+
+    class InterceptHandler(logging.Handler):
+        def emit(self, record):
+            # 获取 Loguru 的日志级别
+            level = logger.level(record.levelname).name if record.levelname else record.levelno
+            # 找到调用日志的堆栈深度
+            frame, depth = logging.currentframe(), 2
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back
+                depth += 1
+            logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    logging.getLogger("uvicorn.access").handlers = [InterceptHandler()]
+    logging.getLogger("uvicorn").handlers = [InterceptHandler()]
+    logging.getLogger("fastapi").handlers = [InterceptHandler()]
+    logging.getLogger("httpx").handlers = [InterceptHandler()]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -24,6 +60,8 @@ class Settings(BaseSettings):
         extra='ignore'
     )
 
+    log_level: str = 'INFO'
+    timezone: str = 'Asia/Shanghai'
     tmdb_api_key: str = ''
     tvdb_api_key: str = ''
     media_server_url: str = ''

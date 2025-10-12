@@ -1,9 +1,9 @@
-import logging
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 
 from fastapi import FastAPI
+from loguru import logger
 from telethon import TelegramClient, errors
 from telethon.events.common import EventBuilder
 from telethon.tl import functions
@@ -13,7 +13,6 @@ from telethon.tl.types import (ChannelParticipantCreator,
 
 from core.config import get_settings
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 class TelethonClientWarper:

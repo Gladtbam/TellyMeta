@@ -1,4 +1,3 @@
-import logging
 import re
 import textwrap
 from datetime import datetime, timedelta
@@ -14,7 +13,6 @@ from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 class AccountService:

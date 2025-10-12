@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -7,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import TelegramUser
 
-logger = logging.getLogger(__name__)
 
 class TelegramRepository:
     def __init__(self, session: AsyncSession) -> None:
