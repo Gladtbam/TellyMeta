@@ -55,7 +55,7 @@ async def translate_emby_item(item_id: str) -> None:
     }
 
     updates = {}
-    sync_sort_name: bool = fields_to_translate_item['Name'] == fields_to_translate_item['SortName']
+    sync_sort_name: bool = fields_to_translate_item.get('Name') == fields_to_translate_item.get('SortName', None)
 
     for field, text in fields_to_translate_item.items():
         # 检查文本是否为空或包含中文字符
@@ -73,6 +73,7 @@ async def translate_emby_item(item_id: str) -> None:
         if translated_text:
             updates[field] = translated_text
         else:
+            updates[field] = text
             logger.warning("项目 {} 中的字段 {} 翻译失败：{}", field, item_id, text)
 
     if sync_sort_name:
