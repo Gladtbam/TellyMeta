@@ -391,7 +391,7 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     user_id = event.sender_id
     try:
         args_str = event.pattern_match.group(1).strip() # type: ignore
-    except IndexError:
+    except (IndexError, AttributeError):
         args_str = None
 
     registration_service = AccountService(session, app.state.media_client)
@@ -421,7 +421,7 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
 
     try:
         args_str = event.pattern_match.group(1).strip() # type: ignore
-    except IndexError:
+    except (IndexError, AttributeError):
         await safe_reply(event, "请在命令后添加激活码，例如: /code YOUR_CODE")
         return
 
