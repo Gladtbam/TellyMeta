@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
+from pathlib import Path
 
 from fastapi import FastAPI
 from loguru import logger
@@ -15,13 +16,16 @@ from core.config import get_settings
 
 settings = get_settings()
 
+DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 class TelethonClientWarper:
     _handlers: list[tuple[Callable, EventBuilder]] = []
 
     def __init__(self, app: FastAPI) -> None:
         self.app = app
         self.client = TelegramClient(
-            'bot',
+            str( DATA_DIR / "telegram"),
             settings.telegram_api_id,
             settings.telegram_api_hash
         )

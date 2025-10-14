@@ -1,15 +1,30 @@
-from pathlib import Path
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
                                     create_async_engine)
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = f"sqlite+aiosqlite:///{Path(__file__).parent.parent / 'bot.db'}"
+DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'tellymeta.db'}"
 
 async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 
-async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+@event.listens_for(async_engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.close()
 
 class Base(DeclarativeBase):
     """Sqlalchemy模型的基类。"""

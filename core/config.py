@@ -24,12 +24,12 @@ def setup_logging():
     )
 
     logger.add(
-        LOGS_DIR / "tellymeta_{time:YYYY-MM-DD}.log",
+        LOGS_DIR / "tellymeta.log",
         level=settings.log_level,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
         rotation="00:00",  # 每天生成一个新的日志文件
         retention="7 days",  # 保留最近7天的日志文件
-        compression="zip",  # 压缩旧的日志文件
+        compression="gz",  # 压缩旧的日志文件
         encoding="utf-8",
         enqueue=True,  # 异步写日志，防止阻塞主线程
         backtrace=True,  # 启用堆栈追踪，方便调试
