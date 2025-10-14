@@ -52,6 +52,7 @@ def setup_logging():
     logging.getLogger("uvicorn").handlers = [InterceptHandler()]
     logging.getLogger("fastapi").handlers = [InterceptHandler()]
     logging.getLogger("httpx").handlers = [InterceptHandler()]
+    logging.getLogger("httpx").propagate = False
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

@@ -37,10 +37,9 @@ class BaseClient(ABC):
         except Exception as e:
             logger.error("Unexpected error: {}", e)
             raise
-    
+
     async def get(self, url: str, **kwargs):
         """发送GET请求"""
-        logger.info("Sending GET request to {}", url)
         return await self._request("GET", url, **kwargs)
 
     async def post(self, url: str, **kwargs):
@@ -60,12 +59,12 @@ class AuthenticatedClient(BaseClient):
     @abstractmethod
     async def _login(self):
         """子类必须实现登录逻辑"""
-        raise NotImplementedError("Subclasses must implement the _login method")
+        raise NotImplementedError("子类必须实现 _login 方法")
 
     @abstractmethod
     async def _apply_auth(self):
         """子类可以重写此方法以应用特定的认证头"""
-        raise NotImplementedError("Subclasses must implement the _apply_auth method")
+        raise NotImplementedError("子类必须实现 _apply_auth 方法")
 
     async def login(self):
         async with self._login_lock:

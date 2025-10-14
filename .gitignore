@@ -215,6 +215,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-*.db
-*.bak
-*.session
+logs/
+data/

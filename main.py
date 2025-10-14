@@ -38,10 +38,10 @@ async def sonarr_webhook(
     elif payload.eventType == 'Download':
         if payload.episodeFile and payload.episodeFile.path and 'VCB-Studio' not in payload.episodeFile.path:
             asyncio.create_task(create_episode_nfo(payload, tmdb_client))
-            await task_queue.put(Path(payload.episodeFile.path)) # type: ignore
+            await task_queue.put(Path(payload.episodeFile.path))
         if payload.downloadId:
             asyncio.create_task(
-                qb_client.torrents_set_share_limits(torrent_hash=payload.downloadId, seeding_time_limit=1440) # type: ignore
+                qb_client.torrents_set_share_limits(torrent_hash=payload.downloadId, seeding_time_limit=1440)
             )
     elif payload.eventType in ["Grab", "Rename", "SeriesDelete", "EpisodeFileDelete", "Health", "ApplicationUpdate", "HealthRestored", "ManualInteractionRequired"]:
         logger.info("已收到 Sonarr {} 事件", payload.eventType)
