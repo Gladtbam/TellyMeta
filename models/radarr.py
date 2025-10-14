@@ -1,5 +1,6 @@
 # from __future__ import annotations
 
+from datetime import time
 from pydantic import BaseModel, Field, field_validator
 
 from core.config import genre_mapping
@@ -113,7 +114,7 @@ class CustomFormatResource(BaseModel):
 
 class MediaInfoResource(BaseModel):
     """Radarr 媒体信息模型"""
-    id: int
+    id: int | None = None
     audioBitrate: int
     audioChannels: float
     audioCodec: str | None = None
@@ -126,7 +127,7 @@ class MediaInfoResource(BaseModel):
     videoDynamicRange: str | None = None
     videoDynamicRangeType: str | None = None
     resolution: str | None = None
-    runTime: int | None = None
+    runTime: int | time | None = None
     scanType: str | None = None
     subtitles: str | None = None
 

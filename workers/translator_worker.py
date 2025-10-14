@@ -2,15 +2,15 @@ import re
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from loguru import logger
 
 from clients.ai_client import AIClientWarper
 from clients.tmdb_client import TmdbService
 from core.config import genre_mapping
-from models.emby import QueryResult_BaseItemDto
-from models.tmdb import TmdbFindPayload, TmdbTv
+from models.protocols import QueryResult
+from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 
-from loguru import logger
 
 async def translate_emby_item(item_id: str) -> None:
     """翻译 Emby 媒体项的名称、排序名称和概述字段。
@@ -29,7 +29,7 @@ async def translate_emby_item(item_id: str) -> None:
 
     is_translated = False
 
-    item_info: QueryResult_BaseItemDto | None = await media_client.get_item_info(item_id)
+    item_info: QueryResult | None = await media_client.get_item_info(item_id)
     if not item_info or item_info.TotalRecordCount == 0 or item_info.TotalRecordCount == 0 or not item_info.Items:
         logger.error("未找到 ID {} 的信息", item_id)
         return

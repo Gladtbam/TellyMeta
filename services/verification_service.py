@@ -106,11 +106,12 @@ class VerificationService:
 async def kick_unverified_user(
     user_id: int,
 ) -> None:
+    """将未通过验证的用户移出群组"""
     from main import app
     session_factory: async_sessionmaker[AsyncSession] = async_session
     client: TelethonClientWarper = app.state.telethon_client
     scheduler: AsyncIOScheduler = app.state.scheduler
-    """将未通过验证的用户移出群组"""
+
     async with session_factory() as session:
         try:
             verification_repo = VerificationRepository(session)
@@ -128,4 +129,3 @@ async def kick_unverified_user(
             raise e
         finally:
             await session.close()   # 关闭会话
-

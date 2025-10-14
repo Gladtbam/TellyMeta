@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Generic
 
-from models.emby import BaseItemDto, QueryResult_BaseItemDto, UserDto
+from models.protocols import BaseItem, UserT, QueryResultT
 
 
-class MediaService(ABC):
+class MediaService(ABC, Generic[UserT, QueryResultT]):
     """定义媒体服务的抽象基类"""
 
     @abstractmethod
-    async def create(self, name:str) -> UserDto | None:
+    async def create(self, name:str) -> tuple[UserT | None, str | None]:
         """创建用户"""
         raise NotImplementedError
 
@@ -18,22 +18,22 @@ class MediaService(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def update_policy(self, user_id: str, policy: Any, is_none: bool = False) -> bool | None:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool | None:
         """更新用户策略"""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_item_info(self, item_id: str) -> QueryResult_BaseItemDto | None:
+    async def get_item_info(self, item_id: str) -> QueryResultT | None:
         """获取媒体项信息"""
         raise NotImplementedError
 
     @abstractmethod
-    async def post_item_info(self, item_id: str, item_info: BaseItemDto) -> bool | None:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool | None:
         """更新媒体项信息"""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_user_info(self, user_id: str) -> UserDto | None:
+    async def get_user_info(self, user_id: str) -> UserT | None:
         """获取用户信息"""
         raise NotImplementedError
 

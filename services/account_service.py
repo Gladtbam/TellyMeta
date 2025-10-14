@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
-from models.emby import UserPolicy
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import ConfigRepository
 from repositories.emby_repo import EmbyRepository
@@ -113,7 +112,7 @@ class AccountService:
         if not can_register:
             return Result(False, "注册失败，当前未开放注册或您不满足注册条件。")
 
-        emby = await self.media_service.create(username)
+        emby, pw = await self.media_service.create(username)
         if not emby:
             return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
@@ -124,18 +123,18 @@ class AccountService:
             blocked_tags = []
 
         if settings.media_server == 'emby':
-            policy = UserPolicy(BlockedTags=blocked_tags)
+            policy = {"BlockedTags": blocked_tags}
         else:
-            policy = UserPolicy(BlockedTags=blocked_tags) # 预留给 Jellyfin 未来使用
+            policy = {"BlockedTags": blocked_tags }# 预留给 Jellyfin 未来使用
         await self.media_service.update_policy(emby.Id, policy, is_none=True)
-        passwd = await self.media_service.post_password(emby.Id)
+
         await self.emby_repo.create(user_id, emby.Id, username)
 
         return Result(True, textwrap.dedent(f"""\
             注册成功！您的账户信息如下：
             - 服务器地址: `{settings.media_server_url}`
             - 用户名: `{username}`
-            - 密码: `{passwd}`
+            - 密码: `{pw}`
 
             请尽快登录并修改密码，祝您观影愉快！
         """))
@@ -249,9 +248,11 @@ class AccountService:
             action = '设置'
 
         if settings.media_server == 'emby':
-            policy = emby_info.Policy.model_copy(update={'BlockedTags': blocked_tags})
+            policy = emby_info.Policy.model_dump()
+            policy['BlockedTags'] = blocked_tags
         else:
-            policy = emby_info.Policy.model_copy(update={'BlockedTags': blocked_tags}) # 预留给 Jellyfin 未来使用
+            policy = emby_info.Policy.model_dump()# 预留给 Jellyfin 未来使用
+            policy['BlockedTags'] = blocked_tags
         await self.media_service.update_policy(emby_user.emby_id, policy)
 
         return Result(True, textwrap.dedent(f"""\

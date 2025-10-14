@@ -1,4 +1,5 @@
 import random
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -6,10 +7,11 @@ from loguru import logger
 from clients.base_client import BaseClient
 from models.emby import (BaseItemDto, QueryResult_BaseItemDto, UserDto,
                          UserPolicy)
+from models.protocols import BaseItem, Policy, QueryResult, User
 from services.media_service import MediaService
 
 
-class EmbyClient(BaseClient, MediaService):
+class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -25,7 +27,7 @@ class EmbyClient(BaseClient, MediaService):
         super().__init__(client)
         self._api_key = api_key
 
-    async def create(self, name: str) -> UserDto | None:
+    async def create(self, name: str) -> tuple[UserDto | None, str | None]:
         """创建用户。
         Args:
             name (str): 用户名。
@@ -39,8 +41,13 @@ class EmbyClient(BaseClient, MediaService):
         response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
         logger.info("创建用户 {} 成功", name)
-        return UserDto.model_validate(response.json())
-    
+        user = UserDto.model_validate(response.json())
+        pw = await self.post_password(user.Id)
+        if not pw:
+            logger.error("用户 {} 密码设置失败", name)
+            return user, pw
+        return user, pw
+
     async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
         """删除用户。
 
@@ -58,13 +65,13 @@ class EmbyClient(BaseClient, MediaService):
             logger.info("删除用户 {} 成功", uid)
         return True
 
-    async def update_policy(self, user_id: str, policy: UserPolicy, is_none: bool = False) -> bool | None:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool | None:
         url = f"/Users/{user_id}/Policy"
         params = {'api_key': self._api_key}
         if is_none:
-            payload = policy.model_dump(exclude_none=True)
+            payload = UserPolicy(**policy).model_dump(exclude_none=True)
         else:
-            payload = policy.model_dump(exclude_unset=True)
+            payload = UserPolicy(**policy).model_dump(exclude_unset=True)
 
         response = await self.post(url, params=params, json=payload)
         response.raise_for_status()
@@ -99,7 +106,7 @@ class EmbyClient(BaseClient, MediaService):
         response.raise_for_status()
         return QueryResult_BaseItemDto.model_validate(response.json())
 
-    async def post_item_info(self, item_id: str, item_info: BaseItemDto) -> bool | None:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool | None:
         """更新指定媒体项的信息。
 
         Args:
@@ -166,7 +173,7 @@ class EmbyClient(BaseClient, MediaService):
             if not user:
                 logger.error("User {} not found for ban/unban operation", user_id)
                 return False
-            policy = user.Policy.model_copy(update={'IsDisabled': is_ban})
+            policy = user.Policy.model_copy(update={'IsDisabled': is_ban}).model_dump()
             await self.update_policy(uid, policy)
         return True
 

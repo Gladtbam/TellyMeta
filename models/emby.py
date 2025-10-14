@@ -70,10 +70,10 @@ class UserPolicy(BaseModel):
 
 class UserConfiguration(BaseModel):
     """Emby 用户配置模型"""
-    AudioLanguagePreference: str
+    AudioLanguagePreference: str | None = None
     PlayDefaultAudioTrack: bool
-    SubtitleLanguagePreference: str
-    ProfilePin: str
+    SubtitleLanguagePreference: str | None = None
+    ProfilePin: str | None = None
     DisplayMissingEpisodes: bool
     SubtitleMode: str
     OrderedViews: list[str] = Field(default_factory=list)
@@ -93,21 +93,21 @@ class UserDto(BaseModel):
     Id: str
     Name: str
     ServerId: str
-    ServerName: str
+    ServerName: str | None = None
     Prefix: str
-    ConnectUserName: str
-    DateCreated: str | None
-    ConnectLinkType: str | None
-    PrimaryImageTag: str
+    ConnectUserName: str | None = None
+    DateCreated: str | None = None
+    ConnectLinkType: str | None = None
+    PrimaryImageTag: str | None = None
     HasPassword: bool
     HasConfiguredPassword: bool
-    EnableAutoLogin: bool | None
-    LastLoginDate: str | None
-    LastActivityDate: str | None
+    EnableAutoLogin: bool | None = None
+    LastLoginDate: str | None = None
+    LastActivityDate: str | None = None
     Configuration: UserConfiguration
     Policy: UserPolicy
-    PrimaryImageAspectRatio: float | None
-    UserItemShareLevel: str | None
+    PrimaryImageAspectRatio: float | None = None
+    UserItemShareLevel: str | None = None
 
 class ExternalUrl(BaseModel):
     """Emby 外部链接模型
@@ -120,65 +120,65 @@ class ChapterInfo(BaseModel):
     """Emby 章节信息模型"""
     StartPositionTicks: int
     Name: str
-    ImageTag: str
+    ImageTag: str | None = None
     MarkerType: str
     ChapterIndex: int
 
 class MediaStream(BaseModel):
     """Emby 媒体流模型"""
     Codec: str
-    CodecTag: str
-    Language: str
-    ColorTransfer: str
-    ColorPrimaries: str
-    ColorSpace: str
-    Comment: str
-    StreamStartTimeTicks: int | None
+    CodecTag: str | None = None
+    Language: str | None = None
+    ColorTransfer: str | None = None
+    ColorPrimaries: str | None = None
+    ColorSpace: str | None = None
+    Comment: str | None = None
+    StreamStartTimeTicks: int | None = None
     TimeBase: str
-    Title: str
-    Extradata: str
-    VideoRange: str
+    Title: str | None = None
+    Extradata: str | None = None
+    VideoRange: str | None = None
     DisplayTitle: str
-    DisplayLanguage: str
-    NalLengthSize: str
+    DisplayLanguage: str | None = None
+    NalLengthSize: str | None = None
     IsInterlaced: bool
-    ChannelLayout: str
-    BitRate: int | None
-    BitDepth: int | None
-    RefFrames: int | None
-    Rotation: int | None
-    Channels: int | None
-    SampleRate: int | None
+    ChannelLayout: str | None = None
+    BitRate: int | None = None
+    BitDepth: int | None = None
+    RefFrames: int | None = None
+    Rotation: int | None = None
+    Channels: int | None = None
+    SampleRate: int | None = None
     IsDefault: bool
     IsForced: bool
     IsHearingImpaired: bool
-    Height: int | None
-    Width: int | None
-    AverageFrameRate: float | None
-    RealFrameRate: float | None
+    Height: int | None = None
+    Width: int | None = None
+    AverageFrameRate: float | None = None
+    RealFrameRate: float | None = None
     Profile: str
     Type: str
-    AspectRatio: str
+    AspectRatio: str | None = None
     Index: int
     IsExternal: bool
-    DeliveryMethod: str
-    DeliveryUrl: str
-    IsExternalUrl: bool | None
+    DeliveryMethod: str | None = None
+    DeliveryUrl: str | None = None
+    IsExternalUrl: bool | None = None
     IsTextSubtitleStream: bool
     SupportsExternalStream: bool
-    Path: str
+    Path: str | None = None
     Protocol: str
-    PixelFormat: str
-    Level: int | None
-    IsAnamorphic: bool | None
+    PixelFormat: str | None = None
+    Level: int | None = None
+    IsAnamorphic: bool | None = None
     ExtendedVideoType: str
     ExtendedVideoSubType: str
     ExtendedVideoSubTypeDescription: str
-    ItemId: str
-    ServerId: str
-    AttachmentSize: int | None
-    MimeType: str
-    SubtitleLocationType: str
+    ItemId: str | None = None
+    ServerId: str | None = None
+    AttachmentSize: int | None = None
+    MimeType: str | None = None
+    SubtitleLocationType: str | None = None
 
 class MediaSourceInfo(BaseModel):
     """Emby 媒体源模型"""
@@ -186,45 +186,45 @@ class MediaSourceInfo(BaseModel):
     Protocol: str
     Id: str
     Path: str
-    EncoderPath: str
-    EncoderProtocol: str
+    EncoderPath: str | None = None
+    EncoderProtocol: str | None = None
     Type: str
-    ProbePath: str
-    ProbeProtocol: str
+    ProbePath: str | None = None
+    ProbeProtocol: str | None = None
     Container: str
-    Size: int | None
+    Size: int | None = None
     Name: str
-    SortName: str
+    SortName: str | None = None
     IsRemote: bool
     HasMixedProtocols: bool
-    RunTimeTicks: int | None
-    ContainerStartTimeTicks: int | None
+    RunTimeTicks: int | None = None
+    ContainerStartTimeTicks: int | None = None
     SupportsTranscoding: bool
-    TrancodeLiveStartIndex: int | None
-    WallClockStart: str | None
+    TrancodeLiveStartIndex: int | None = None
+    WallClockStart: str | None = None
     SupportsDirectStream: bool
     SupportsDirectPlay: bool
     IsInfiniteStream: bool
     RequiresOpening: bool
-    OpenToken: str
+    OpenToken: str | None = None
     RequiresClosing: bool
-    LiveStreamId: str
+    LiveStreamId: str | None = None
     RequiresLooping: bool
-    Video3DFormat: str
+    Video3DFormat: str | None = None
     MediaStreams: list[MediaStream] = Field(default_factory=list)
     Formats: list[str] = Field(default_factory=list)
-    Bitrate: int | None
-    Timestamp: str
+    Bitrate: int | None = None
+    Timestamp: str | None = None
     RequiredHttpHeaders: dict[str, str] = Field(default_factory=dict)
-    DirectStreamUrl: str
+    DirectStreamUrl: str | None = None
     AddApiKeyToDirectStreamUrl: bool
-    TranscodingUrl: str
-    TranscodingSubProtocol: str
-    TranscodingContainer: str
-    DefaultAudioStreamIndex: int | None
-    DefaultSubtitleStreamIndex: int | None
+    TranscodingUrl: str | None = None
+    TranscodingSubProtocol: str | None = None
+    TranscodingContainer: str | None = None
+    DefaultAudioStreamIndex: int | None = None
+    DefaultSubtitleStreamIndex: int | None = None
     ItemId: str
-    ServerId: str
+    ServerId: str | None = None
 
 class BaseItemPerson(BaseModel):
     """Emby 媒体项人员模型"""
@@ -243,13 +243,13 @@ class NameLongIdPair(BaseModel):
 
 class UserItemDataDto(BaseModel):
     """Emby 用户媒体项数据模型"""
-    Rating: float | None
-    PlayedPercentage: float | None
-    UnplayedItemCount: int | None
+    Rating: float | None = None
+    PlayedPercentage: float | None = None
+    UnplayedItemCount: int | None = None
     PlaybackPositionTicks: int
-    PlayCount: int | None
+    PlayCount: int | None = None
     IsFavorite: bool
-    LastPlayedDate: str | None
+    LastPlayedDate: str | None = None
     Played: bool
     Key: str
     ItemId: str
@@ -258,69 +258,69 @@ class UserItemDataDto(BaseModel):
 class BaseItemDto(BaseModel):
     """Emby 基础媒体项模型"""
     Name: str
-    OriginalTitle: str
+    OriginalTitle: str | None = None
     ServerId: str
     Id: str
-    Guid: str
-    Etag: str
-    Prefix: str
-    TunerName: str
-    PlaylistItemId: str
-    DateCreated: str | None
-    DateModified: str | None
-    VideoCodec: str
-    AudioCodec: str
-    AverageFrameRate: float | None
-    RealFrameRate: float | None
-    ExtraType: str
-    SortIndexNumber: int | None
-    SortParentIndexNumber: int | None
-    CanDelete: bool | None
-    CanDownload: bool | None
-    CanEditItems: bool | None
-    SupportsResume: bool | None
-    PresentationUniqueKey: str
-    PreferredMetadataLanguage: str
-    PreferredMetadataCountryCode: str
-    SupportsSync: bool | None
-    SyncStatus: str
-    CanManageAccess: bool | None
-    CanLeaveContent: bool | None
-    CanMakePublic: bool | None
+    Guid: str | None = None
+    Etag: str | None = None
+    Prefix: str | None = None
+    TunerName: str | None = None
+    PlaylistItemId: str | None = None
+    DateCreated: str | None = None
+    DateModified: str | None = None
+    VideoCodec: str | None = None
+    AudioCodec: str | None = None
+    AverageFrameRate: float | None = None
+    RealFrameRate: float | None = None
+    ExtraType: str | None = None
+    SortIndexNumber: int | None = None
+    SortParentIndexNumber: int | None = None
+    CanDelete: bool | None = None
+    CanDownload: bool | None = None
+    CanEditItems: bool | None = None
+    SupportsResume: bool | None = None
+    PresentationUniqueKey: str | None = None
+    PreferredMetadataLanguage: str | None = None
+    PreferredMetadataCountryCode: str | None = None
+    SupportsSync: bool | None = None
+    SyncStatus: str | None = None
+    CanManageAccess: bool | None = None
+    CanLeaveContent: bool | None = None
+    CanMakePublic: bool | None = None
     Container: str
     SortName: str
-    ForcedSortName: str
-    Video3DFormat: str
-    PremiereDate: str | None
+    ForcedSortName: str | None = None
+    Video3DFormat: str | None = None
+    PremiereDate: str | None = None
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
-    CriticRating: float | None
-    GameSystemId: int | None
-    AsSeries: bool | None
-    GameSystem: str
+    CriticRating: float | None = None
+    GameSystemId: int | None = None
+    AsSeries: bool | None = None
+    GameSystem: str | None = None
     ProductionLocations: list[str] = Field(default_factory=list)
     Path: str
-    OfficialRating: str
-    CustomRating: str
-    ChannelId: str
-    ChannelName: str
+    OfficialRating: str | None = None
+    CustomRating: str | None = None
+    ChannelId: str | None = None
+    ChannelName: str | None = None
     Overview: str
     Taglines: list[str] = Field(default_factory=list)
     Genres: list[str] = Field(default_factory=list)
-    CommunityRating: float | None
-    RunTimeTicks: int | None
-    Size: int | None
-    FileName: str
-    Bitrate: int | None
-    ProductionYear: int | None
-    Number: str
-    ChannelNumber: str
-    IndexNumber: int | None
-    IndexNumberEnd: int | None
-    ParentIndexNumber: int | None
+    CommunityRating: float | None = None
+    RunTimeTicks: int | None = None
+    Size: int | None = None
+    FileName: str | None = None
+    Bitrate: int | None = None
+    ProductionYear: int | None = None
+    Number: str | None = None
+    ChannelNumber: str | None = None
+    IndexNumber: int | None = None
+    IndexNumberEnd: int | None = None
+    ParentIndexNumber: int | None = None
     RemoteTrailers: list[ExternalUrl] = Field(default_factory=list) # MediaUrl
     ProviderIds: dict[str, str] = Field(default_factory=dict)
-    IsFolder: bool | None
+    IsFolder: bool | None = None
     ParentId: str
     Type: str
     People: list[BaseItemPerson] = Field(default_factory=list)
@@ -330,94 +330,94 @@ class BaseItemDto(BaseModel):
     ParentLogoItemId: str
     ParentBackdropItemId: str
     ParentBackdropImageTags: list[str] = Field(default_factory=list)
-    LocalTrailerCount: int | None
-    UserData: UserItemDataDto
-    RecursiveItemCount: int | None
-    ChildCount: int | None
-    SeasonCount: int | None
+    LocalTrailerCount: int | None = None
+    UserData: UserItemDataDto | None = None
+    RecursiveItemCount: int | None = None
+    ChildCount: int | None = None
+    SeasonCount: int | None = None
     SeriesName: str
     SeriesId: str
     SeasonId: str
-    SpecialFeatureCount: int | None
-    DisplayPreferencesId: str
-    Status: str
+    SpecialFeatureCount: int | None = None
+    DisplayPreferencesId: str | None = None
+    Status: str | None = None
     AirDays: list[str] = Field(default_factory=list)
     Tags: list[str] = Field(default_factory=list)
-    PrimaryImageAspectRatio: float | None
+    PrimaryImageAspectRatio: float | None = None
     Artists: list[str] = Field(default_factory=list)
     ArtistItems: list[NameLongIdPair] = Field(default_factory=list) # NameIdPair
     Composers: list[NameLongIdPair] = Field(default_factory=list) # NameIdPair
-    Album: str
-    CollectionType: str
-    DisplayOrder: str
-    AlbumId: str
-    AlbumPrimaryImageTag: str
-    SeriesPrimaryImageTag: str
-    AlbumArtist: str
+    Album: str | None = None
+    CollectionType: str | None = None
+    DisplayOrder: str | None = None
+    AlbumId: str | None = None
+    AlbumPrimaryImageTag: str | None = None
+    SeriesPrimaryImageTag: str | None = None
+    AlbumArtist: str | None = None
     AlbumArtists: list[NameLongIdPair] = Field(default_factory=list) # NameIdPair
     SeasonName: str
     MediaStreams: list[MediaStream] = Field(default_factory=list)
-    PartCount: int | None
+    PartCount: int | None = None
     ImageTags: dict[str, str] = Field(default_factory=dict)
     BackdropImageTags: list[str] = Field(default_factory=list)
     ParentLogoImageTag: str
-    SeriesStudio: str
-    PrimaryImageItemId: str
-    PrimaryImageTag: str
-    ParentThumbItemId: str
-    ParentThumbImageTag: str
+    SeriesStudio: str | None = None
+    PrimaryImageItemId: str | None = None
+    PrimaryImageTag: str | None = None
+    ParentThumbItemId: str | None = None
+    ParentThumbImageTag: str | None = None
     Chapters: list[ChapterInfo] = Field(default_factory=list)
-    LocationType: str
+    LocationType: str | None = None
     MediaType: str
-    EndDate: str | None
+    EndDate: str | None = None
     LockedFields: list[str] = Field(default_factory=list)
-    LockData: bool | None
-    Width: int | None
-    Height: int | None
-    CameraMake: str
-    CameraModel: str
-    Software: str
-    ExposureTime: float | None
-    FocalLength: float | None
-    ImageOrientation: str
-    Aperture: float | None
-    ShutterSpeed: float | None
-    Latitude: float | None
-    Longitude: float | None
-    Altitude: float | None
-    IsoSpeedRating: int | None
-    SeriesTimerId: str
-    ChannelPrimaryImageTag: str
-    StartDate: str | None
-    CompletionPercentage: float | None
-    IsRepeat: bool | None
-    IsNew: bool | None
-    EpisodeTitle: str
-    IsMovie: bool | None
-    IsSports: bool | None
-    IsSeries: bool | None
-    IsLive: bool | None
-    IsNews: bool | None
-    IsKids: bool | None
-    IsPremiere: bool | None
-    TimerType: str
-    Disabled: bool | None
-    ManagementId: str
-    TimerId: str
+    LockData: bool | None = None
+    Width: int | None = None
+    Height: int | None = None
+    CameraMake: str | None = None
+    CameraModel: str | None = None
+    Software: str | None = None
+    ExposureTime: float | None = None
+    FocalLength: float | None = None
+    ImageOrientation: str | None = None
+    Aperture: float | None = None
+    ShutterSpeed: float | None = None
+    Latitude: float | None = None
+    Longitude: float | None = None
+    Altitude: float | None = None
+    IsoSpeedRating: int | None = None
+    SeriesTimerId: str | None = None
+    ChannelPrimaryImageTag: str | None = None
+    StartDate: str | None = None
+    CompletionPercentage: float | None = None
+    IsRepeat: bool | None = None
+    IsNew: bool | None = None
+    EpisodeTitle: str | None = None
+    IsMovie: bool | None = None
+    IsSports: bool | None = None
+    IsSeries: bool | None = None
+    IsLive: bool | None = None
+    IsNews: bool | None = None
+    IsKids: bool | None = None
+    IsPremiere: bool | None = None
+    TimerType: str | None = None
+    Disabled: bool | None = None
+    ManagementId: str | None = None
+    TimerId: str | None = None
     # CurrentProgram: str | None # BaseItemDto
-    MovieCount: int | None
-    SeriesCount: int | None
-    AlbumCount: int | None
-    SongCount: int | None
-    MusicVideoCount: int | None
+    MovieCount: int | None = None
+    SeriesCount: int | None = None
+    AlbumCount: int | None = None
+    SongCount: int | None = None
+    MusicVideoCount: int | None = None
     Subviews: list[str] = Field(default_factory=list)
-    ListingsProviderId: str
-    ListingsChannelId: str
-    ListingsPath: str
-    ListingsId: str
-    ListingsChannelName: str
-    ListingsChannelNumber: str
-    AffiliateCallSign: str
+    ListingsProviderId: str | None = None
+    ListingsChannelId: str | None = None
+    ListingsPath: str | None = None
+    ListingsId: str | None = None
+    ListingsChannelName: str | None = None
+    ListingsChannelNumber: str | None = None
+    AffiliateCallSign: str | None = None
 
 class QueryResult_BaseItemDto(BaseModel):
     """Emby 搜索结果模型"""
