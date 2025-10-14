@@ -97,3 +97,20 @@ async def translate_emby_item(item_id: str) -> None:
             args=[item_id]
         )
         logger.info("计划在 8 天后重试项目 {}", item_id)
+
+async def cancel_translate_emby_item(item_id: str) -> None:
+    """取消已计划的翻译任务。
+    Args:
+        scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
+        item_id (str): 媒体项的唯一标识符。
+    """
+    from main import app
+    scheduler: AsyncIOScheduler = app.state.scheduler
+
+    job_id = f'translate_emby_item_{item_id}'
+    job = scheduler.get_job(job_id)
+    if job:
+        scheduler.remove_job(job_id)
+        logger.info("已取消项目 {} 的翻译任务", item_id)
+    else:
+        logger.info("项目 {} 没有计划的翻译任务", item_id)

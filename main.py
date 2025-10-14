@@ -2,22 +2,19 @@ import asyncio
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import BackgroundTasks, Depends, FastAPI, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Response
 from loguru import logger
 
 import bot.handlers
-from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
 from clients.tmdb_client import TmdbService
 from core.config import setup_logging
-from core.dependencies import (get_ai_client, get_media_client, get_qb_client,
-                               get_scheduler, get_task_queue, get_tmdb_client)
+from core.dependencies import get_qb_client, get_task_queue, get_tmdb_client
 from core.lifespan import lifespan
 from models.emby import EmbyPayload
 from models.sonarr import SonarrPayload
-from services.media_service import MediaService
 from workers.nfo_worker import create_episode_nfo, create_series_nfo
-from workers.translator_worker import translate_emby_item
+from workers.translator_worker import translate_emby_item, cancel_translate_emby_item
 
 setup_logging()
 
@@ -61,6 +58,10 @@ async def emby_webhook(payload: EmbyPayload) -> Response:
     if payload.Event == 'library.new' and payload.Item:
         asyncio.create_task(
             translate_emby_item(payload.Item.Id)
+            )
+    if payload.Event == 'library.delete' and payload.Item:
+        asyncio.create_task(
+            cancel_translate_emby_item(payload.Item.Id)
             )
 
     return Response(content="Webhook received", status_code=200)
