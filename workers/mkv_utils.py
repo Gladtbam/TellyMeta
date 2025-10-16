@@ -92,13 +92,19 @@ async def mkv_merge(episode_path: Path) -> None:
     # 处理轨道
     subtitle_tracks = [track for track in mkv_info["tracks"] if track.get("type") == "subtitles"]
 
-    if not subtitle_tracks or all(track.get("language") in ["chi", "zh"] or track.get("language_ietf") in ["zh-Hans", "zh-Hant"] for track in subtitle_tracks):
+    if not subtitle_tracks or all(
+        track.get("language") in ["chi", "zh"] or track.get("language_ietf") in ["zh-Hans", "zh-Hant"]
+        for track in subtitle_tracks
+    ):
         logger.info("{} 中未找到字幕或只有中文字幕，正在跳过合并", episode_path)
         return
 
     cmd = ['mkvmerge', '-o', str(output_path)]
 
-    chinese_subtitle_tracks = [track for track in subtitle_tracks if track.get("language") in ["chi", "zh"] or track.get("language_ietf") in ["zh-Hans", "zh-Hant"]]
+    chinese_subtitle_tracks = [
+        track for track in subtitle_tracks
+        if track.get("language") in ["chi", "zh"] or track.get("language_ietf") in ["zh-Hans", "zh-Hant"]
+    ]
 
     if not chinese_subtitle_tracks:
     # 没有中文字幕轨道，仅保留非字幕轨道，并删除所有附件

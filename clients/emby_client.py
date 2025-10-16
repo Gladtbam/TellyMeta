@@ -5,13 +5,12 @@ import httpx
 from loguru import logger
 
 from clients.base_client import BaseClient
-from models.emby import (BaseItemDto, QueryResult_BaseItemDto, UserDto,
-                         UserPolicy)
-from models.protocols import BaseItem, Policy, QueryResult, User
+from models.emby import BaseItemDtoQueryResult, UserDto, UserPolicy
+from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
+class EmbyClient(BaseClient, MediaService[UserDto, BaseItemDtoQueryResult]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -38,21 +37,24 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
         params = {'api_key': self._api_key}
         payload = {'Name': name}
 
-        response = await self.post(url, params=params, json=payload)
-        response.raise_for_status()
-        logger.info("创建用户 {} 成功", name)
-        user = UserDto.model_validate(response.json())
-        pw = await self.post_password(user.Id)
-        if not pw:
-            logger.error("用户 {} 密码设置失败", name)
-            return user, pw
-        return user, pw
+        response = await self.post(url, params=params, json=payload, response_model=UserDto)
+
+        if isinstance(response, UserDto):
+            logger.info("创建用户 {} 成功", name)
+            pw = await self.post_password(response.Id)
+            if not pw:
+                logger.error("用户 {} 密码设置失败", name)
+                return response, pw
+            return response, pw
+        else:
+            logger.error("创建用户 {} 失败: {}", name, response)
+            return None, None
 
     async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
         """删除用户。
 
         Args:
-            emby_id (str): Emby 用户的唯一标识符。
+            user_id (str): Emby 用户的唯一标识符。
         """
         params = {'api_key': self._api_key}
 
@@ -61,11 +63,21 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
         for uid in user_id:
             url = f"/Users/{uid}"
             response = await self.delete(url, params=params)
-            response.raise_for_status()
-            logger.info("删除用户 {} 成功", uid)
+            if response:
+                logger.info("删除用户 {} 成功", uid)
+            else:
+                logger.error("删除用户 {} 失败", uid)
         return True
 
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool | None:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool:
+        """更新用户策略。
+        Args:
+            user_id (str): Jellyfin 用户的唯一标识符。
+            policy (dict): 用户策略字典。
+            is_none (bool): 是否包含 None 值，默认为 False。
+        Returns:
+            bool: 更新是否成功。
+        """
         url = f"/Users/{user_id}/Policy"
         params = {'api_key': self._api_key}
         if is_none:
@@ -73,12 +85,15 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
         else:
             payload = UserPolicy(**policy).model_dump(exclude_unset=True)
 
-        response = await self.post(url, params=params, json=payload)
-        response.raise_for_status()
-        logger.info("User policy for {} updated successfully", user_id)
-        return True
+        response = await self.post(url, params=params, json=payload, response_model=UserPolicy)
+        if isinstance(response, UserPolicy):
+            logger.info("{} 的用户政策已成功更新", user_id)
+            return True
+        else:
+            logger.error("更新 {} 的用户策略失败：{}", user_id, response)
+            return False
 
-    async def get_item_info(self, item_id: str) -> QueryResult_BaseItemDto | None:
+    async def get_item_info(self, item_id: str) -> BaseItemDtoQueryResult | None:
         """获取指定媒体项的信息。
 
         Args:
@@ -102,11 +117,10 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
             'api_key': self._api_key,
         }
 
-        response = await self.get(url, params=params)
-        response.raise_for_status()
-        return QueryResult_BaseItemDto.model_validate(response.json())
+        response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
+        return response if isinstance(response, BaseItemDtoQueryResult) else None
 
-    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool | None:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
         """更新指定媒体项的信息。
 
         Args:
@@ -121,30 +135,34 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
 
         response = await self.post(url, params=params,
                                    json=item_info.model_dump(exclude_unset=True))
-        response.raise_for_status()
-        logger.info("Successfully updated item {}", item_id)
+        if not response:
+            logger.error("更新项目 {} 失败", item_id)
+            return False
+        logger.info("已成功更新项目 {}", item_id)
         return True
 
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取指定用户的信息。
 
         Args:
-            emby_id (str): Emby 用户的唯一标识符。
+            user_id (str): Emby 用户的唯一标识符。
 
         Returns:
             UserDto: Emby 用户对象，如果未找到则返回 None。
         """
         url = f"/Users/{user_id}"
         params = {'api_key': self._api_key}
-        response = await self.get(url, params=params)
-        response.raise_for_status()
-        return UserDto.model_validate(response.json())
+        response = await self.get(url, params=params, response_model=UserDto)
+        if not isinstance(response, UserDto):
+            logger.error("获取用户 {} 信息失败: {}", user_id, response)
+            return None
+        return response
 
     async def post_password(self, user_id: str, reset_password: bool = False) -> str | None:
         """更新用户密码。
 
         Args:
-            emby_id (str): Emby 用户的唯一标识符。
+            user_id (str): Emby 用户的唯一标识符。
             reset_password (bool): 是否重置密码。如果为 True，则 Emby 会生成一个新密码。
         """
         passwd = ''.join(random.sample('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=12))
@@ -156,14 +174,13 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
             'ResetPassword': reset_password
         }
         response = await self.post(url, params=params, json=payload)
-        response.raise_for_status()
-        return passwd if not reset_password else None
+        return passwd if not response else None
 
     async def ban_or_unban(self, user_id: str | list[str], is_ban: bool = True) -> bool:
         """封禁或解封用户。
 
         Args:
-            emby_id (str): Emby 用户的唯一标识符。
+            user_id (str): Emby 用户的唯一标识符。
             is_ban (bool): 如果为 True 则封禁用户，否则解封用户。
         """
         if isinstance(user_id, str):
@@ -171,10 +188,12 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
         for uid in user_id:
             user: UserDto | None = await self.get_user_info(uid)
             if not user:
-                logger.error("User {} not found for ban/unban operation", user_id)
-                return False
+                logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
+                continue
             policy = user.Policy.model_copy(update={'IsDisabled': is_ban}).model_dump()
-            await self.update_policy(uid, policy)
+            success = await self.update_policy(uid, policy)
+            if not success:
+                logger.error("更新用户 {} 策略失败，无法进行封禁或解封操作", uid)
         return True
 
     async def get_user_playlist(self, user_id: str, expires_at: str) -> float:
@@ -193,7 +212,8 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
             'api_key': self._api_key
         }
         response = await self.get(url, params=params)
-        response.raise_for_status()
+        if not response:
+            return 0.0
         data = response.json()
         for item in data:
             total_duration += int(item.get('duration', 0))
@@ -205,6 +225,7 @@ class EmbyClient(BaseClient, MediaService[UserDto, QueryResult_BaseItemDto]):
         url = "/emby/user_usage_stats/session_list"
         params = {'api_key': self._api_key}
         response = await self.get(url, params=params)
-        response.raise_for_status()
+        if not response:
+            return 0
         data = response.json()
         return len([session for session in data if session.get('NowPlayingItem')])

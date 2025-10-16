@@ -16,7 +16,7 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
         payload (SonarrPayload): Sonarr Webhook 负载数据。
         tmdb (TmdbService): 用于获取 TMDB 信息的客户端实例。
     """
-    tmdb_payload = await tmdb.get_info(tmdb_id=str(payload.series.tmdbId))
+    tmdb_payload = await tmdb.get_tv_details(payload.series.tmdbId)
     root = Element('tvshow')
     if tmdb_payload and isinstance(tmdb_payload, TmdbTv):
         if tmdb_payload.name:
@@ -53,7 +53,7 @@ async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
     """
     if not payload.episodes or not payload.episodeFile:
         return
-    tmdb_payload = await tmdb.get_info(tvdb_id=str(payload.episodes[0].tvdbId))
+    tmdb_payload = await tmdb.find_info_by_external_id('tvdb_id', str(payload.episodes[0].tvdbId))
     root = Element('episodedetails')
     if tmdb_payload and isinstance(tmdb_payload, TmdbFindPayload) and tmdb_payload.tv_episode_results:
         episode_info = tmdb_payload.tv_episode_results[0]

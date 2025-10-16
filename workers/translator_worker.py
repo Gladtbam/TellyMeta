@@ -7,7 +7,7 @@ from loguru import logger
 from clients.ai_client import AIClientWarper
 from clients.tmdb_client import TmdbService
 from core.config import genre_mapping
-from models.protocols import QueryResult
+from models.protocols import BaseItem, QueryResult
 from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 
@@ -30,21 +30,21 @@ async def translate_emby_item(item_id: str) -> None:
     is_translated = False
 
     item_info: QueryResult | None = await media_client.get_item_info(item_id)
-    if not item_info or item_info.TotalRecordCount == 0 or item_info.TotalRecordCount == 0 or not item_info.Items:
-        logger.error("未找到 ID {} 的信息", item_id)
+    if not isinstance(item_info, QueryResult) or item_info.TotalRecordCount == 0 or item_info.TotalRecordCount == 0 or not item_info.Items:
+        logger.error("未找到 Media ID {} 的信息", item_id)
         return
 
-    item = item_info.Items[0]
+    item: BaseItem = item_info.Items[0]
 
     imdb_id = item.ProviderIds.get('Imdb') or item.ProviderIds.get('IMDB')
     tvdb_id = item.ProviderIds.get('Tvdb') or item.ProviderIds.get('TVDB')
     tmdb_info = None
     if imdb_id and tmdb_info is None:
-        tmdb_info = await tmdb_client.get_info(imdb_id=imdb_id)
+        tmdb_info = await tmdb_client.find_info_by_external_id('imdb_id', imdb_id)
     if tvdb_id and tmdb_info is None:
-        tmdb_info = await tmdb_client.get_info(tvdb_id=tvdb_id)
+        tmdb_info = await tmdb_client.find_info_by_external_id('tvdb_id', tvdb_id)
 
-    if not tmdb_info:
+    if not isinstance(tmdb_info, TmdbFindPayload):
         logger.warning("未找到项目 {} 的 TMDB 信息", item_id)
 
     fields_to_translate_item = {
@@ -60,6 +60,7 @@ async def translate_emby_item(item_id: str) -> None:
     for field, text in fields_to_translate_item.items():
         # 检查文本是否为空或包含中文字符
         if not text or not isinstance(text, str) or re.search(r'[\u4e00-\u9fff]', text):
+            updates[field] = text
             continue
 
         is_translated = True

@@ -18,7 +18,7 @@ class MediaService(ABC, Generic[UserT, QueryResultT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool | None:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool:
         """更新用户策略"""
         raise NotImplementedError
 
@@ -28,7 +28,7 @@ class MediaService(ABC, Generic[UserT, QueryResultT]):
         raise NotImplementedError
 
     @abstractmethod
-    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool | None:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
         """更新媒体项信息"""
         raise NotImplementedError
 

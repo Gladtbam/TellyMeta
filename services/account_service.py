@@ -11,6 +11,7 @@ from repositories.emby_repo import EmbyRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
+from models.protocols import User
 
 settings = get_settings()
 
@@ -68,7 +69,7 @@ class AccountService:
         await self.config_repo.set_settings('registration_time_limit', str(time.timestamp()))
         await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
 
-        return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-%d %H:%M:{}')}**。")
+        return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-{} %H:%M:{}')}**。")
 
     async def _set_closed(self) -> Result:
         """关闭开放注册，仅允许注册码和积分注册"""
@@ -116,16 +117,13 @@ class AccountService:
         if not emby:
             return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-        blocked_tags = (await self.config_repo.get_settings('nsfw_library', ''))
+        blocked_tags = await self.config_repo.get_settings('nsfw_library', '')
         if blocked_tags:
             blocked_tags = blocked_tags.split('|')
         else:
             blocked_tags = []
 
-        if settings.media_server == 'emby':
-            policy = {"BlockedTags": blocked_tags}
-        else:
-            policy = {"BlockedTags": blocked_tags }# 预留给 Jellyfin 未来使用
+        policy = {"BlockedTags": blocked_tags}
         await self.media_service.update_policy(emby.Id, policy, is_none=True)
 
         await self.emby_repo.create(user_id, emby.Id, username)
@@ -149,7 +147,7 @@ class AccountService:
             return Result(False, "您尚未注册，请先注册后再续期。")
 
         emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not emby_info:
+        if not isinstance(emby_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
         if emby_user.expires_at > datetime.now() + timedelta(days=7):
@@ -166,7 +164,7 @@ class AccountService:
         if emby_info.Policy.IsDisabled:
             await self.media_service.ban_or_unban(emby_user.emby_id, is_ban=False)
 
-        return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-%d %H:%M:{}')}**。")
+        return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。")
 
     async def redeem_code(self, user_id: int, username: str, code_str: str) -> Result:
         """使用注册码或续期码注册或续期
@@ -231,7 +229,7 @@ class AccountService:
             return Result(False, "您尚未注册，请先注册后再设置。")
 
         emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not emby_info:
+        if not isinstance(emby_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
         nsfw = await self.config_repo.get_settings('nsfw_library', '')
@@ -271,7 +269,7 @@ class AccountService:
             return Result(False, "您尚未注册，请先注册后再重置密码。")
 
         emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not emby_info:
+        if not isinstance(emby_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
         passwd = await self.media_service.post_password(emby_user.emby_id)

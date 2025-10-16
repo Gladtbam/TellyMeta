@@ -125,7 +125,7 @@ class UserService:
         if user.emby:
             played_ratio = await self.media_service.get_user_playlist(
             user.emby.emby_id,
-            user.emby.expires_at.strftime('%Y-%m-%d')
+            user.emby.expires_at.strftime('%Y-%m-{}')
             )
             message += textwrap.dedent(f"""\
                 **Emby 用户名**: `{user.emby.emby_name}`

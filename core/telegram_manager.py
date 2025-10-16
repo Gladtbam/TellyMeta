@@ -167,7 +167,7 @@ class TelethonClientWarper:
                 banned_rights=rights
             ))
         except errors.FloodWaitError as e:
-            logger.error("Failed to ban user %d: {}", user_id, e)
+            logger.error("Failed to ban user {}: {}", user_id, e)
             raise
         
     async def unban_user(self, user_id: int) -> None:
@@ -188,7 +188,7 @@ class TelethonClientWarper:
                 banned_rights=rights
             ))
         except errors.FloodWaitError as e:
-            logger.error("Failed to unban user %d: {}", user_id, e)
+            logger.error("Failed to unban user {}: {}", user_id, e)
             raise
 
     async def kick_participant(self, user_id: int) -> None:
@@ -201,5 +201,5 @@ class TelethonClientWarper:
         try:
             await self.client.kick_participant(self.chat_id, user_id)
         except errors.FloodWaitError as e:
-            logger.error("Failed to kick user %d: {}", user_id, e)
+            logger.error("Failed to kick user {}: {}", user_id, e)
             raise

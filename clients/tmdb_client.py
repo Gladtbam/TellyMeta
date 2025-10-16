@@ -1,5 +1,4 @@
 import httpx
-from loguru import logger
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
@@ -22,35 +21,33 @@ class TmdbService(AuthenticatedClient):
             "accept": "application/json"
         }
 
-    async def get_info(
+    async def find_info_by_external_id(
         self,
-        tmdb_id: str | None = None,
-        imdb_id: str | None = None,
-        tvdb_id: str | None = None
-    ) -> TmdbTv | TmdbFindPayload | None:
-        """根据 TMDB ID、IMDB ID 或 TVDB ID 获取 TMDB 电视剧信息。
-        优先使用 TMDB ID 进行查询，如果没有提供，则依次尝试 IMDB ID 和 TVDB ID。
+        external_source: str,
+        external_id: str
+    ) -> None | TmdbFindPayload | httpx.Response:
+        """根据外部 ID 获取 TMDB 相关信息。
         Args:
-            tmdb_id (str | None): TMDB 电视剧 ID。
-            imdb_id (str | None): IMDB 电视剧 ID。
-            tvdb_id (str | None): TVDB 电视剧 ID。
+            external_source (str): 外部来源，如 "imdb_id" 或 "tvdb_id"。
+            external_id (str): 外部 ID 值。
         Returns:
-            TmdbTv | TmdbFindPayload | None: 返回 TmdbTv 对象（如果使用 TMDB ID 查询）或 TmdbFindPayload 对象（如果使用 IMDB ID 或 TVDB ID 查询），如果查询失败则返回 None。
+            TmdbFindPayload | None: TmdbFindPayload 对象，如果查询失败则返回 None。
         """
-        if tmdb_id:
-            url = f"/tv/{tmdb_id}?language=zh-CN"
-        elif imdb_id:
-            url = f"/find/{imdb_id}?external_source=imdb_id&language=zh-CN"
-        elif tvdb_id:
-            url = f"/find/{tvdb_id}?external_source=tvdb_id&language=zh-CN"
-        else:
-            logger.error("没有提供有效的 ID（TMDB ID、IMDB ID 或 TVDB ID）进行查询")
-            return None
+        url = f"/find/{external_id}"
+        params = {
+            "external_source": external_source,
+            "language": "zh-CN"
+        }
 
-        response = await self.get(url)
-        data = response.json()
-        if tmdb_id:
-            return TmdbTv.model_validate(data)
-        if imdb_id or tvdb_id:
-            return TmdbFindPayload.model_validate(data)
-        return None
+        return await self.get(url, params=params, response_model=TmdbFindPayload)
+
+    async def get_tv_details(self, tmdb_id: int) -> None | TmdbTv | httpx.Response:
+        """根据 TMDB ID 获取 TMDB 电视剧详情。
+        Args:
+            tmdb_id (int): TMDB 电视剧 ID。
+        Returns:
+            TmdbTv | None: TmdbTv 对象，如果查询失败则返回 None。
+        """
+        url = f"/tv/{tmdb_id}"
+        params = {"language": "zh-CN"}
+        return await self.get(url, params=params, response_model=TmdbTv)

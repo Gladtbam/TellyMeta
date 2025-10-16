@@ -23,7 +23,7 @@ class SonarrClient(AuthenticatedClient):
             "Content-Type": "application/json"
         }
 
-    async def lookup_by_tvdb(self, tvdb_id: int) -> SeriesResource:
+    async def lookup_by_tvdb(self, tvdb_id: int) -> SeriesResource | None:
         """根据 TVDB ID 查找 The TVDB 获取的剧集信息。
         Args:
             tvdb_id (int): TVDB 剧集 ID。
@@ -33,9 +33,11 @@ class SonarrClient(AuthenticatedClient):
         url = "/api/v3/series/lookup/tvdb"
         params = {'term': f'tvdb:{tvdb_id}'}
         response = await self.get(url, params=params)
+        if not response:
+            return None
         return TypeAdapter(list[SeriesResource]).validate_python(response.json())[0]
 
-    async def get_series_by_tvdb(self, tvdb_id: int) -> SeriesResource:
+    async def get_series_by_tvdb(self, tvdb_id: int) -> SeriesResource | None:
         """根据 TVDB ID 获取 Sonarr 中的剧集信息。
         Args:
             tvdb_id (int): TVDB 剧集 ID。
@@ -45,9 +47,11 @@ class SonarrClient(AuthenticatedClient):
         url = "/api/v3/series"
         params = {'tvdbId': tvdb_id, 'includeSeasonImages': 'true'}
         response = await self.get(url, params=params)
+        if not response:
+            return None
         return TypeAdapter(list[SeriesResource]).validate_python(response.json())[0]
 
-    async def get_episode_by_series_id(self, series_id: int) -> list[EpisodeResource]:
+    async def get_episode_by_series_id(self, series_id: int) -> list[EpisodeResource] | None:
         """根据剧集 ID 获取 Sonarr 中的剧集的所有剧集信息。
         Args:
             series_id (int): 剧集 ID。
@@ -62,9 +66,11 @@ class SonarrClient(AuthenticatedClient):
             'includeImages': 'true'
             }
         response = await self.get(url, params=params)
+        if not response:
+            return None
         return TypeAdapter(list[EpisodeResource]).validate_python(response.json())
 
-    async def post_series(self, series_resource: SeriesResource) -> SeriesResource:
+    async def post_series(self, series_resource: SeriesResource) -> SeriesResource | None:
         """添加新剧集到 Sonarr。
         Args:
             series_data (dict): 包含剧集信息的字典。
@@ -72,5 +78,5 @@ class SonarrClient(AuthenticatedClient):
             dict | None: 返回添加的剧集信息的字典，如果添加失败则返回 None。
         """
         url = "/api/v3/series"
-        response = await self.post(url, json=series_resource.model_dump())
-        return SeriesResource.model_validate(response.json())
+        response = await self.post(url, json=series_resource.model_dump(), response_model=SeriesResource)
+        return response if isinstance(response, SeriesResource) else None

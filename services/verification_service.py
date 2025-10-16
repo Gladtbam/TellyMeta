@@ -120,7 +120,7 @@ async def kick_unverified_user(
                 await verification_repo.delete(user_id)
 
             await client.kick_participant(user_id)
-            logger.info("用户 %d 未通过验证，已被移出群组。", user_id)
+            logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
 
             # 删除验证记录
             await verification_repo.delete(user_id)

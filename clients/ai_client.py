@@ -31,11 +31,11 @@ class AIClientWarper:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {'role': 'system', 'content': 'You are a professional translator specializing in Japanese anime metadata.'},
+                    {'role': 'system', 'content': '您是一位专门研究日本动漫元数据的专业翻译。'},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=1000,
-                temperature=0.7
+                temperature=0.5
             )
             response_text = response.choices[0].message.content
             if response_text and any('\u4e00' <= char <= '\u9fff' for char in response_text):

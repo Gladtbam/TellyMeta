@@ -42,7 +42,7 @@ async def start_handler(app: FastAPI, event: events.NewMessage.Event, session: A
             buttons=keyboard
         )
     except errors.FloodWaitError as e:
-        logger.warning("Flood wait error: waiting for %d seconds", e.seconds)
+        logger.warning("Flood wait error: waiting for {} seconds", e.seconds)
         await asyncio.sleep(e.seconds)
         await event.respond(
             "欢迎！请在 **5 分钟内**选择下方正确答案：",
@@ -371,7 +371,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
         await asyncio.sleep(1)
         await event.delete()
     except errors.FloodWaitError as e:
-        logger.warning("删除消息时等待错误：等待%d秒", e.seconds)
+        logger.warning("删除消息时等待错误：等待{}秒", e.seconds)
         await asyncio.sleep(e.seconds)
         await event.delete()
 

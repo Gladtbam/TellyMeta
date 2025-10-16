@@ -22,7 +22,7 @@ class RadarrClient(AuthenticatedClient):
             "Content-Type": "application/json"
         }
 
-    async def lookup_by_tmdb(self, tmdb_id: int) -> MovieResource:
+    async def lookup_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
         """根据 TMDB ID 查找 The Movie Database 获取的电影信息。
         Args:
             tmdb_id (int): TMDB 电影 ID。
@@ -31,10 +31,10 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie/lookup/tmdb"
         params = {'tmdbId': tmdb_id}
-        response = await self.get(url, params=params)
-        return MovieResource.model_validate(response.json())
+        response = await self.get(url, params=params, response_model=MovieResource)
+        return response if isinstance(response, MovieResource) else None
 
-    async def get_movie_by_tmdb(self, tmdb_id: int):
+    async def get_movie_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
         """根据 TMDB ID 获取 Radarr 中的电影信息。
         Args:
             tmdb_id (int): TMDB 电影 ID。
@@ -43,10 +43,10 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie"
         params = {'tmdbId': tmdb_id}
-        response = await self.get(url, params=params)
-        return MovieResource.model_validate(response.json())
+        response = await self.get(url, params=params, response_model=MovieResource)
+        return response if isinstance(response, MovieResource) else None
 
-    async def post_movie(self, movie_resource: MovieResource):
+    async def post_movie(self, movie_resource: MovieResource) -> MovieResource | None:
         """向 Radarr 添加电影。
         Args:
             movie_resource (MovieResource): 要添加的电影信息。
@@ -54,5 +54,5 @@ class RadarrClient(AuthenticatedClient):
             dict | None: 返回添加后的电影信息的字典，如果添加失败则返回 None。
         """
         url = "/api/v3/movie"
-        response = await self.post(url, json=movie_resource.model_dump())
-        return MovieResource.model_validate(response.json())
+        response = await self.post(url, json=movie_resource.model_dump(), response_model=MovieResource)
+        return response if isinstance(response, MovieResource) else None

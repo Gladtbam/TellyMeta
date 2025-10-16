@@ -1,9 +1,12 @@
 import asyncio
 from abc import ABC, abstractmethod
+from typing import TypeVar
 
 import httpx
 from loguru import logger
+from pydantic import BaseModel, ValidationError
 
+T = TypeVar('T', bound=BaseModel)
 
 class AuthenticatedClientError(Exception):
     """自定义认证失败异常"""
@@ -19,36 +22,51 @@ class BaseClient(ABC):
         if self._client:
             await self._client.aclose()
 
-    async def _request(self, method: str, url: str, **kwargs):
-        """发送HTTP请求，子类可以重写此方法以实现特定的认证逻辑"""
+    async def _request(self, method: str, url: str, *,
+                       response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+        """发送HTTP请求，子类可以重写此方法以实现特定的认证逻辑
+        Args:
+            method (str): HTTP方法，如'GET', 'POST', 'DELETE'等。
+            url (str): 请求的URL路径。
+            response_model (type[T], optional): 用于验证响应数据的Pydantic模型类。
+            **kwargs: 传递给httpx请求方法的其他参数，如params, json, headers等。
+        Returns:
+            httpx.Response | None: 如果请求成功且响应验证通过，返回httpx.Response对象，否则返回None。
+        """
         if self._client is None:
-            raise RuntimeError("HTTP 客户端未初始化。首先调用login()。")
+            raise RuntimeError("HTTP 客户端未初始化。首先调用 login()。")
 
         try:
             response = await self._client.request(method, url, **kwargs)
             response.raise_for_status()
+            if response_model:
+                try:
+                    return response_model.model_validate(response.json())
+                except ValidationError as e:
+                    logger.error("响应验证错误: {}", e)
+                    return None
             return response
         except httpx.HTTPStatusError as e:
             logger.error("HTTP error: {}", e.response.text)
-            raise
+            return None
         except httpx.RequestError as e:
             logger.error("Request error: {}", e)
-            raise
+            return None
         except Exception as e:
             logger.error("Unexpected error: {}", e)
-            raise
+            return None
 
-    async def get(self, url: str, **kwargs):
+    async def get(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
         """发送GET请求"""
-        return await self._request("GET", url, **kwargs)
+        return await self._request("GET", url, response_model=response_model, **kwargs)
 
-    async def post(self, url: str, **kwargs):
+    async def post(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
         """发送POST请求"""
-        return await self._request("POST", url, **kwargs)
+        return await self._request("POST", url, response_model=response_model, **kwargs)
 
-    async def delete(self, url: str, **kwargs):
+    async def delete(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
         """发送DELETE请求"""
-        return await self._request("DELETE", url, **kwargs)
+        return await self._request("DELETE", url, response_model=response_model, **kwargs)
 
 class AuthenticatedClient(BaseClient):
     def __init__(self, client: httpx.AsyncClient):
@@ -85,7 +103,8 @@ class AuthenticatedClient(BaseClient):
                 logger.error("Unexpected error during login: {}", e)
                 raise
 
-    async def _request(self, method: str, url: str, **kwargs):
+    async def _request(self, method: str, url: str, *,
+                       response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
         '''自动登录逻辑'''
         if not self._is_logged_in:
             await self.login()
@@ -95,7 +114,7 @@ class AuthenticatedClient(BaseClient):
         if auth_headers:
             kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
         try:
-            return await super()._request(method, url, **kwargs)
+            return await super()._request(method, url, response_model=response_model, **kwargs)
         except AuthenticatedClientError as e:
             logger.error("Authentication error: {}", e)
             raise
@@ -107,7 +126,7 @@ class AuthenticatedClient(BaseClient):
                 auth_headers = await self._apply_auth()
                 if auth_headers:
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
-                return await super()._request(method, url, **kwargs)
+                return await super()._request(method, url, response_model=response_model, **kwargs)
             else:
                 logger.error("HTTP error: {}", e.response.text)
                 raise
