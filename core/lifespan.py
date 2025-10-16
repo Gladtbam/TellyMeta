@@ -11,6 +11,7 @@ from loguru import logger
 
 from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
+from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
 from clients.tmdb_client import TmdbService
 from clients.tvdb_client import TvdbClient
@@ -69,9 +70,12 @@ async def lifespan(app: FastAPI):
             api_key=settings.media_api_key
         )
     elif settings.media_server == 'jellyfin':
-        pass  # TODO: Implement Jellyfin client
+        app.state.media_client = JellyfinClient(
+            client=httpx.AsyncClient(base_url=f'{settings.media_server_url}'),
+            api_key=settings.media_api_key
+        )
     else:
-        raise ValueError(f"不支持的媒体服务器类型: {settings.media_server}")
+        logger.error(f"不支持的媒体服务器类型: {settings.media_server}")
 
     app.state.db_engine = async_engine
     app.state.telethon_client = TelethonClientWarper(app)
