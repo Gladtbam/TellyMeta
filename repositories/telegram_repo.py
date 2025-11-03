@@ -63,38 +63,21 @@ class TelegramRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def add_admin(self, user_id: int) -> TelegramUser:
-        """添加管理员用户
+    async def toggle_admin(self, user_id: int, is_admin: bool) -> TelegramUser:
+        """切换管理员用户状态
         Args:
             user_id (int): Telegram用户ID
+            is_admin (bool): 是否设置为管理员
         Returns:
-            TelegramUser: 被提升为管理员的用户对象
+            TelegramUser: 更新后的用户对象
         Raises:
-            ValueError: 如果用户已是管理员
+            ValueError: 如果用户的管理员状态无需更改则抛出异常
         """
         user = await self.get_or_create(user_id)
-        if user.is_admin:
-            raise ValueError("用户已是管理员")
+        if user.is_admin == is_admin:
+            raise ValueError("用户的管理员状态无需更改")
 
-        user.is_admin = True
-        await self.session.commit()
-        await self.session.refresh(user)
-        return user
-
-    async def remove_admin(self, user_id: int) -> TelegramUser:
-        """移除管理员用户
-        Args:
-            user_id (int): Telegram用户ID
-        Returns:
-            TelegramUser: 被移除管理员的用户对象
-        Raises:
-            ValueError: 如果用户不是管理员
-        """
-        user = await self.get_or_create(user_id)
-        if not user.is_admin:
-            raise ValueError("用户不是管理员")
-
-        user.is_admin = False
+        user.is_admin = is_admin
         await self.session.commit()
         await self.session.refresh(user)
         return user

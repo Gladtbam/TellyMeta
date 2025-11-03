@@ -6,7 +6,7 @@ from models.tmdb import TmdbFindPayload, TmdbTv
 
 setting = get_settings()
 
-class TmdbService(AuthenticatedClient):
+class TmdbClient(AuthenticatedClient):
     def __init__(self, client: httpx.AsyncClient, api_key: str):
         super().__init__(client)
         self.api_key = api_key

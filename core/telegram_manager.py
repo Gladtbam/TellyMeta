@@ -2,15 +2,21 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI
 from loguru import logger
 from telethon import TelegramClient, errors
+from telethon.errors.rpcerrorlist import (ChannelInvalidError,
+                                          ChannelPublicGroupNaError, PeerIdInvalidError,
+                                          UserIdInvalidError, UserNotParticipantError)
 from telethon.events.common import EventBuilder
 from telethon.tl import functions
-from telethon.tl.types import (ChannelParticipantCreator,
-                               ChannelParticipantsAdmins, ChatBannedRights,
-                               Message)
+from telethon.tl.types import (Channel, ChannelParticipantCreator,
+                               ChannelParticipantsAdmins, Chat,
+                               ChatBannedRights, ForumTopic, ForumTopicDeleted,
+                               Message, User)
+from telethon.tl.types.messages import ChatFull, ForumTopics
 
 from core.config import get_settings
 
@@ -57,7 +63,7 @@ class TelethonClientWarper:
                     await self.client.start(bot_token=settings.telegram_bot_token) # type: ignore
                 else:
                     await self.client.start() # type: ignore
-                await self.client(functions.updates.GetStateRequest())
+                # await self.client(functions.updates.GetStateRequest())
             except errors.SessionPasswordNeededError:
                 logger.error("Two-step verification is enabled. Please provide the password.")
                 raise
@@ -81,8 +87,37 @@ class TelethonClientWarper:
         try:
             self.client.run_until_disconnected()
         except Exception as e:
-            logger.error("Error while running Telethon client: {}", e)
+            logger.error("运行 Telethon 客户端时出错：{}", e)
             raise
+
+    async def get_user_name(self, user_id: int | str, need_username: bool = False) -> str | None | Literal[False]:
+        """获取用户的名称或用户名
+        Args:
+            user_id (int | str): 用户的ID或用户名
+            need_username (bool): 是否需要返回用户名，默认为False
+        Returns:
+            str | bool: 返回用户名或名称，如果不存在则返回False
+        """
+        if not self.client.is_connected():
+            await self.connect()
+        try:
+            entity = await self.client.get_entity(user_id)
+            if isinstance(entity, User):
+                if entity.bot:
+                    logger.warning("用户ID {} 对应的是机器人，非用户实体。", user_id)
+                    return False
+                if need_username:
+                    return entity.username if entity.username else False
+                return entity.first_name
+            if isinstance(entity, (Channel, Chat)):
+                logger.warning("用户ID {} 对应的是频道/群组，非用户实体。", user_id)
+                return False
+        except errors.UsernameNotOccupiedError as e:
+            logger.error("用户名 {} 不存在：{}", user_id, e)
+            return False
+        except errors.UserIdInvalidError as e:
+            logger.error("用户ID {} 无效：{}", user_id, e)
+            return False
 
     async def get_chat_creator_id(self):
         """获取频道/群组的创建者"""
@@ -92,10 +127,10 @@ class TelethonClientWarper:
             async for participant in self.client.iter_participants(self.chat_id):
                 if isinstance(participant.participant, ChannelParticipantCreator):
                     return participant.id
-            logger.warning("No creator found for chat ID: {}", self.chat_id)
+            logger.warning("找不到频道/群组的创建者：{}", self.chat_id)
             return None
         except Exception as e:
-            logger.error("Failed to get channel creator for {}: {}", self.chat_id, e)
+            logger.error("无法获取 {} 的创建者：{}", self.chat_id, e)
             return None
 
     async def get_chat_admin_ids(self):
@@ -160,16 +195,16 @@ class TelethonClientWarper:
         try:
             channel = await self.client.get_input_entity(self.chat_id)
             participant = await self.client.get_input_entity(user_id)
-    
+
             await self.client(functions.channels.EditBannedRequest(
                 channel=channel, # type: ignore
                 participant=participant,
                 banned_rights=rights
             ))
-        except errors.FloodWaitError as e:
-            logger.error("Failed to ban user {}: {}", user_id, e)
+        except (ChannelInvalidError, UserIdInvalidError) as e:
+            logger.error("未能禁止用户 {}：{}", user_id, e)
             raise
-        
+
     async def unban_user(self, user_id: int) -> None:
         """解封用户
         Args:
@@ -181,14 +216,14 @@ class TelethonClientWarper:
         try:
             channel = await self.client.get_input_entity(self.chat_id)
             participant = await self.client.get_input_entity(user_id)
-    
+
             await self.client(functions.channels.EditBannedRequest(
                 channel=channel, # type: ignore
                 participant=participant,
                 banned_rights=rights
             ))
-        except errors.FloodWaitError as e:
-            logger.error("Failed to unban user {}: {}", user_id, e)
+        except (ChannelInvalidError, UserIdInvalidError) as e:
+            logger.error("无法取消禁止用户 {}：{}", user_id, e)
             raise
 
     async def kick_participant(self, user_id: int) -> None:
@@ -200,6 +235,18 @@ class TelethonClientWarper:
             await self.connect()
         try:
             await self.client.kick_participant(self.chat_id, user_id)
-        except errors.FloodWaitError as e:
-            logger.error("Failed to kick user {}: {}", user_id, e)
+        except (PeerIdInvalidError, UserNotParticipantError) as e:
+            logger.exception("未能踢出用户 {}：{}", user_id, e)
             raise
+
+    async def kick_and_ban_participant(self, user_id: int) -> None:
+        """将用户移出频道/群组并封禁
+        Args:
+            user_id (int): 要移出的用户ID
+            until_date (int): 封禁截止时间的Unix时间戳
+        """
+        if not self.client.is_connected():
+            await self.connect()
+
+        await self.kick_participant(user_id)
+        await self.ban_user(user_id, None)

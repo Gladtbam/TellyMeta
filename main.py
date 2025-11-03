@@ -7,9 +7,10 @@ from loguru import logger
 
 import bot.handlers
 from clients.qb_client import QbittorrentClient
-from clients.tmdb_client import TmdbService
+from clients.tmdb_client import TmdbClient
+from clients.tvdb_client import TvdbClient
 from core.config import setup_logging
-from core.dependencies import get_qb_client, get_task_queue, get_tmdb_client
+from core.dependencies import get_qb_client, get_task_queue, get_tmdb_client, get_tvdb_client
 from core.lifespan import lifespan
 from models.emby import EmbyPayload
 from models.sonarr import SonarrPayload
@@ -23,7 +24,8 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/webhooks/sonarr", status_code=202)
 async def sonarr_webhook(
     payload: SonarrPayload,
-    tmdb_client: TmdbService = Depends(get_tmdb_client),
+    tmdb_client: TmdbClient = Depends(get_tmdb_client),
+    tvdb_client: TvdbClient = Depends(get_tvdb_client),
     task_queue: asyncio.Queue = Depends(get_task_queue),
     qb_client: QbittorrentClient = Depends(get_qb_client)
 ) -> Response:

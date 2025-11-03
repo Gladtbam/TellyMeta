@@ -5,7 +5,7 @@ from fastapi import Request
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
-from clients.tmdb_client import TmdbService
+from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.telegram_manager import TelethonClientWarper
 from services.media_service import MediaService
@@ -53,13 +53,13 @@ def get_qb_client(request: Request) -> QbittorrentClient:
     """
     return request.app.state.qb_client
 
-def get_tmdb_client(request: Request) -> TmdbService:
+def get_tmdb_client(request: Request) -> TmdbClient:
     """获取 TMDB 客户端实例。
 
     Args:
         request (Request): FastAPI 请求对象。
     Returns:
-        TmdbService: 已初始化的 TMDB 客户端实例。
+        TmdbClient: 已初始化的 TMDB 客户端实例。
     """
     return request.app.state.tmdb_client
 

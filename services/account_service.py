@@ -1,6 +1,7 @@
 import re
 import textwrap
 from datetime import datetime, timedelta
+from typing import Literal
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
@@ -79,7 +80,7 @@ class AccountService:
 
         return Result(False, "注册已关闭，仅允许使用注册码和积分注册。")
 
-    async def register(self, user_id: int, username: str | None):
+    async def register(self, user_id: int, username: str | None | Literal[False]):
         """注册新用户
         Args:
             user_id (int): 用户的 Telegram ID
@@ -90,7 +91,7 @@ class AccountService:
 
         if await self.emby_repo.get_by_id(user_id):
             return Result(False, "您已经注册过了，无需重复注册。")
-        
+
         mode = await self.config_repo.get_settings('registration_mode', 'default')
         can_register = False
 
@@ -166,7 +167,7 @@ class AccountService:
 
         return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。")
 
-    async def redeem_code(self, user_id: int, username: str, code_str: str) -> Result:
+    async def redeem_code(self, user_id: int, username: str | None | Literal[False], code_str: str) -> Result:
         """使用注册码或续期码注册或续期
         Args:
             user_id (int): 用户的 Telegram ID

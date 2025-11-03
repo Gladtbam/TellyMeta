@@ -87,9 +87,8 @@ async def settle_scores() -> None:
 
             user_details = []
             for user_id, score_change in result.user_score_changes.items(): # type: ignore
-                user = await client.client.get_entity(user_id)
-                username = user.username if user.username else user_id # type: ignore
-                user_details.append(f"- [{username}](tg://user?id={user_id}): `+{score_change}`")
+                user_name = await client.get_user_name(user_id)
+                user_details.append(f"- [{user_name}](tg://user?id={user_id}): `+{score_change}`")
             final_summary = summary + "\n".join(user_details)
             await client.client.edit_message(summary_msg, final_summary)
 
@@ -98,4 +97,3 @@ async def settle_scores() -> None:
             await session.rollback()
         finally:
             await session.close()
-

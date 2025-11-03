@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import Button
+from telethon.tl.types import KeyboardButtonSwitchInline
 
 from bot.utils import generate_captcha
 from core.config import get_settings
@@ -29,10 +30,11 @@ class VerificationService:
         """开始对新用户进行人机验证"""
 
         url = f"https://t.me/{settings.telegram_bot_name.lstrip('@')}"
+        user_name = await self.client.get_user_name(user_id)
         welcome_message = textwrap.dedent(f"""\
-            欢迎新成员 [{user_id}](tg://user?id={user_id})！
+            欢迎新成员 [{user_name}](tg://user?id={user_id})！
 
-            请在 **5 分钟内私聊我**并完成人机验证，否则您将会被移出群组。
+            请在 **5 分钟内私聊我** 点击开始并完成人机验证，否则您将会被移出群组。
         """)
         buttons = [Button.url("➡️ 前往验证", url)]
 
@@ -110,7 +112,6 @@ async def kick_unverified_user(
     from main import app
     session_factory: async_sessionmaker[AsyncSession] = async_session
     client: TelethonClientWarper = app.state.telethon_client
-    scheduler: AsyncIOScheduler = app.state.scheduler
 
     async with session_factory() as session:
         try:
@@ -126,6 +127,6 @@ async def kick_unverified_user(
             await verification_repo.delete(user_id)
         except Exception as e:
             await session.rollback()
-            raise e
+            logger.exception("移出未验证用户 {} 失败: {}", user_id, e)
         finally:
             await session.close()   # 关闭会话

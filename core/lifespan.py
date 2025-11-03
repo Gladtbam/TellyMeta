@@ -13,7 +13,7 @@ from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
-from clients.tmdb_client import TmdbService
+from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
         password=settings.qbittorrent_password
     )
 
-    app.state.tmdb_client = TmdbService(
+    app.state.tmdb_client = TmdbClient(
         client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
         api_key=settings.tmdb_api_key
     )

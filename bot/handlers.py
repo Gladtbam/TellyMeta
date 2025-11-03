@@ -215,7 +215,7 @@ async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: 
         return
 
     score_change = int(args[1])
-    
+
     reply_msg = await event.get_reply_message()
     if not reply_msg.sender_id:
         await safe_reply(event, "无法获取回复的用户信息。")
@@ -255,8 +255,7 @@ async def settle_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     user_details = []
     for user_id, score_change in result.user_score_changes.items(): # type: ignore
-        user = await client.client.get_entity(user_id)
-        username = user.username if user.username else user_id # type: ignore
+        username = await client.get_user_name(user_id)
         user_details.append(f"- [{username}](tg://user?id={user_id}): `+{score_change}`")
     final_summary = summary + "\n".join(user_details)
     await client.client.edit_message(summary_msg, final_summary)
@@ -287,7 +286,7 @@ async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     await safe_reply(event, result.message)
 
-@TelethonClientWarper.handler(events.ChatAction())
+@TelethonClientWarper.handler(events.ChatAction(chats=settings.telegram_chat_id))
 @provide_db_session
 async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, session: AsyncSession) -> None:
     """群组成员变动处理器
@@ -348,7 +347,7 @@ async def group_message_handler(app: FastAPI, event: events.NewMessage.Event, se
         await safe_reply(event, flood_result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/(\w+)(?:@\w+)?$',
+    pattern=r'^/(\w+)(?:@\w+)?$',
     incoming=True
     ))
 async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
@@ -402,8 +401,8 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
         if message.success:
             await client.client.pin_message(settings.telegram_chat_id, sent_msg, notify=True)
     else:
-        user_entity = await client.client.get_entity(user_id)
-        result = await registration_service.register(user_id, user_entity.username) # type: ignore
+        user_name = await client.get_user_name(user_id, need_username=True)
+        result = await registration_service.register(user_id, user_name)
         await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
@@ -427,10 +426,10 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
 
     user_id = event.sender_id
     client: TelethonClientWarper = app.state.telethon_client
-    user_entity = await client.client.get_entity(user_id)
+    user_name = await client.get_user_name(user_id, need_username=True)
 
     registration_service = AccountService(session, app.state.media_client)
-    result = await registration_service.redeem_code(user_id, user_entity.username, args_str) # type: ignore
+    result = await registration_service.redeem_code(user_id, user_name, args_str)
     await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'me_create_code'))

@@ -46,6 +46,7 @@ async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 6
         logger.error("发送消息失败: {}", e)
 
 def generate_captcha():
+    """生成一个简单的数学验证码图片，返回答案和图片数据"""
     num1, num2 = randint(1, 50), randint(1, 50)
     operators = choice([('+', operator.add), ('-', operator.sub), ('*', operator.mul)])
 

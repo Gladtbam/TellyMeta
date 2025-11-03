@@ -43,7 +43,7 @@ class BaseClient(ABC):
                 try:
                     return response_model.model_validate(response.json())
                 except ValidationError as e:
-                    logger.error("响应验证错误: {}", e)
+                    logger.error("响应验证错误: {}", repr(e.errors()))
                     return None
             return response
         except httpx.HTTPStatusError as e:

@@ -128,5 +128,9 @@ async def mkv_merge(episode_path: Path) -> None:
         # output_path.rename(episode_path)  # 重命名输出文件为原始文件名
         await aio_os.rename(output_path, episode_path)
         logger.info("已成功将 {} 合并到 {}", episode_path, output_path)
-    except Exception as e:
-        logger.error("将 {} 重命名为 {} 时出错：{}", output_path, episode_path, e)
+    except FileNotFoundError:
+        logger.error("合并后的文件 {} 未找到，无法重命名为 {}", output_path, episode_path)
+    except PermissionError:
+        logger.error("权限错误：无法将 {} 重命名为 {}", output_path, episode_path)
+    except OSError as e:
+        logger.error("无法将 {} 重命名为 {}：{}", output_path, episode_path, e)

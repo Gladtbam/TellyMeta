@@ -54,7 +54,7 @@ async def initialize_admin(
     logger.warning("未找到管理员用户，正在初始化...")
     creator_id = await telethon_client.get_chat_creator_id()
     if creator_id:
-        await sql_service.add_admin(creator_id)
+        await sql_service.toggle_admin(creator_id, is_admin=True)
         return [creator_id]
     else:
         logger.error("无法获取频道/群组创建者ID，请确保机器人已加入频道/群组并具有足够权限。")

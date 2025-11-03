@@ -5,16 +5,16 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 import aiofiles
 from loguru import logger
 
-from clients.tmdb_client import TmdbService
+from clients.tmdb_client import TmdbClient
 from models.sonarr import SonarrPayload
 from models.tmdb import TmdbFindPayload, TmdbTv
 
 
-async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
+async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbClient) -> None:
     """创建剧集 NFO 文件
     Args:
         payload (SonarrPayload): Sonarr Webhook 负载数据。
-        tmdb (TmdbService): 用于获取 TMDB 信息的客户端实例。
+        tmdb (TmdbClient): 用于获取 TMDB 信息的客户端实例。
     """
     tmdb_payload = await tmdb.get_tv_details(payload.series.tmdbId)
     root = Element('tvshow')
@@ -45,11 +45,11 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
         await nfo_file.write(nfo_content)
     logger.info("已为系列 {} 创建 tvshow.nfo", payload.series.title)
 
-async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbService) -> None:
+async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbClient) -> None:
     """创建剧集 NFO 文件
     Args:
         payload (SonarrPayload): Sonarr Webhook 负载数据。
-        tmdb (TmdbService): 用于获取 TMDB 信息的客户端实例。
+        tmdb (TmdbClient): 用于获取 TMDB 信息的客户端实例。
     """
     if not payload.episodes or not payload.episodeFile:
         return

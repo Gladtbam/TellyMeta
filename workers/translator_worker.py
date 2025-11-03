@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from clients.ai_client import AIClientWarper
-from clients.tmdb_client import TmdbService
+from clients.tmdb_client import TmdbClient
 from core.config import genre_mapping
 from models.protocols import BaseItem, QueryResult
 from models.tmdb import TmdbFindPayload
@@ -16,14 +16,14 @@ async def translate_emby_item(item_id: str) -> None:
     """翻译 Emby 媒体项的名称、排序名称和概述字段。
     Args:
         scheduler (AsyncIOScheduler): 任务调度器，用于安排重试任务。
-        tmdb_client (TmdbService): TMDB 客户端，用于获取媒体信息。
+        tmdb_client (TmdbClient): TMDB 客户端，用于获取媒体信息。
         media_client (MediaService): 媒体服务客户端，用于获取和更新媒体项信息。
         ai_client (AIClientWarper): AI 客户端，用于执行翻译任务。
         item_id (str): 媒体项的唯一标识符。
     """
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
-    tmdb_client: TmdbService = app.state.tmdb_client
+    tmdb_client: TmdbClient = app.state.tmdb_client
     media_client: MediaService = app.state.media_client
     ai_client: AIClientWarper = app.state.ai_client
 

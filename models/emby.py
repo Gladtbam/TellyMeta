@@ -158,7 +158,7 @@ class MediaStream(BaseModel):
     Width: int | None = None
     AverageFrameRate: float | None = None
     RealFrameRate: float | None = None
-    Profile: str
+    Profile: str | None = None
     Type: str
     AspectRatio: str | None = None
     Index: int
