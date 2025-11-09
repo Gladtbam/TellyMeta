@@ -46,7 +46,7 @@ class QbittorrentClient(AuthenticatedClient):
     async def app_shutdown(self) -> bool:
         """关闭 qBittorrent"""
         response = await self.post("/api/v2/app/shutdown")
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def app_preferences(self) -> QbittorrentPreference | None:
         """获取 qBittorrent 的首选项"""
@@ -60,7 +60,7 @@ class QbittorrentClient(AuthenticatedClient):
             raise ValueError("无设置首选项设置")
         data = {'json': json.dumps(payload)}
         response = await self.post("/api/v2/app/setPreferences", data=data)
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def torrents_properties(self, torrent_hash: str) -> QbittorrentTorrentProperties | None:
         """获取指定 torrent 的属性"""
@@ -79,7 +79,7 @@ class QbittorrentClient(AuthenticatedClient):
             raise ValueError("torrent 哈希值必须是字符串")
         params = {'hashes': '|'.join(hashes)}
         response = await self.post("/api/v2/torrents/stop", params=params)
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def torrents_start(self, torrent_hash: list[str] | str) -> bool:
         """恢复指定的 torrent"""
@@ -91,7 +91,7 @@ class QbittorrentClient(AuthenticatedClient):
             raise ValueError("torrent 哈希值必须是字符串")
         params = {'hashes': '|'.join(hashes)}
         response = await self.post("/api/v2/torrents/start", params=params)
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def torrents_delete(self, torrent_hash: list[str] | str, delete_files: bool = False) -> bool:
         """删除指定的 torrent"""
@@ -103,7 +103,7 @@ class QbittorrentClient(AuthenticatedClient):
             raise ValueError("torrent 哈希值必须是字符串")
         params = {'hashes': '|'.join(hashes), 'deleteFiles': 'true' if delete_files else 'false'}
         response = await self.post("/api/v2/torrents/delete", params=params)
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def torrents_download_limit(self, torrent_hash: list[str] | str) -> dict[str, int] | None:
         """获取指定 torrent 的下载限速"""
@@ -129,7 +129,7 @@ class QbittorrentClient(AuthenticatedClient):
             raise ValueError("Download limit must be a non-negative integer")
         params = {'hashes': '|'.join(hashes), 'limit': limit}
         response = await self.post("/api/v2/torrents/setDownloadLimit", params=params)
-        return response.status_code == 200 if response else False
+        return response is None
 
     async def torrents_set_share_limits(
         self,
@@ -151,4 +151,4 @@ class QbittorrentClient(AuthenticatedClient):
             'inactiveSeedingTimeLimit': inactive_seeding_time_limit if inactive_seeding_time_limit is not None else ''
         }
         response = await self.post("/api/v2/torrents/setShareLimits", data=data)
-        return response.status_code == 200 if response else False
+        return response is None
