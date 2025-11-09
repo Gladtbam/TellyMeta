@@ -7,7 +7,6 @@ from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telethon import Button
-from telethon.tl.types import KeyboardButtonSwitchInline
 
 from bot.utils import generate_captcha
 from core.config import get_settings

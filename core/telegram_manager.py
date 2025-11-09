@@ -119,7 +119,7 @@ class TelethonClientWarper:
             logger.error("用户ID {} 无效：{}", user_id, e)
             return False
 
-    async def get_chat_creator_id(self):
+    async def get_chat_creator_id(self) -> int | None:
         """获取频道/群组的创建者"""
         if not self.client.is_connected():
             await self.connect()
@@ -133,19 +133,58 @@ class TelethonClientWarper:
             logger.error("无法获取 {} 的创建者：{}", self.chat_id, e)
             return None
 
-    async def get_chat_admin_ids(self):
+    async def get_chat_admin_ids(self) -> list[User]:
         """获取频道/群组的管理员列表"""
         admin_ids = []
         if not self.client.is_connected():
             await self.connect()
         try:
-            async for participant in self.client.iter_participants(self.chat_id):
-                if isinstance(participant.participant, ChannelParticipantsAdmins):
-                    admin_ids.append(participant.id)
+            async for participant in self.client.iter_participants(
+                self.chat_id,
+                filter=ChannelParticipantsAdmins()
+            ):
+                admin_ids.append(participant)
             return admin_ids
         except Exception as e:
-            logger.error("Failed to get channel admins for {}: {}", self.chat_id, e)
+            logger.error("无法获取 {} 的管理员：{}", self.chat_id, e)
             return admin_ids
+
+    async def get_group_topics(self) -> functions.List[ForumTopicDeleted | ForumTopic] | int:
+        """获取群组的所有话题"""
+        if not self.client.is_connected():
+            await self.connect()
+        try:
+            channel = await self.client.get_entity(self.chat_id)
+            if isinstance(channel, Channel) and channel.forum:
+                topics: ForumTopics = await self.client(functions.channels.GetForumTopicsRequest(
+                    channel=channel, # type: ignore
+                    offset_date=None,
+                    offset_id=0,
+                    offset_topic=0,
+                    limit=100
+                ))
+                return topics.topics
+
+            if isinstance(channel, Channel) and channel.megagroup :
+                logger.info("频道 ID：{} 是超级群组，不支持话题。", self.chat_id)
+                full_channel: ChatFull = await self.client(
+                    functions.channels.GetFullChannelRequest(channel=channel) # type: ignore
+                )
+                return getattr(full_channel.full_chat, 'linked_chat_id', self.chat_id)
+
+            if isinstance(channel, Chat):
+                logger.info("聊天 ID：{} 是聊天，不支持主题。", self.chat_id)
+                return self.chat_id
+            return self.chat_id
+        except ChannelInvalidError as e:
+            logger.error("频道 ID：{} 无效，无法获取主题：{}", self.chat_id, e)
+            return self.chat_id
+        except ChannelPublicGroupNaError as e:
+            logger.error("频道 ID：{} 不可用，无法获取主题：{}", self.chat_id, e)
+            return self.chat_id
+        except TimeoutError as e:
+            logger.error("请求频道 ID：{} 时超时，无法获取主题：{}", self.chat_id, e)
+            return self.chat_id
 
     async def send_message(self, chat_id: str | int, message: str) -> Message:
         """发送消息到指定的聊天ID

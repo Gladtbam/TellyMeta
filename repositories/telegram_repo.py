@@ -54,12 +54,12 @@ class TelegramRepository:
         await self.session.commit()
         return user
 
-    async def get_admins(self) -> Sequence[TelegramUser]:
+    async def get_admins(self) -> Sequence[int]:
         """查找所有管理员用户
         Returns:
-            Sequence[TelegramUser]: 管理员用户列表
+            Sequence[int]: 管理员用户列表
         """
-        stmt = select(TelegramUser).where(TelegramUser.is_admin.is_(True))
+        stmt = select(TelegramUser.id).where(TelegramUser.is_admin.is_(True))
         result = await self.session.execute(stmt)
         return result.scalars().all()
 

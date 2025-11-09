@@ -14,6 +14,7 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.score_service import MessageTrackingState, ScoreService
+from services.settings_service import SettingsServices
 from services.user_service import Result, UserService
 from services.verification_service import VerificationService
 
@@ -357,7 +358,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     """
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
-        'checkin', 'warn', 'change', 'settle', 'signup'
+        'checkin', 'warn', 'change', 'settle', 'signup', 'settings'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore
@@ -486,3 +487,53 @@ async def nfsw_handler(app: FastAPI, event: events.CallbackQuery.Event, session:
 
     await safe_respond(event, result.message)
 
+@TelethonClientWarper.handler(events.NewMessage(
+    pattern=fr'^/settings({settings.telegram_bot_name})?$',
+    incoming=True
+))
+@provide_db_session
+@require_admin
+async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+    """设置处理器
+    处理管理员请求设置面板
+    """
+    settings_service = SettingsServices(session, app)
+    result = await settings_service.get_admin_management_keyboard()
+
+    await safe_respond_keyboard(event, result.message, result.keyboard, 600)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media)'))
+@provide_db_session
+async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """管理面板处理器
+    处理管理员点击管理面板按钮的事件
+    """
+    action = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    settings_service = SettingsServices(session, app)
+
+    if action == 'admins':
+        result = await settings_service.get_admins_panel()
+    elif action == 'notify':
+        result = Result(False, "该功能尚未实现。")
+    elif action == 'media':
+        result = Result(False, "该功能尚未实现。")
+    else:
+        result = Result(False, "该功能尚未实现。")
+
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_admin_(\\d+)'))
+@provide_db_session
+async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """切换管理员处理器
+    处理管理员点击切换管理员按钮的事件
+    """
+    user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+    settings_service = SettingsServices(session, app)
+
+    result = await settings_service.toggle_admin(user_id)
+    await event.answer(result.message)
+
+    # 刷新管理员面板
+    panel_result = await settings_service.get_admins_panel()
+    await event.edit(panel_result.message, buttons=panel_result.keyboard)
