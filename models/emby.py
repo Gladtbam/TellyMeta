@@ -104,8 +104,8 @@ class UserDto(BaseModel):
     HasPassword: bool
     HasConfiguredPassword: bool
     EnableAutoLogin: bool | None = None
-    LastLoginDate: str | None = None
-    LastActivityDate: str | None = None
+    LastLoginDate: time | None = None
+    LastActivityDate: time | None = None
     Configuration: UserConfiguration
     Policy: UserPolicy
     PrimaryImageAspectRatio: float | None = None
@@ -136,7 +136,7 @@ class MediaStream(BaseModel):
     ColorSpace: str | None = None
     Comment: str | None = None
     StreamStartTimeTicks: int | None = None
-    TimeBase: str
+    TimeBase: str | None = None
     Title: str | None = None
     Extradata: str | None = None
     VideoRange: str | None = None
@@ -203,7 +203,7 @@ class MediaSourceInfo(BaseModel):
     ContainerStartTimeTicks: int | None = None
     SupportsTranscoding: bool
     TrancodeLiveStartIndex: int | None = None
-    WallClockStart: str | None = None
+    WallClockStart: time | None = None
     SupportsDirectStream: bool
     SupportsDirectPlay: bool
     IsInfiniteStream: bool
@@ -232,7 +232,7 @@ class BaseItemPerson(BaseModel):
     """Emby 媒体项人员模型"""
     Name: str
     Id: str
-    Role: str
+    Role: str | None = None
     Type: str
     PrimaryImageTag: str | None = None
 
@@ -293,7 +293,7 @@ class BaseItemDto(BaseModel):
     SortName: str
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
-    PremiereDate: str | None = None
+    PremiereDate: time | None = None
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None = None
@@ -371,7 +371,7 @@ class BaseItemDto(BaseModel):
     Chapters: list[ChapterInfo] = Field(default_factory=list)
     LocationType: str | None = None
     MediaType: str | None = None
-    EndDate: str | None = None
+    EndDate: time | None = None
     LockedFields: list[str] = Field(default_factory=list)
     LockData: bool | None = None
     Width: int | None = None
@@ -390,7 +390,7 @@ class BaseItemDto(BaseModel):
     IsoSpeedRating: int | None = None
     SeriesTimerId: str | None = None
     ChannelPrimaryImageTag: str | None = None
-    StartDate: str | None = None
+    StartDate: time | None = None
     CompletionPercentage: float | None = None
     IsRepeat: bool | None = None
     IsNew: bool | None = None
