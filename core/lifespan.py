@@ -59,10 +59,13 @@ async def lifespan(app: FastAPI):
         api_key=settings.tmdb_api_key
     )
 
-    app.state.tvdb_client = TvdbClient(
-        client=httpx.AsyncClient(base_url='https://api4.thetvdb.com/v4'),
-        api_key=settings.tvdb_api_key
-    )
+    if settings.tvdb_api_key:
+        app.state.tvdb_client = TvdbClient(
+            client=httpx.AsyncClient(base_url='https://api4.thetvdb.com/v4'),
+            api_key=settings.tvdb_api_key
+        )
+    else:
+        app.state.tvdb_client = None
 
     if settings.media_server == 'emby':
         app.state.media_client = EmbyClient(
@@ -142,7 +145,9 @@ async def lifespan(app: FastAPI):
         logger.info("任务计划程序已关闭")
 
     await app.state.qb_client.close()
-    await app.state.tvdb_client.close()
+    if app.state.tvdb_client:
+        await app.state.tvdb_client.close()
+
     if hasattr(app.state, 'media_client'):
         await app.state.media_client.close()
 

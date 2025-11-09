@@ -63,7 +63,7 @@ def get_tmdb_client(request: Request) -> TmdbClient:
     """
     return request.app.state.tmdb_client
 
-def get_tvdb_client(request: Request) -> TvdbClient:
+def get_tvdb_client(request: Request) -> TvdbClient | None:
     """获取 TVDB 客户端实例。
 
     Args:

@@ -25,7 +25,7 @@ class TmdbClient(AuthenticatedClient):
         self,
         external_source: str,
         external_id: str
-    ) -> None | TmdbFindPayload | httpx.Response:
+    ) -> TmdbFindPayload | None:
         """根据外部 ID 获取 TMDB 相关信息。
         Args:
             external_source (str): 外部来源，如 "imdb_id" 或 "tvdb_id"。
@@ -39,9 +39,10 @@ class TmdbClient(AuthenticatedClient):
             "language": "zh-CN"
         }
 
-        return await self.get(url, params=params, response_model=TmdbFindPayload)
+        response = await self.get(url, params=params, response_model=TmdbFindPayload)
+        return response if isinstance(response, TmdbFindPayload) else None
 
-    async def get_tv_details(self, tmdb_id: int) -> None | TmdbTv | httpx.Response:
+    async def get_tv_details(self, tmdb_id: int) -> TmdbTv | None:
         """根据 TMDB ID 获取 TMDB 电视剧详情。
         Args:
             tmdb_id (int): TMDB 电视剧 ID。
@@ -50,4 +51,5 @@ class TmdbClient(AuthenticatedClient):
         """
         url = f"/tv/{tmdb_id}"
         params = {"language": "zh-CN"}
-        return await self.get(url, params=params, response_model=TmdbTv)
+        response = await self.get(url, params=params, response_model=TmdbTv)
+        return response if isinstance(response, TmdbTv) else None
