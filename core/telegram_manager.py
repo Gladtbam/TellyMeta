@@ -201,6 +201,36 @@ class TelethonClientWarper:
             logger.error("Failed to send message: {}", e)
             raise
 
+    async def delete_message(self, chat_id: str | int, message_id: int) -> None:
+        """删除指定聊天中的消息
+        Args:
+            chat_id (str | int): 目标聊天ID
+            message_id (int): 要删除的消息ID
+        """
+        if not self.client.is_connected():
+            await self.connect()
+        try:
+            await self.client.delete_messages(chat_id, message_id)
+        except errors.MessageDeleteForbiddenError as e:
+            logger.error("无法删除消息 {}：{}", message_id, e)
+            raise
+
+    async def edit_message(self, chat_id: str | int, message_id: int, new_content: str) -> Message:
+        """编辑指定聊天中的消息内容
+        Args:
+            chat_id (str | int): 目标聊天ID
+            message_id (int): 要编辑的消息ID
+            new_content (str): 新的消息内容
+        """
+        if not self.client.is_connected():
+            await self.connect()
+        try:
+            msg = await self.client.edit_message(chat_id, message_id, new_content)
+            return msg
+        except errors.MessageEditTimeExpiredError as e:
+            logger.error("无法编辑消息 {}：{}", message_id, e)
+            raise
+
     async def ban_user(self, user_id: int, until_date: datetime | None) -> None:
         """封禁用户
         Args:

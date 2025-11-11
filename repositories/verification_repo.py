@@ -39,3 +39,13 @@ class VerificationRepository:
             await self.session.refresh(verification)
             return True
         return False
+
+    async def update_message_id(self, user_id: int, message_id: int) -> bool:
+        """更新用户的消息ID"""
+        verification = await self.get(user_id)
+        if verification:
+            verification.message_id = message_id
+            await self.session.commit()
+            await self.session.refresh(verification)
+            return True
+        return False

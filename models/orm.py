@@ -57,6 +57,7 @@ class PendingVerification(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     captcha_answer: Mapped[str] = mapped_column(String(16), nullable=True)
     scheduler_job_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class BotConfiguration(Base):
     """Bot 配置模型"""

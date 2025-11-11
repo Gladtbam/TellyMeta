@@ -166,7 +166,7 @@ async def checkin_handler(app: FastAPI, event: events.NewMessage.Event, session:
 
     await safe_reply(event, result.message)
 
-    if result.private_message:
+    if result.private_message and isinstance(result.private_message, str):
         client: TelethonClientWarper = app.state.telethon_client
         await client.send_message(user_id, result.private_message)
 
@@ -283,9 +283,43 @@ async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     target_user_id = reply_msg.sender_id
 
     user_service = UserService(session, app.state.media_client)
-    result = await user_service.delete_account(target_user_id, include_telegram=True)
+    result = await user_service.delete_account(target_user_id, 'both')
 
     await safe_reply(event, result.message)
+
+@TelethonClientWarper.handler(events.NewMessage(
+    pattern=fr'^/kick({settings.telegram_bot_name})?$',
+    incoming=True
+    ))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'ban_(\\d+)'))
+@provide_db_session
+@require_admin
+async def ban_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
+    """封禁处理器
+    封禁一个用户，支持命令和按钮两种触发方式
+    """
+
+    if isinstance(event, events.NewMessage.Event):
+        if not event.is_reply:
+            await safe_reply(event, "请回复一个用户以封禁。")
+            return
+        reply_msg = await event.get_reply_message()
+        if not reply_msg.sender_id:
+            await safe_reply(event, "无法获取回复的用户信息。")
+            return
+
+        user_service = UserService(session, app.state.media_client)
+        target_user_id = reply_msg.sender_id
+        result = await user_service.delete_account(target_user_id, 'both')
+        await safe_reply(event, '已封禁用户。\n' + result.message)
+    elif isinstance(event, events.CallbackQuery.Event):
+        target_user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+        verification_service = VerificationService(app, session)
+        result = await verification_service.reject_verification(target_user_id)
+        await event.edit(result.message)
+    else:
+        await safe_respond(event, "无法处理此事件类型。")
+        return
 
 @TelethonClientWarper.handler(events.ChatAction(chats=settings.telegram_chat_id))
 @provide_db_session
@@ -301,11 +335,13 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
         verification_service = VerificationService(app, session)
         result = await verification_service.start_verification(user_id)
 
-        await safe_respond_keyboard(event, result.message, result.keyboard, 300)
+        message = await safe_respond_keyboard(event, result.message, result.keyboard, 300)
+        if message and message.id:
+            await verification_service.verification_repo.update_message_id(user_id, message.id)
 
     if event.user_left or event.user_kicked:
         user_service = UserService(session, app.state.media_client)
-        await user_service.delete_account(user_id, include_telegram=True)
+        await user_service.delete_account(user_id, 'both')
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'verify_(\\d+)'))
 @provide_db_session
@@ -317,9 +353,12 @@ async def verify_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
     answer = event.pattern_match.group(1).decode('utf-8') # type: ignore
 
     verification_service = VerificationService(app, session)
+    client: TelethonClientWarper = app.state.telethon_client
     result = await verification_service.process_verifocation_attempt(user_id, answer)
 
     await safe_respond(event, result.message)
+    if result.success and result.private_message and isinstance(result.private_message, int):
+        await client.edit_message(settings.telegram_chat_id, result.private_message, "您已通过验证，可以在群组中发言了。")
 
 @TelethonClientWarper.handler(events.NewMessage(chats=settings.telegram_chat_id))
 @provide_db_session
@@ -358,7 +397,8 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     """
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
-        'checkin', 'warn', 'change', 'settle', 'signup', 'settings'
+        'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
+        'kick'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore

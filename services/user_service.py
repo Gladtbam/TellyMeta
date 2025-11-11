@@ -1,4 +1,5 @@
 import textwrap
+from typing import Literal
 from dataclasses import dataclass
 from datetime import date
 from random import choice, choices, randint
@@ -19,7 +20,7 @@ class Result:
     """封装服务方法的结果，用于返回给 Handler 处理器。"""
     success: bool
     message: str = ""
-    private_message: str | None = None
+    private_message: str | int | None = None
     keyboard: Any | None = None
 
 class UserService:
@@ -148,22 +149,25 @@ class UserService:
 
         return Result(success=True, message=message, keyboard=keyboard if user.emby else None)
 
-    async def delete_account(self, user_id: int, include_telegram: bool = False) -> Result:
+    async def delete_account(self, user_id: int, account_type: Literal['emby', 'tg', 'both']) -> Result:
         """删除用户账户，包括 Emby 账户和 Telegram 账户（可选）。
         
         Args:
             user_id (int): 用户的 Telegram ID。
-            include_telegram (bool): 是否同时删除 Telegram 账户。
+            account_type (Literal['emby', 'tg', 'both']): 要删除的账户类型。
         """
-        user = await self.telegram_repo.get_or_create(user_id)
-        if not user.emby:
-            return Result(False, "您尚未绑定 Emby 账户，无需删除。")
+        user = await self.telegram_repo.get_by_id(user_id)
+        if not user:
+            return Result(True, "未找到该 Telegram 账户，无需删除。")
 
-        await self.media_service.delete_by_id(user.emby.emby_id)
-        await self.emby_repo.delete(user.emby)
+        message = []
+        if account_type in ['emby', 'both'] and user.emby:
+            await self.media_service.delete_by_id(user.emby.emby_id)
+            await self.emby_repo.delete(user.emby)
+            message.append("Emby 账户已删除。")
 
-        if include_telegram:
+        if account_type in ['tg', 'both']:
             await self.telegram_repo.delete_by_id(user_id)
-            return Result(True, "您的 Emby 账户和 Telegram 账户均已删除，感谢您的使用！")
+            message.append("Telegram 账户已删除。")
 
-        return Result(True, "您的 Emby 账户已删除，感谢您的使用！")
+        return Result(True, " ".join(message))
