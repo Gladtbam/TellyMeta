@@ -1,4 +1,3 @@
-from datetime import time
 from typing import TypeAlias
 
 from pydantic import BaseModel, Field
@@ -76,7 +75,7 @@ class UserPolicy(BaseModel):
     BlockedMediaFolders: list[str] = Field(default_factory=list)
     BlockedChannels: list[str] = Field(default_factory=list)
     RemoteClientBitrateLimit: int = 0
-    AuthenticationProviderId: str | None = None 
+    AuthenticationProviderId: str | None = None
     PasswordResetProviderId: str | None = None
     SyncPlayAccess: str | None = None
 
@@ -91,8 +90,8 @@ class UserDto(BaseModel):
     HasConfiguredPassword: bool
     HasConfiguredEasyPassword: bool
     EnableAutoLogin: bool | None = None
-    LastLoginDate: time | None = None
-    LastActivityDate: time | None = None
+    LastLoginDate: str | None = None # datetime
+    LastActivityDate: str | None = None # datetime
     Configuration: UserConfiguration
     Policy: UserPolicy
     PrimaryImageAspectRatio: float | None = None
@@ -256,7 +255,7 @@ class UserItemDataDto(BaseModel):
     PlayCount: int | None = None
     IsFavorite: bool
     Likes: bool | None = None
-    LastPlayedDate: time | None = None
+    LastPlayedDate: str | None = None # datetime
     Played: bool
     Key: str
     ItemId: str
@@ -266,7 +265,7 @@ class ChapterInfo(BaseModel):
     StartPositionTicks: int
     Name: str | None = None
     ImagePath: str | None = None
-    ImageDateModified: time | None = None
+    ImageDateModified: str | None = None # datetime
     ImageTag: str | None = None
 
 class TrickplayInfoDto(BaseModel):
@@ -288,8 +287,8 @@ class BaseItemDto(BaseModel):
     Etag: str | None = None
     SourceType: str | None = None
     PlaylistItemId: str | None = None
-    DateCreated: time | None = None
-    DateLastMediaAdded: time | None = None
+    DateCreated: str | None = None # datetime
+    DateLastMediaAdded: str | None = None # datetime
     ExtraType: str | None = None
     AirsBeforeSeasonNumber: int | None = None
     AirsAfterSeasonNumber: int | None = None
@@ -304,7 +303,7 @@ class BaseItemDto(BaseModel):
     SortName: str | None = None
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
-    PremiereDate: str | None = None
+    PremiereDate: str | None = None # datetime
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None = None
@@ -389,7 +388,7 @@ class BaseItemDto(BaseModel):
     LocationType: str | None = None
     IsoType: str | None = None
     MediaType: str = "Unknown"
-    EndDate: time | None = None
+    EndDate: str | None = None # datetime
     LockedFields: list[str] = Field(default_factory=list)
     TrailerCount: int | None = None
     MovieCount: int | None = None
@@ -418,7 +417,7 @@ class BaseItemDto(BaseModel):
     SeriesTimerId: str | None = None
     ProgramId: str | None = None
     ChannelPrimaryImageTag: str | None = None
-    StartDate: time | None = None
+    StartDate: str | None = None # datetime
     CompletionPercentage: float | None = None
     IsRepeat: bool | None = None
     EpisodeTitle: str | None = None

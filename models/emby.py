@@ -1,7 +1,5 @@
 # from __future__ import annotations
 
-from datetime import time
-
 from pydantic import BaseModel, Field
 
 
@@ -98,14 +96,14 @@ class UserDto(BaseModel):
     ServerName: str | None = None
     Prefix: str
     ConnectUserName: str | None = None
-    DateCreated: str | None = None
+    DateCreated: str | None = None # datetime
     ConnectLinkType: str | None = None
     PrimaryImageTag: str | None = None
     HasPassword: bool
     HasConfiguredPassword: bool
     EnableAutoLogin: bool | None = None
-    LastLoginDate: time | None = None
-    LastActivityDate: time | None = None
+    LastLoginDate: str | None = None # datetime
+    LastActivityDate: str | None = None # datetime
     Configuration: UserConfiguration
     Policy: UserPolicy
     PrimaryImageAspectRatio: float | None = None
@@ -203,7 +201,7 @@ class MediaSourceInfo(BaseModel):
     ContainerStartTimeTicks: int | None = None
     SupportsTranscoding: bool
     TrancodeLiveStartIndex: int | None = None
-    WallClockStart: time | None = None
+    WallClockStart: str | None = None # datetime
     SupportsDirectStream: bool
     SupportsDirectPlay: bool
     IsInfiniteStream: bool
@@ -251,7 +249,7 @@ class UserItemDataDto(BaseModel):
     PlaybackPositionTicks: int
     PlayCount: int | None = None
     IsFavorite: bool
-    LastPlayedDate: time | None = None
+    LastPlayedDate: str | None = None # datetime
     Played: bool
     Key: str
     ItemId: str
@@ -268,8 +266,8 @@ class BaseItemDto(BaseModel):
     Prefix: str | None = None
     TunerName: str | None = None
     PlaylistItemId: str | None = None
-    DateCreated: str | None = None
-    DateModified: str | None = None
+    DateCreated: str | None = None # datetime
+    DateModified: str | None = None # datetime
     VideoCodec: str | None = None
     AudioCodec: str | None = None
     AverageFrameRate: float | None = None
@@ -293,7 +291,7 @@ class BaseItemDto(BaseModel):
     SortName: str
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
-    PremiereDate: time | None = None
+    PremiereDate: str | None = None # datetime
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None = None
@@ -371,7 +369,7 @@ class BaseItemDto(BaseModel):
     Chapters: list[ChapterInfo] = Field(default_factory=list)
     LocationType: str | None = None
     MediaType: str | None = None
-    EndDate: time | None = None
+    EndDate: str | None = None # datetime
     LockedFields: list[str] = Field(default_factory=list)
     LockData: bool | None = None
     Width: int | None = None
@@ -390,7 +388,7 @@ class BaseItemDto(BaseModel):
     IsoSpeedRating: int | None = None
     SeriesTimerId: str | None = None
     ChannelPrimaryImageTag: str | None = None
-    StartDate: time | None = None
+    StartDate: str | None = None # datetime
     CompletionPercentage: float | None = None
     IsRepeat: bool | None = None
     IsNew: bool | None = None
