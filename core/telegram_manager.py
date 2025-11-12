@@ -129,7 +129,7 @@ class TelethonClientWarper:
                     return participant.id
             logger.warning("找不到频道/群组的创建者：{}", self.chat_id)
             return None
-        except Exception as e:
+        except errors.PeerIdInvalidError as e:
             logger.error("无法获取 {} 的创建者：{}", self.chat_id, e)
             return None
 
@@ -143,9 +143,13 @@ class TelethonClientWarper:
                 self.chat_id,
                 filter=ChannelParticipantsAdmins()
             ):
+                if isinstance(participant.participant, ChannelParticipantCreator):
+                    continue
+                if isinstance(participant, User) and participant.bot:
+                    continue
                 admin_ids.append(participant)
             return admin_ids
-        except Exception as e:
+        except errors.PeerIdInvalidError as e:
             logger.error("无法获取 {} 的管理员：{}", self.chat_id, e)
             return admin_ids
 
