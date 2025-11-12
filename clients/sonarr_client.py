@@ -3,6 +3,7 @@ from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
+from models.radarr import QualityProfileResource, RootFolderResource
 from models.sonarr import EpisodeResource, SeriesResource
 
 setting = get_settings()
@@ -80,3 +81,25 @@ class SonarrClient(AuthenticatedClient):
         url = "/api/v3/series"
         response = await self.post(url, json=series_resource.model_dump(), response_model=SeriesResource)
         return response if isinstance(response, SeriesResource) else None
+
+    async def get_root_folders(self) -> None | list[RootFolderResource]:
+        """获取 Sonarr 的根文件夹列表。
+        Returns:
+            list[str] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
+        """
+        url = "/api/v3/rootfolder"
+        response = await self.get(url)
+        if not response:
+            return None
+        return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
+
+    async def get_quality_profiles(self) -> None | list[QualityProfileResource]:
+        """获取 Sonarr 的质量配置文件列表。
+        Returns:
+            list[dict] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
+        """
+        url = "/api/v3/qualityprofile"
+        response = await self.get(url)
+        if not response:
+            return None
+        return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())

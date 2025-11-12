@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import textwrap
 from typing import Any
 
@@ -556,7 +557,7 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
     elif action == 'notify':
         result = Result(False, "该功能尚未实现。")
     elif action == 'media':
-        result = Result(False, "该功能尚未实现。")
+        result = await settings_service.get_media_panel()
     else:
         result = Result(False, "该功能尚未实现。")
 
@@ -577,3 +578,66 @@ async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     # 刷新管理员面板
     panel_result = await settings_service.get_admins_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^bind_library_(.+)'))
+@provide_db_session
+async def bind_library_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """绑定媒体库处理器
+    处理管理员点击绑定媒体库按钮的事件
+    """
+    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+
+    settings_service = SettingsServices(session, app)
+    result = await settings_service.get_library_binding_panel(library_name)
+
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^select_(typed|quality|folder)_(.+)'))
+@provide_db_session
+async def select_library_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """选择媒体库设置处理器
+    处理管理员点击选择媒体库设置按钮的事件
+    """
+    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    library_name_base64 = event.pattern_match.group(2).decode('utf-8') # type: ignore
+    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+
+    settings_service = SettingsServices(session, app)
+    if setting_type == 'typed':
+        result = await settings_service.get_type_selection_keyboard(library_name)
+    elif setting_type == 'quality':
+        result = await settings_service.get_quality_selection_keyboard(library_name)
+    elif setting_type == 'folder':
+        result = await settings_service.get_root_folder_selection_keyboard(library_name)
+    else:
+        result = Result(False, "该功能尚未实现。")
+
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_(typed|quality|folder)_(.+)_(.+)'))
+@provide_db_session
+async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置媒体库设置处理器
+    处理管理员点击设置媒体库设置按钮的事件
+    """
+    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    value = event.pattern_match.group(2).decode('utf-8') # type: ignore
+    library_name_base64 = event.pattern_match.group(3).decode('utf-8') # type: ignore
+    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+
+    if setting_type == 'quality':
+        setting_type = 'quality_profile_id'
+        value = int(value)
+    if setting_type == 'typed':
+        setting_type = 'arr_type'
+    if setting_type == 'folder':
+        setting_type = 'root_folder'
+    settings_service = SettingsServices(session, app)
+    result = await settings_service.set_library_binding(library_name, setting_type, value)
+
+    await event.answer(result.message)
+
+    # 刷新媒体库绑定面板
+    binding_result = await settings_service.get_library_binding_panel(library_name)
+    await event.edit(binding_result.message, buttons=binding_result.keyboard)

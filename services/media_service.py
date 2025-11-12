@@ -56,3 +56,8 @@ class MediaService(ABC, Generic[UserT, QueryResultT]):
     async def get_session_list(self) -> int:
         """获取用户在线数量"""
         raise NotImplementedError
+
+    @abstractmethod
+    async def get_library_names(self) -> list[str] | None:
+        """获取媒体库名称列表"""
+        raise NotImplementedError

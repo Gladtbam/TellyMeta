@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ''
     telegram_bot_name: str = ''
     telegram_chat_id: int = 0
+    sonarr_url: str = ''
+    sonarr_api_key: str = ''
+    radarr_url: str = ''
+    radarr_api_key: str = ''
 
 @lru_cache
 def get_settings() -> Settings:

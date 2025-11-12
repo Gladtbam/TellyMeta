@@ -1,6 +1,7 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.orm import BotConfiguration
+from models.orm import BotConfiguration, LibraryBindingModel
 
 
 class ConfigRepository:
@@ -34,6 +35,39 @@ class ConfigRepository:
             setting = BotConfiguration(key=key, value=value)
             self.session.add(setting)
 
+        await self.session.commit()
+        await self.session.refresh(setting)
+        return setting
+
+    async def get_all_library_bindings(self) -> dict[str, LibraryBindingModel]:
+        """获取所有媒体库绑定配置"""
+        stmt = select(BotConfiguration).where(BotConfiguration.key.like('binding:%'))
+        result = await self.session.execute(stmt)
+        bindings = {}
+        for config in result.scalars().all():
+            model = LibraryBindingModel.from_db_config(config)
+            bindings[model.library_name] = model
+        return bindings
+
+    async def get_library_binding(self, library_name: str) -> LibraryBindingModel:
+        """通过媒体库名称获取媒体库绑定配置"""
+        key = f'binding:{library_name}'
+        config = await self.session.get(BotConfiguration, key)
+        if config:
+            return LibraryBindingModel.from_db_config(config)
+        return LibraryBindingModel(library_name=library_name)
+
+    async def set_library_binding(self, binding: LibraryBindingModel) -> BotConfiguration:
+        """设置媒体库绑定配置"""
+        key = binding.to_config_key()
+        value = binding.to_config_value()
+        setting = await self.session.get(BotConfiguration, key)
+
+        if not setting:
+            setting = BotConfiguration(key=key, value=value)
+            self.session.add(setting)
+        else:
+            setting.value = value
         await self.session.commit()
         await self.session.refresh(setting)
         return setting

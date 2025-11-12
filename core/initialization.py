@@ -38,9 +38,7 @@ def check_sqlite_version():
     else:
         logger.info("SQLite 版本检查通过，当前版本为 {}。", sqlite3.sqlite_version)
 
-async def initialize_admin(
-    session: AsyncSession,
-    telethon_client: TelethonClientWarper):
+async def initialize_admin(session: AsyncSession, telethon_client: TelethonClientWarper):
     """初始化管理员用户"""
 
     sql_service = TelegramRepository(session)

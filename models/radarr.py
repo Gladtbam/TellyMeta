@@ -50,7 +50,7 @@ class Quality(BaseModel):
     """Radarr 质量模型"""
     id: int
     name: str | None = None
-    source: str
+    source: str | None = None
     resolution: int | None = None
     modifier: str | None = None
 
@@ -220,3 +220,50 @@ class MovieResource(BaseModel):
         if not isinstance(value, list):
             return value
         return [genre_mapping.get(genre, genre) for genre in value]
+
+class UnmappedFolder(BaseModel):
+    """未映射文件夹模型"""
+    name: str | None = None
+    path: str | None = None
+    relativePath: str | None = None
+
+class RootFolderResource(BaseModel):
+    """根文件夹模型"""
+    accessible: bool
+    freeSpace: int | None = None
+    id: int
+    path: str | None = None
+    unmappedFolders: list[UnmappedFolder] = Field(default_factory=list)
+
+class ProfileFormatItemResource(BaseModel):
+    """Radarr 质量配置文件格式项模型"""
+    format: int
+    id: int | None = None
+    name: str | None = None
+    score: int
+
+class QualityProfileQualityItemResource(BaseModel):
+    """Radarr 质量配置文件质量项模型"""
+    allowed: bool
+    id: int | None = None
+    items: list['QualityProfileQualityItemResource'] = Field(default_factory=list)
+    name: str | None = None
+    quality: Quality | None = None
+QualityProfileQualityItemResource.model_rebuild()
+
+class QualityProfileResource(BaseModel):
+    """Radarr 质量配置文件模型"""
+    cutoff: int
+    cutoffFormatScore: int
+    formatItems: list[ProfileFormatItemResource] = Field(default_factory=list)
+    id: int
+    items: list[QualityProfileQualityItemResource] = Field(default_factory=list)
+    minFormatScore: int
+    minUpgradeFormatScore: int
+    name: str | None = None
+    upgradeAllowed: bool
+    language: Languages | None = None
+
+    def to_dict(self) -> dict[int, str]:
+        """将质量配置文件转换为字典形式，键为 id，值为 name。"""
+        return {self.id: self.name if self.name else ""}

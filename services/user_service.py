@@ -1,9 +1,8 @@
 import textwrap
-from typing import Literal
 from dataclasses import dataclass
 from datetime import date
 from random import choice, choices, randint
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button

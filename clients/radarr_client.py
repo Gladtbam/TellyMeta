@@ -1,8 +1,10 @@
 import httpx
+from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
-from models.radarr import MovieResource
+from models.radarr import (MovieResource, QualityProfileResource,
+                           RootFolderResource)
 
 setting = get_settings()
 
@@ -56,3 +58,25 @@ class RadarrClient(AuthenticatedClient):
         url = "/api/v3/movie"
         response = await self.post(url, json=movie_resource.model_dump(), response_model=MovieResource)
         return response if isinstance(response, MovieResource) else None
+
+    async def get_root_folders(self) -> None | list[RootFolderResource]:
+        """获取 Radarr 的根文件夹列表。
+        Returns:
+            list[str] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
+        """
+        url = "/api/v3/rootfolder"
+        response = await self.get(url)
+        if not response:
+            return None
+        return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
+
+    async def get_quality_profiles(self) -> list[QualityProfileResource] | None:
+        """获取 Radarr 的质量配置文件列表。
+        Returns:
+            list[dict] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
+        """
+        url = "/api/v3/qualityprofile"
+        response = await self.get(url)
+        if not response:
+            return None
+        return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())

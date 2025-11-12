@@ -1,7 +1,7 @@
 import asyncio
-from contextlib import asynccontextmanager
 import os
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -13,6 +13,8 @@ from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
+from clients.radarr_client import RadarrClient
+from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
@@ -66,6 +68,22 @@ async def lifespan(app: FastAPI):
         )
     else:
         app.state.tvdb_client = None
+
+    if settings.sonarr_api_key:
+        app.state.sonarr_client = SonarrClient(
+            client=httpx.AsyncClient(base_url=settings.sonarr_url),
+            api_key=settings.sonarr_api_key
+        )
+    else:
+        app.state.sonarr_client = None
+
+    if settings.radarr_api_key:
+        app.state.radarr_client = RadarrClient(
+            client=httpx.AsyncClient(base_url=settings.radarr_url),
+            api_key=settings.radarr_api_key
+        )
+    else:
+        app.state.radarr_client = None
 
     if settings.media_server == 'emby':
         app.state.media_client = EmbyClient(

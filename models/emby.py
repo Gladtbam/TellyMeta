@@ -138,7 +138,7 @@ class MediaStream(BaseModel):
     Title: str | None = None
     Extradata: str | None = None
     VideoRange: str | None = None
-    DisplayTitle: str
+    DisplayTitle: str | None = None
     DisplayLanguage: str | None = None
     NalLengthSize: str | None = None
     IsInterlaced: bool

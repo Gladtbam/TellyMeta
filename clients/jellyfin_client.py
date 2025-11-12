@@ -230,3 +230,18 @@ class JellyfinClient(AuthenticatedClient, MediaService):
                 if session.get('NowPlayingItem'):
                     now_playing_count += 1
         return now_playing_count
+
+    async def get_library_names(self) -> list[str] | None:
+        """获取 Jellyfin 的媒体库列表。
+        Returns:
+            list[str] | None: 返回媒体库名称的列表，如果查询失败则返回 None。
+        """
+        url = "/Library/VirtualFolders"
+        response = await self.get(url)
+        if not response:
+            return None
+        libraries: list[str] = []
+        for item in response.json():
+            if item.get("Locations"):
+                libraries.append(item.get("Name", "Unknown"))
+        return libraries
