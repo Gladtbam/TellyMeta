@@ -174,7 +174,10 @@ class TelethonClientWarper:
                 full_channel: ChatFull = await self.client(
                     functions.channels.GetFullChannelRequest(channel=channel) # type: ignore
                 )
-                return getattr(full_channel.full_chat, 'linked_chat_id', self.chat_id)
+                linked_chat_id = getattr(full_channel.full_chat, 'linked_chat_id', None)
+                if linked_chat_id:
+                    return int(f"-100{linked_chat_id}")
+                return self.chat_id
 
             if isinstance(channel, Chat):
                 logger.info("聊天 ID：{} 是聊天，不支持主题。", self.chat_id)

@@ -555,7 +555,7 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
     if action == 'admins':
         result = await settings_service.get_admins_panel()
     elif action == 'notify':
-        result = Result(False, "该功能尚未实现。")
+        result = await settings_service.get_notification_panel()
     elif action == 'media':
         result = await settings_service.get_media_panel()
     else:
@@ -578,6 +578,36 @@ async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     # 刷新管理员面板
     panel_result = await settings_service.get_admins_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^notify_(sonarr|radarr|media)'))
+@provide_db_session
+async def notify_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """通知设置处理器
+    处理管理员点击通知设置按钮的事件
+    """
+    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
+
+    settings_service = SettingsServices(session, app)
+    result = await settings_service.get_notification_keyboard(setting_type)
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_notify_(sonarr|radarr|media)_(-?\\d+)'))
+@provide_db_session
+async def set_notify_topic_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置通知话题处理器
+    处理管理员点击设置通知话题按钮的事件
+    """
+    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    topic_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
+
+    settings_service = SettingsServices(session, app)
+    result = await settings_service.set_notification_topic(setting_type, topic_id)
+
+    await event.answer(result.message)
+
+    # 刷新通知设置面板
+    notify_result = await settings_service.get_notification_panel()
+    await event.edit(notify_result.message, buttons=notify_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^bind_library_(.+)'))
 @provide_db_session

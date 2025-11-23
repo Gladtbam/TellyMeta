@@ -15,7 +15,6 @@ from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
-from loguru import logger
 
 settings = get_settings()
 
@@ -82,6 +81,77 @@ class SettingsServices:
                 return Result(success=True, message=f"已授予用户 {user_id} 管理员权限。")
         except (ValueError, KeyError) as e:
             return Result(success=False, message=str(e))
+
+    async def get_notification_panel(self) -> Result:
+        """获取通知设置面板。
+        
+        Returns:
+            Result: 包含通知设置和键盘布局的结果对象。
+        """
+        sonarr_notify_topic = await self.config_repo.get_settings(
+            "sonarr_notify_topic", "未设置"
+        )
+        radarr_notify_topic = await self.config_repo.get_settings(
+            "radarr_notify_topic", "未设置"
+        )
+        media_notify_topic = await self.config_repo.get_settings(
+            "media_notify_topic", "未设置"
+        )
+        requested_notify_topic = await self.config_repo.get_settings(
+            "requested_notify_topic", "未设置"
+        )
+
+        keyboard = [
+            [Button.inline("设置 Sonarr 通知话题", b"notify_sonarr")],
+            [Button.inline("设置 Radarr 通知话题", b"notify_radarr")],
+            [Button.inline("设置 媒体通知话题", b"notify_media")],
+            [Button.inline("设置 求片通知话题", b"notify_requested")],
+        ]
+        msg = textwrap.dedent(f"""\
+            **通知设置面板**
+            Sonarr 通知话题: `{sonarr_notify_topic}`
+            Radarr 通知话题: `{radarr_notify_topic}`
+            媒体通知话题: `{media_notify_topic}`
+            求片通知话题: `{requested_notify_topic}`
+
+            点击按钮以更改相应的通知话题。
+        """)
+        return Result(success=True, message=msg, keyboard=keyboard)
+
+    async def get_notification_keyboard(self, setting_key: str):
+        """获取通知设置的键盘布局。
+        Args:
+            setting_key (str): 设置的通知键。
+        Returns:
+            list[list]: 返回键盘布局的二维列表。
+        """
+        topics = await self.client.get_group_topics()
+        keyboard = []
+        msg = textwrap.dedent(f"""\
+            **选择 {setting_key} 通知话题**
+            请选择一个话题以设置为 {setting_key} 通知的话题。
+        """)
+        if isinstance(topics, int):
+            keyboard.append([Button.inline(str(topics), f"set_notify_{setting_key}_{topics}".encode('utf-8'))])
+            return Result(success=False, message=msg, keyboard=keyboard)
+        for topic in topics:
+            if isinstance(topic, ForumTopicDeleted):
+                continue
+            button_text = topic.title
+            callback_data = f"set_notify_{setting_key}_{topic.id}"
+            keyboard.append([Button.inline(button_text, callback_data.encode('utf-8'))])
+        return Result(success=True, message=msg, keyboard=keyboard)
+
+    async def set_notification_topic(self, setting_key: str, topic: int) -> Result:
+        """设置通知话题。
+        Args:
+            setting_key (str): 设置的通知键。
+            topic (int): 要设置的话题。
+        Returns:
+            Result: 包含操作结果的对象。
+        """
+        await self.config_repo.set_settings(f'{setting_key}_notify_topic', str(topic))
+        return Result(success=True, message=f"已将 {setting_key} 通知设置为 `{topic}`。")
 
     async def get_media_panel(self):
         """获取媒体设置面板。
