@@ -165,7 +165,7 @@ class SonarrSeries(BaseModel):
     path: str
     tvdbId: int
     tmdbId: int
-    imdbId: str
+    imdbId: str | None = None # Test WebHook
     year: int
     genres: list[str] = Field(default_factory=list)
 
@@ -193,3 +193,5 @@ class SonarrPayload(BaseModel):
     series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     episodeFile: SonarrEpisodeFile | None = None
+    instanceName: str | None = None
+    applicationUrl: str | None = None
