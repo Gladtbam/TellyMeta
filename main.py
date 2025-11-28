@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from loguru import logger
 
 import bot.handlers
 from core.config import setup_logging
@@ -9,6 +12,14 @@ setup_logging()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(webhooks_router)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    logger.error("URL: {} 请求失败： {}", request.url, exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content=""
+    )
 
 if __name__ == "__main__":
     import uvicorn
