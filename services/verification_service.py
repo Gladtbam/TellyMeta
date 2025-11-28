@@ -30,6 +30,10 @@ class VerificationService:
 
         url = f"https://t.me/{settings.telegram_bot_name.lstrip('@')}"
         user_name = await self.client.get_user_name(user_id)
+        if not user_name:
+            logger.info("非法用户名用户 {} 试图加入群组，拒绝验证。", user_id)
+            await self.client.kick_participant(user_id)
+            return Result(success=False, message="")
         welcome_message = textwrap.dedent(f"""\
             欢迎新成员 [{user_name}](tg://user?id={user_id})！
 

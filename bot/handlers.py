@@ -336,6 +336,9 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
         verification_service = VerificationService(app, session)
         result = await verification_service.start_verification(user_id)
 
+        if not result.success:
+            return
+
         message = await safe_respond_keyboard(event, result.message, result.keyboard, 300)
         if message and message.id:
             await verification_service.verification_repo.update_message_id(user_id, message.id)
