@@ -160,8 +160,8 @@ class TelethonClientWarper:
         try:
             channel = await self.client.get_entity(self.chat_id)
             if isinstance(channel, Channel) and channel.forum:
-                topics: ForumTopics = await self.client(functions.channels.GetForumTopicsRequest(
-                    channel=channel, # type: ignore
+                topics: ForumTopics = await self.client(functions.messages.GetForumTopicsRequest(
+                    peer=channel, # type: ignore
                     offset_date=None,
                     offset_id=0,
                     offset_topic=0,
