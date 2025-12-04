@@ -20,7 +20,7 @@ class QbittorrentClient(AuthenticatedClient):
             'password': self.password
         }
         if self._client is None:
-            logger.warning("HTTP 客户端未初始化。首先调用 login()。")
+            logger.warning("Qbittorrent 客户端未初始化。请先调用 login()。")
         response = await self._client.post("/api/v2/auth/login", data=data)
         response.raise_for_status()
         return response.text  # Returns the session cookie on successful login

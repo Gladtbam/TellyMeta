@@ -22,8 +22,13 @@ class BaseClient(ABC):
         if self._client:
             await self._client.aclose()
 
-    async def _request(self, method: str, url: str, *,
-                       response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+    async def _request(self,
+                       method: str,
+                       url: str,
+                       *,
+                       response_model: type[T] | None = None,
+                       **kwargs
+    ) -> T | httpx.Response | None:
         """发送HTTP请求，子类可以重写此方法以实现特定的认证逻辑
         Args:
             method (str): HTTP方法，如'GET', 'POST', 'DELETE'等。
@@ -47,14 +52,14 @@ class BaseClient(ABC):
                     return None
             return response
         except httpx.HTTPStatusError as e:
-            logger.error("HTTP error: {}", e.response.text)
-            return None
+            logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
+            raise
         except httpx.RequestError as e:
-            logger.error("Request error: {}", e)
-            return None
+            logger.error("请求错误：{}", e)
+            raise
         except Exception as e:
-            logger.error("Unexpected error: {}", e)
-            return None
+            logger.error("未知错误：{}", e)
+            raise
 
     async def get(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
         """发送GET请求"""
@@ -73,6 +78,7 @@ class AuthenticatedClient(BaseClient):
         super().__init__(client)
         self._is_logged_in = False
         self._login_lock = asyncio.Lock()
+        self._max_retries = 1 # 最大重试次数
 
     @abstractmethod
     async def _login(self):
@@ -92,19 +98,25 @@ class AuthenticatedClient(BaseClient):
             try:
                 await self._login()
                 self._is_logged_in = True
-                logger.info("Successfully logged into {}", self.__class__.__name__)
+                logger.info("已成功登录 {}", self.__class__.__name__)
             except httpx.HTTPStatusError as e:
-                logger.error("Login failed: {}", e.response.text)
+                logger.error("登录失败： {}", e.response.text)
                 raise
             except httpx.RequestError as e:
-                logger.error("Request error during login: {}", e)
+                logger.error("登录期间请求错误：{}", e)
                 raise
             except Exception as e:
-                logger.error("Unexpected error during login: {}", e)
+                logger.error("登录期间出现意外错误：{}", e)
                 raise
 
-    async def _request(self, method: str, url: str, *,
-                       response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+    async def _request(self,
+                       method: str,
+                       url: str,
+                       *,
+                       response_model: type[T] | None = None,
+                       _retry: int = 0,
+                       **kwargs
+    ) -> T | httpx.Response | None:
         '''自动登录逻辑'''
         if not self._is_logged_in:
             await self.login()
@@ -116,23 +128,23 @@ class AuthenticatedClient(BaseClient):
         try:
             return await super()._request(method, url, response_model=response_model, **kwargs)
         except AuthenticatedClientError as e:
-            logger.error("Authentication error: {}", e)
+            logger.error("身份验证错误：{}", e)
             raise
         except httpx.HTTPStatusError as e:
-            if e.response.status_code in [401, 403]:
-                logger.warning("Session expired, re-logging in")
+            if e.response.status_code in (401, 403):
+                if _retry >= self._max_retries:
+                    logger.error("达到最大重试次数，无法重新登录")
+                    raise
+
+                logger.warning("会话已过期，重新登录")
                 self._is_logged_in = False
                 await self.login()
+
                 auth_headers = await self._apply_auth()
                 if auth_headers:
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
-                return await super()._request(method, url, response_model=response_model, **kwargs)
-            else:
-                logger.error("HTTP error: {}", e.response.text)
-                raise
-        except httpx.RequestError as e:
-            logger.error("Request error: {}", e)
+                return await super()._request(method, url, response_model=response_model, _retry = _retry + 1 ,**kwargs)
+
             raise
-        except Exception as e:
-            logger.error("Unexpected error: {}", e)
+        except Exception:
             raise

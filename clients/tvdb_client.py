@@ -19,7 +19,7 @@ class TvdbClient(AuthenticatedClient):
             'Content-Type': 'application/json'
         }
         if self._client is None:
-            logger.warning("HTTP 客户端未初始化。首先调用 login()。")
+            logger.warning("Tvdb 客户端未初始化。请先调用 login()。")
         response = await self._client.post("login", json=payload, headers=headers)
         response.raise_for_status()
         try:
