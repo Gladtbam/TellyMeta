@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, timedelta
+from typing import cast
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -7,13 +8,13 @@ from loguru import logger
 from clients.ai_client import AIClientWarper
 from clients.tmdb_client import TmdbClient
 from core.config import genre_mapping
-from models.protocols import BaseItem, QueryResult
+from models.protocols import BaseItem
 from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 
 
 async def translate_emby_item(item_id: str) -> None:
-    """翻译 Emby 媒体项的名称、排序名称和概述字段。
+    """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。
     Args:
         scheduler (AsyncIOScheduler): 任务调度器，用于安排重试任务。
         tmdb_client (TmdbClient): TMDB 客户端，用于获取媒体信息。
@@ -29,12 +30,11 @@ async def translate_emby_item(item_id: str) -> None:
 
     is_translated = False
 
-    item_info: QueryResult | None = await media_client.get_item_info(item_id)
-    if not isinstance(item_info, QueryResult) or item_info.TotalRecordCount == 0 or item_info.TotalRecordCount == 0 or not item_info.Items:
-        logger.error("未找到 Media ID {} 的信息", item_id)
+    item_info: BaseItem | None = await media_client.get_item_info(item_id)
+    if item_info is None:
         return
 
-    item: BaseItem = item_info.Items[0]
+    item = cast(BaseItem, item_info)
 
     imdb_id = item.ProviderIds.get('Imdb') or item.ProviderIds.get('IMDB')
     tvdb_id = item.ProviderIds.get('Tvdb') or item.ProviderIds.get('TVDB')
@@ -98,6 +98,8 @@ async def translate_emby_item(item_id: str) -> None:
             args=[item_id]
         )
         logger.info("计划在 8 天后重试项目 {}", item_id)
+    else:
+        logger.info("无需翻译ID: {}", item_id)
 
 async def cancel_translate_emby_item(item_id: str) -> None:
     """取消已计划的翻译任务。

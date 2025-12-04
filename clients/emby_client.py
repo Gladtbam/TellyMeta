@@ -1,17 +1,19 @@
 import random
 import warnings
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 from loguru import logger
 
 from clients.base_client import AuthenticatedClient
-from models.emby import BaseItemDtoQueryResult, UserDto, UserPolicy
+from models.emby import (BaseItemDto, BaseItemDtoQueryResult, UserDto,
+                         UserPolicy)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDtoQueryResult]):
+class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -102,14 +104,14 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDtoQueryResu
             logger.error("更新 {} 的用户策略失败：{}", user_id, response)
             return False
 
-    async def get_item_info(self, item_id: str) -> BaseItemDtoQueryResult | None:
+    async def get_item_info(self, item_id: str) -> None | BaseItemDto:
         """获取指定媒体项的信息。
 
         Args:
             item_id (str): 媒体项的唯一标识符。
 
         Returns:
-            dict: 媒体项信息字典，如果未找到则返回 None。
+            BaseItemDto: 媒体项对象，如果未找到则返回 None。
         """
         url = "/Items"
         fields = ["ProductionYear", "Budget", "Chapters", "DateCreated", "PremiereDate",
@@ -126,7 +128,10 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDtoQueryResu
         }
 
         response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-        return response if isinstance(response, BaseItemDtoQueryResult) else None
+        if not isinstance(response, BaseItemDtoQueryResult) or response.TotalRecordCount == 0 or not response.Items:
+            logger.warning("获取 Emby 项目 {} 信息失败: {}", item_id, response)
+            return None
+        return response.Items[0]
 
     async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
         """更新指定媒体项的信息。
@@ -247,3 +252,29 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDtoQueryResu
             if item.get("Locations"):
                 libraries.append(item.get("Name", "Unknown"))
         return libraries
+
+    async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
+        """获取 Emby 媒体库中的所有媒体项。
+        Yields:
+            BaseItemDto: 媒体项对象。
+        """
+        url = "/Items"
+        start_index = 0
+        page_size = 200
+        while True:
+            params = {
+                'Recursive': 'true',
+                'StartIndex': start_index,
+                'Limit': page_size
+            }
+            response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
+            if not isinstance(response, BaseItemDtoQueryResult):
+                break
+            items = response.Items
+            if not items:
+                break
+            for item in items:
+                yield item
+            start_index += len(items)
+            if start_index >= response.TotalRecordCount:
+                break

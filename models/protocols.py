@@ -35,7 +35,7 @@ class BaseItem(Dumpable, Protocol):
     Genres: list
     ProviderIds: dict
 
-BaseItemT = TypeVar("BaseItemT", bound=BaseItem)
+BaseItemT_co = TypeVar("BaseItemT_co", bound=BaseItem, covariant=True)
 
 @runtime_checkable
 class Policy(Dumpable, Protocol):
@@ -46,14 +46,6 @@ class Policy(Dumpable, Protocol):
     BlockedTags: list
 
 PolicyT = TypeVar("PolicyT", bound=Policy)
-
-@runtime_checkable
-class QueryResult(Dumpable, Protocol[BaseItemT]):
-    """定义查询结果的协议"""
-    Items: list[BaseItemT]
-    TotalRecordCount: int
-
-QueryResultT = TypeVar("QueryResultT", bound=QueryResult)
 
 @runtime_checkable
 class User(Dumpable, Protocol[PolicyT]):

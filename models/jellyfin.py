@@ -81,7 +81,7 @@ class UserPolicy(BaseModel):
 
 class UserDto(BaseModel):
     """Jellyfin 用户模型""" 
-    Name: str | None = None
+    Name: str
     ServerId: str | None = None
     ServerName: str | None = None
     Id: str
@@ -300,7 +300,7 @@ class BaseItemDto(BaseModel):
     PreferredMetadataLanguage: str | None = None
     PreferredMetadataCountryCode: str | None = None
     Container: str | None = None
-    SortName: str | None = None
+    SortName: str
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
     PremiereDate: str | None = None # datetime
@@ -314,7 +314,7 @@ class BaseItemDto(BaseModel):
     CustomRating: str | None = None
     ChannelId: str | None = None
     ChannelName: str | None = None
-    Overview: str | None = None
+    Overview: str
     Taglines: list[str] = Field(default_factory=list)
     Genres: list[str] = Field(default_factory=list)
     CommunityRating: float | None = None

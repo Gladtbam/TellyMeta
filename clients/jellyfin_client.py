@@ -1,17 +1,18 @@
 import random
+from collections.abc import AsyncGenerator
 from typing import Any
-
 
 import httpx
 from loguru import logger
 
 from clients.base_client import AuthenticatedClient
-from models.jellyfin import BaseItemDtoQueryResult, UserDto, UserPolicy
+from models.jellyfin import (BaseItemDto, BaseItemDtoQueryResult, UserDto,
+                             UserPolicy)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class JellyfinClient(AuthenticatedClient, MediaService):
+class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
     """Jellyfin 客户端
     用于与 Jellyfin 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -96,12 +97,12 @@ class JellyfinClient(AuthenticatedClient, MediaService):
             logger.error("更新 {} 的用户策略失败：{}", user_id, response)
             return False
 
-    async def get_item_info(self, item_id: str) -> BaseItemDtoQueryResult | None:
+    async def get_item_info(self, item_id: str) -> BaseItemDto | None:
         """获取媒体项信息。
         Args:
             item_id (str): 媒体项的唯一标识符。
         Returns:
-            BaseItemDtoQueryResult: 包含媒体项信息的响应数据。
+            BaseItemDto: 媒体项对象，如果未找到则返回 None。
         """
         url = f"/Items/{item_id}"
         fields = ["AirTime", "CanDelete", "CanDownload", "ChannelInfo", "Chapters", "Trickplay",
@@ -121,7 +122,10 @@ class JellyfinClient(AuthenticatedClient, MediaService):
             'ids': item_id
         }
         response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-        return response if isinstance(response, BaseItemDtoQueryResult) else None
+        if not isinstance(response, BaseItemDtoQueryResult) or response.TotalRecordCount == 0 or not response.Items:
+            logger.warning("获取 Jellyfin 项目 {} 信息失败: {}", item_id, response)
+            return None
+        return response.Items[0]
 
     async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
         """更新媒体项信息。
@@ -245,3 +249,29 @@ class JellyfinClient(AuthenticatedClient, MediaService):
             if item.get("Locations"):
                 libraries.append(item.get("Name", "Unknown"))
         return libraries
+
+    async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
+        """获取 Jellyfin 媒体库中的所有媒体项。
+        Yields:
+            BaseItemDto: 媒体项对象。
+        """
+        url = "/Items"
+        start_index = 0
+        page_size = 200
+        while True:
+            params = {
+                'recursive': 'true',
+                'startIndex': start_index,
+                'limit': page_size
+            }
+            response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
+            if not isinstance(response, BaseItemDtoQueryResult):
+                break
+            items = response.Items
+            if not items:
+                break
+            for item in items:
+                yield item
+            start_index += len(items)
+            if start_index >= response.TotalRecordCount:
+                break
