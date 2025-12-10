@@ -314,7 +314,7 @@ class BaseItemDto(BaseModel):
     CustomRating: str | None = None
     ChannelId: str | None = None
     ChannelName: str | None = None
-    Overview: str
+    Overview: str | None = None
     Taglines: list[str] = Field(default_factory=list)
     Genres: list[str] = Field(default_factory=list)
     CommunityRating: float | None = None

@@ -31,7 +31,7 @@ class BaseItem(Dumpable, Protocol):
     Name: str
     Id: str
     SortName: str
-    Overview: str
+    Overview: str | None = None
     Genres: list
     ProviderIds: dict
 

@@ -143,7 +143,7 @@ class AuthenticatedClient(BaseClient):
                 auth_headers = await self._apply_auth()
                 if auth_headers:
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
-                return await super()._request(method, url, response_model=response_model, _retry = _retry + 1 ,**kwargs)
+                return await self._request(method, url, response_model=response_model, _retry = _retry + 1 ,**kwargs)
 
             raise
         except Exception:
