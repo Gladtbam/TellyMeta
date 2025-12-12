@@ -40,9 +40,10 @@ async def sonarr_webhook(
             asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
             await task_queue.put(Path(payload.episodeFile.path))
         if payload.downloadId:
-            asyncio.create_task(
-                qb_client.torrents_set_share_limits(payload.downloadId, settings.qbittorrent_torrent_limit)
-            )
+            asyncio.create_task(qb_client.torrents_set_share_limits(
+                    torrent_hash=payload.downloadId,
+                    seeding_time_limit=settings.qbittorrent_torrent_limit
+            ))
 
     return Response(content="Webhook received", status_code=200)
 

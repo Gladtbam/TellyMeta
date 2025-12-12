@@ -14,7 +14,10 @@ class QbittorrentClient(AuthenticatedClient):
         self.username = username
         self.password = password
 
-    async def _login(self):
+    async def _login(self) -> None | str:
+        if self.username == 'nologin' and self.password == 'nologin':
+            self._is_logged_in = True
+            return
         data = {
             'username': self.username,
             'password': self.password
@@ -25,7 +28,7 @@ class QbittorrentClient(AuthenticatedClient):
         response.raise_for_status()
         return response.text  # Returns the session cookie on successful login
 
-    async def _apply_auth(self):
+    async def _apply_auth(self) -> dict:
         return {}
 
     async def app_version(self) -> str | None:
