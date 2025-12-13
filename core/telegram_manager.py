@@ -238,7 +238,7 @@ class TelethonClientWarper:
             logger.error("无法编辑消息 {}：{}", message_id, e)
             raise
 
-    async def ban_user(self, user_id: int, until_date: datetime | None) -> None:
+    async def ban_user(self, user_id: int, until_date: datetime | None = None) -> None:
         """封禁用户
         Args:
             user_id (int): 要封禁的用户ID

@@ -297,6 +297,42 @@ async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     pattern=fr'^/kick({settings.telegram_bot_name})?$',
     incoming=True
     ))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'kick_(\\d+)'))
+@provide_db_session
+@require_admin
+async def kick_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
+    """踢出处理器
+    踢出一个用户，支持命令和按钮两种触发方式
+    """
+
+    if isinstance(event, events.NewMessage.Event):
+        if not event.is_reply:
+            await safe_reply(event, "请回复一个用户以踢出。")
+            return
+        reply_msg = await event.get_reply_message()
+        if not reply_msg.sender_id:
+            await safe_reply(event, "无法获取回复的用户信息。")
+            return
+
+        user_service = UserService(session, app.state.media_client)
+        client: TelethonClientWarper = app.state.telethon_client
+        target_user_id = reply_msg.sender_id
+        await client.kick_and_ban_participant(target_user_id)
+        result = await user_service.delete_account(target_user_id, 'both')
+        await safe_reply(event, '已踢出用户。\n' + result.message)
+    elif isinstance(event, events.CallbackQuery.Event):
+        target_user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+        verification_service = VerificationService(app, session)
+        result = await verification_service.reject_verification(target_user_id)
+        await event.edit(result.message)
+    else:
+        await safe_respond(event, "无法处理此事件类型。")
+        return
+
+@TelethonClientWarper.handler(events.NewMessage(
+    pattern=fr'^/ban({settings.telegram_bot_name})?$',
+    incoming=True
+    ))
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'ban_(\\d+)'))
 @provide_db_session
 @require_admin
@@ -314,14 +350,15 @@ async def ban_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
             await safe_reply(event, "无法获取回复的用户信息。")
             return
 
-        user_service = UserService(session, app.state.media_client)
+        client: TelethonClientWarper = app.state.telethon_client
         target_user_id = reply_msg.sender_id
-        result = await user_service.delete_account(target_user_id, 'both')
-        await safe_reply(event, '已封禁用户。\n' + result.message)
+        user_name = await client.get_user_name(target_user_id)
+        await client.ban_user(target_user_id)
+        await safe_reply(event, f'已封禁用户[{user_name}](tg://user?id={target_user_id})')
     elif isinstance(event, events.CallbackQuery.Event):
         target_user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
         verification_service = VerificationService(app, session)
-        result = await verification_service.reject_verification(target_user_id)
+        result = await verification_service.reject_verification(target_user_id, is_ban=True)
         await event.edit(result.message)
     else:
         await safe_respond(event, "无法处理此事件类型。")
@@ -415,7 +452,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
-        'kick'
+        'kick', 'ban'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore

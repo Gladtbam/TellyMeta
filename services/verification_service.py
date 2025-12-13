@@ -42,7 +42,10 @@ class VerificationService:
         # buttons = [Button.url("➡️ 前往验证", url)]
         keyboard = [
             [Button.url("➡️ 前往验证", url)],
-            [Button.inline("⛔ 封禁", f"ban_{user_id}".encode('utf-8'))]
+            [
+                Button.inline("⛔ 踢出", f"kick_{user_id}".encode('utf-8')),
+                Button.inline("🚫 封禁", f"ban_{user_id}".encode('utf-8'))
+            ]
         ]
 
         kick_time = datetime.now() + timedelta(minutes=5)
@@ -95,9 +98,7 @@ class VerificationService:
             return Result(success=False, message="未找到您的验证记录，可能已过期。请重新加入群组以获取新的验证机会。")
 
         if challenge.captcha_answer != answer:
-            await kick_unverified_user(
-                user_id
-            )
+            await kick_unverified_user( user_id)
             return Result(success=False, message="验证码错误，请重新加入群组重试。")
 
         # 删除定时任务
@@ -112,13 +113,13 @@ class VerificationService:
 
         return Result(success=True, message="验证成功！您现在可以在群组中发言了。", private_message=challenge.message_id) # type: ignore
 
-    async def reject_verification(self, user_id: int) -> Result:
+    async def reject_verification(self, user_id: int, is_ban: bool = False) -> Result:
         """拒绝用户的验证请求并将其移出群组"""
         user_name = await self.client.get_user_name(user_id)
         challenge = await self.verification_repo.get(user_id)
         if not challenge:
             return Result(success=False, message=f"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。")
-        await kick_unverified_user(user_id)
+        await kick_unverified_user(user_id, is_ban=is_ban)
         try:
             self.scheduler.remove_job(challenge.scheduler_job_id)
         except Exception as e:
@@ -126,7 +127,7 @@ class VerificationService:
 
         return Result(success=True, message=f"[{user_name}](tg://user?id={user_id})已被移出群组。")
 
-async def kick_unverified_user(user_id: int) -> None:
+async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
     """将未通过验证的用户移出群组"""
     from main import app
     session_factory: async_sessionmaker[AsyncSession] = async_session
@@ -140,7 +141,10 @@ async def kick_unverified_user(user_id: int) -> None:
             if challenge:
                 await verification_repo.delete(user_id)
 
-            await client.kick_participant(user_id)
+            if is_ban:
+                await client.ban_user(user_id)
+            else:
+                await client.kick_participant(user_id)
             await user_service.delete_account(user_id, 'tg')
             logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
 
