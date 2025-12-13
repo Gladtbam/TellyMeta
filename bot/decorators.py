@@ -40,8 +40,9 @@ def require_admin(func):
             logger.error("必须提供 FastAPI 实例和事件对象")
             return
 
-        if getattr(event, 'sender_id', None) not in app.state.admin_ids:
-            await event.reply("你没有权限执行此操作。")
+        sender_id = getattr(event, 'sender_id', None)
+        if sender_id not in app.state.admin_ids:
+            await event.reply(f"[你](tg://user?id={sender_id})没有权限执行此操作。")
             return
         return await func(*args, **kwargs)
     return wrapper
