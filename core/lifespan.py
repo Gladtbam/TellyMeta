@@ -19,11 +19,11 @@ from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
-from core.initialization import (check_sqlite_version, initialize_admin,
-                                 initialize_bot_configuration)
+from core.initialization import check_sqlite_version, initialize_admin
 from core.scheduler_jobs import (ban_expired_users,
                                  delete_expired_banned_users, settle_scores)
 from core.telegram_manager import TelethonClientWarper
+from repositories.config_repo import ConfigRepository
 from services.score_service import MessageTrackingState
 from workers.mkv_worker import mkv_merge_task
 
@@ -115,7 +115,7 @@ async def lifespan(app: FastAPI):
     async with async_session() as session:
         admin_ids = await initialize_admin(session, app.state.telethon_client)
         app.state.admin_ids = set(admin_ids)
-        await initialize_bot_configuration(session)
+        await ConfigRepository.load_all_to_cache(session)
         await session.close()
 
     app.state.scheduler = AsyncIOScheduler(

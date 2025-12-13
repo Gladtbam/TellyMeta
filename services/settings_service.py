@@ -35,7 +35,8 @@ class SettingsServices:
         keyboard = [
             [Button.inline("管理员设置", b"manage_admins")],
             [Button.inline("通知设置", b"manage_notify")],
-            [Button.inline("媒体设置", b"manage_media")]
+            [Button.inline("媒体设置", b"manage_media")],
+            [Button.inline("功能开关", b"manage_system")]
         ]
         msg = "请选择一个管理选项："
         return Result(success=True, message=msg, keyboard=keyboard)
@@ -60,6 +61,7 @@ class SettingsServices:
             button_text = f"{status} {admin.first_name or ''} {admin.last_name or ''} (@{admin.username or '无用户名'})"
             callback_data = f"toggle_admin_{admin.id}"
             keyboard.append([Button.inline(button_text, callback_data.encode('utf-8'))])
+        keyboard.append([Button.inline("« 返回管理面板", b"manage_main")])
 
         return Result(success=True, message=msg, keyboard=keyboard)
 
@@ -106,6 +108,7 @@ class SettingsServices:
             [Button.inline("设置 Radarr 通知话题", b"notify_radarr")],
             [Button.inline("设置 媒体通知话题", b"notify_media")],
             [Button.inline("设置 求片通知话题", b"notify_requested")],
+            [Button.inline("« 返回管理面板", b"manage_main")]
         ]
         msg = textwrap.dedent(f"""\
             **通知设置面板**
@@ -180,6 +183,7 @@ class SettingsServices:
             """)
             library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8') # 避免回调数据中出现特殊字符
             keyboard.append([Button.inline(button_text, f"bind_library_{library_name_base64}".encode('utf-8'))])
+        keyboard.append([Button.inline("« 返回管理面板", b"manage_main")])
 
         msg = textwrap.dedent("""\
             **媒体设置面板**
@@ -327,3 +331,36 @@ class SettingsServices:
         setattr(binding, key, value)
         await self.config_repo.set_library_binding(binding)
         return Result(success=True, message=f"已将媒体库 {library_name} 的 {key} 设置为 `{value}`。")
+
+    async def get_system_panel(self) -> Result:
+        """获取系统功能设置面板"""
+
+        points_enabled = self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_POINTS) == "true"
+        verify_enabled = self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_VERIFICATION) == "true"
+
+        points_status = "✅ 开启" if points_enabled else "❌ 关闭"
+        verify_status = "✅ 开启" if verify_enabled else "❌ 关闭"
+
+        keyboard = [
+            [Button.inline(f"积分/签到功能: {points_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_POINTS}".encode('utf-8'))],
+            [Button.inline(f"入群验证: {verify_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_VERIFICATION}".encode('utf-8'))],
+            [Button.inline("« 返回管理面板", b"manage_main")]
+        ]
+        msg = textwrap.dedent("""\
+            **系统功能开关**
+            点击按钮以开启或关闭相应功能。
+            开关状态已缓存，无需担心性能问题。
+        """)
+        return Result(success=True, message=msg, keyboard=keyboard)
+
+    async def toggle_system_setting(self, key: str) -> Result:
+        """切换系统功能设置"""
+        try:
+            current = await self.config_repo.get_settings(key, "true")
+            new_state_str = "false" if current == "true" else "true"
+            await self.config_repo.set_settings(key, new_state_str)
+
+            status_text = "开启" if new_state_str == "true" else "关闭"
+            return Result(success=True, message=f"已{status_text}该功能。")
+        except Exception as e:
+            return Result(success=False, message=f"设置失败: {str(e)}")

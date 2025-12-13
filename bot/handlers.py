@@ -12,6 +12,7 @@ from bot.decorators import provide_db_session, require_admin
 from bot.utils import safe_reply, safe_respond, safe_respond_keyboard
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.score_service import MessageTrackingState, ScoreService
@@ -158,6 +159,10 @@ async def checkin_handler(app: FastAPI, event: events.NewMessage.Event, session:
     """签到处理器"""  
     if event.chat_id != settings.telegram_chat_id:
         await safe_reply(event, "请在群组内签到。")
+        return
+
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
+        await safe_reply(event, "签到功能已关闭。")
         return
 
     user_id = event.sender_id
@@ -332,7 +337,11 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
     if user_id == (await app.state.telethon_client.client.get_me()).id or user_id in app.state.admin_ids or user_id is None:
         return
 
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_VERIFICATION, "true") != "true":
+        return
+
     if event.user_joined or event.user_added:
+        logger.info("用户 {} 加入", user_id)
         verification_service = VerificationService(app, session)
         result = await verification_service.start_verification(user_id)
 
@@ -344,6 +353,7 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
             await verification_service.verification_repo.update_message_id(user_id, message.id)
 
     if event.user_left or event.user_kicked:
+        logger.info("用户 {} 离开", user_id)
         user_service = UserService(session, app.state.media_client)
         await user_service.delete_account(user_id, 'both')
 
@@ -376,6 +386,9 @@ async def group_message_handler(app: FastAPI, event: events.NewMessage.Event, se
     user_id = event.sender_id
 
     if user_id in app.state.admin_ids:
+        return
+
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
         return
 
     if not event.message.text.startswith('/'):
@@ -546,7 +559,23 @@ async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session
 
     await safe_respond_keyboard(event, result.message, result.keyboard, 600)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media)'))
+    await safe_respond_keyboard(event, result.message, result.keyboard, 600)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_system_(.+)'))
+@provide_db_session
+async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """系统功能开关处理器"""
+    key = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    settings_service = SettingsServices(session, app)
+
+    result = await settings_service.toggle_system_setting(key)
+    await event.answer(result.message)
+
+    # 刷新面板
+    panel_result = await settings_service.get_system_panel()
+    await event.edit(panel_result.message, buttons=panel_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media|system|main)'))
 @provide_db_session
 async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """管理面板处理器
@@ -561,6 +590,10 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
         result = await settings_service.get_notification_panel()
     elif action == 'media':
         result = await settings_service.get_media_panel()
+    elif action == 'system':
+        result = await settings_service.get_system_panel()
+    elif action == 'main':
+        result = await settings_service.get_admin_management_keyboard()
     else:
         result = Result(False, "该功能尚未实现。")
 

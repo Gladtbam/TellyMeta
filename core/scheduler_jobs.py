@@ -5,6 +5,7 @@ from loguru import logger
 from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
+from repositories.config_repo import ConfigRepository
 from repositories.emby_repo import EmbyRepository
 from services.media_service import MediaService
 from services.score_service import ScoreService
@@ -67,6 +68,9 @@ async def settle_scores() -> None:
     """结算用户积分
     根据用户的订阅状态和使用情况，调整他们的积分。
     """
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
+        return
+
     from main import app  # 避免循环导入
     async with async_session() as session:
         try:
