@@ -476,7 +476,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.8.1"
+version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -488,9 +488,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/e4/42591e356f1d53c568418dc7e30dcda7be31dd5a4d570bca22acb0525862/openai-2.8.1.tar.gz", hash = "sha256:cb1b79eef6e809f6da326a7ef6038719e35aa944c42d081807bfa1be8060f15f", size = 602490, upload-time = "2025-11-17T22:39:59.549Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/8c/aa6aea6072f985ace9d6515046b9088ff00c157f9654da0c7b1e129d9506/openai-2.11.0.tar.gz", hash = "sha256:b3da01d92eda31524930b6ec9d7167c535e843918d7ba8a76b1c38f1104f321e", size = 624540, upload-time = "2025-12-11T19:11:58.539Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/4f/dbc0c124c40cb390508a82770fb9f6e3ed162560181a85089191a851c59a/openai-2.8.1-py3-none-any.whl", hash = "sha256:c6c3b5a04994734386e8dad3c00a393f56d3b68a27cd2e8acae91a59e4122463", size = 1022688, upload-time = "2025-11-17T22:39:57.675Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/f1/d9251b565fce9f8daeb45611e3e0d2f7f248429e40908dcee3b6fe1b5944/openai-2.11.0-py3-none-any.whl", hash = "sha256:21189da44d2e3d027b08c7a920ba4454b8b7d6d30ae7e64d9de11dbe946d4faa", size = 1064131, upload-time = "2025-12-11T19:11:56.816Z" },
 ]
 
 [[package]]
@@ -898,21 +898,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiofiles", specifier = ">=24.1.0" },
+    { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiosqlite", specifier = ">=0.21.0" },
     { name = "apscheduler", specifier = ">=3.11.0" },
     { name = "cryptg", specifier = ">=0.5.2" },
-    { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "fastapi", specifier = ">=0.122.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "openai", specifier = ">=1.95.1" },
-    { name = "pillow", specifier = ">=11.3.0" },
-    { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.41" },
-    { name = "telethon", specifier = ">=1.40.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35.0" },
+    { name = "openai", specifier = ">=2.11.0" },
+    { name = "pillow", specifier = ">=12.0.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydantic-settings", specifier = ">=2.12.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.44" },
+    { name = "telethon", specifier = ">=1.42.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
 ]
 
 [[package]]
