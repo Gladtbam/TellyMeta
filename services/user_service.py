@@ -123,23 +123,22 @@ class UserService:
         """)
 
         if user.emby:
-            played_ratio = await self.media_service.get_user_playlist(
-            user.emby.emby_id,
-            user.emby.expires_at.strftime('%Y-%m-{}')
-            )
+            # played_ratio = await self.media_service.get_user_playlist(
+            # user.emby.emby_id,
+            # user.emby.expires_at.strftime('%Y-%m-{}')
+            # )
             message += textwrap.dedent(f"""\
                 **Emby 用户名**: `{user.emby.emby_name}`
                 **Emby 用户 ID**: `{user.emby.emby_id}`
                 **Emby 过期时间**: `{user.emby.expires_at}`
                 **Emby 删除时间**: `{user.emby.delete_at if user.emby.delete_at else '未设置'}`
                 **Emby 状态**: `{'封禁' if user.emby.is_banned else '正常'}`
-                **进度**: `{played_ratio:.2f}%`
             """)
 
         button_layout = [
         [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nfsw'), ('忘记密码', 'me_forget_password')],
         [('续期', 'me_renew'), ('线路查询', 'me_line'), ('查询续期积分', 'me_query_renew')],
-        [('求片', 'me_request'), ('上传字幕', 'me_subtitle')]
+        [('上传字幕', f'me_subtitle_{user.id}')]
         ]
         keyboard = [
             [Button.inline(text, data=data.encode('utf-8')) for text, data in row]

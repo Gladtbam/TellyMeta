@@ -69,8 +69,16 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie"
         params = {'tmdbId': tmdb_id}
-        response = await self.get(url, params=params, response_model=MovieResource)
-        return response if isinstance(response, MovieResource) else None
+        response = await self.get(url, params=params)
+        if response is None:
+            return None
+
+        try:
+            movies = TypeAdapter(list[MovieResource]).validate_python(response.json())
+            return movies[0] if movies else None
+        except ValidationError as e:
+            logger.error("无法解析电影查找响应：{}", repr(e.errors()))
+            return None
 
     async def post_movie(self, movie_resource: MovieResource) -> MovieResource | None:
         """向 Radarr 添加电影。

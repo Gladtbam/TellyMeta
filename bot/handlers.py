@@ -3,6 +3,7 @@ import base64
 import textwrap
 from typing import Any
 
+import aiofiles.tempfile
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ from services.account_service import AccountService
 from services.request_service import RequestService
 from services.score_service import MessageTrackingState, ScoreService
 from services.settings_service import SettingsServices
+from services.subtitle_service import SubtitleService
 from services.user_service import Result, UserService
 from services.verification_service import VerificationService
 
@@ -859,3 +861,73 @@ async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) 
     original_text = (await event.get_message()).text # type: ignore
     new_text = original_text + "\n\n❌ **已拒绝**"
     await event.edit(new_text, buttons=None)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_subtitle_(\\d+)'))
+@provide_db_session
+async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """开始上传字幕处理器 (Conversation Mode)"""
+    user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+    chat_id = event.chat_id
+    subtitle_service = SubtitleService(session, app)
+    client = app.state.telethon_client.client
+
+    # Start Conversation
+    try:
+        async with client.conversation(chat_id, timeout=300) as conv:
+            await event.answer()
+
+            # 直接发送指令
+            intro_msg = textwrap.dedent("""
+                📤 **上传字幕**
+                请直接发送字幕压缩包 (Zip)。
+                
+                **命名规则**：
+                1. 剧集: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
+                2. 电影: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
+                
+                **内容要求**：
+                - 剧集：S季E集.字幕语言.后缀
+                - 电影：电影名.字幕语言.后缀
+                """)
+
+            # 使用新消息以避免编辑可能旧的菜单消息
+            await conv.send_message(intro_msg)
+
+            # Wait for file
+            while True:
+                response_msg = await conv.get_response()
+                if response_msg.text and response_msg.text.startswith('/'):
+                    # 用户可能正在尝试运行命令，取消对话
+                    await conv.send_message("检测到命令，已取消上传。")
+                    return
+
+                if not response_msg.file:
+                    await conv.send_message("请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。")
+                    continue
+
+                if not response_msg.file.name.lower().endswith('.zip'):
+                    await conv.send_message("格式错误，请上传 .zip 压缩包。")
+                    continue
+
+                # Valid file found
+                break
+
+            processing_msg = await conv.send_message("正在接收并处理文件，请稍候...")
+
+            # Download
+            async with aiofiles.tempfile.NamedTemporaryFile(suffix=".zip") as tmp_file:
+                file_path = await response_msg.download_media(file=tmp_file.name)
+
+                if not file_path:
+                    await processing_msg.edit("文件下载失败，请重试。")
+                    return
+
+                # Process
+                result = await subtitle_service.handle_file_upload(user_id, file_path, response_msg.file.name)
+                await processing_msg.edit(result.message)
+
+    except asyncio.TimeoutError:
+        await safe_respond(event, "操作超时，请重试。")
+    except Exception as e:
+        logger.error(f"Conversation error: {e}")
+        await safe_respond(event, f"发生错误: {str(e)}")
