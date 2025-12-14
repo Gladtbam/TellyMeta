@@ -455,7 +455,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
-        'kick', 'ban', 'request'
+        'kick', 'ban'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore
@@ -749,80 +749,6 @@ async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.
     binding_result = await settings_service.get_library_binding_panel(library_name)
     await event.edit(binding_result.message, buttons=binding_result.keyboard)
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/request({settings.telegram_bot_name})?(\s.+)?$',
-    incoming=True
-    ))
-@provide_db_session
-async def request_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
-    """求片处理器
-    处理用户求片请求
-    """
-    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_REQUESTMEDIA, "true") != "true":
-        return
-
-    if not event.is_private:
-        await safe_reply(event, "为保护隐私和避免刷屏，请**私聊**我使用求片功能。")
-        return
-
-    try:
-        query = event.pattern_match.group(2).strip() # type: ignore
-        logger.info("用户 {} 请求求片: {}", event.sender_id, query)
-    except (IndexError, AttributeError):
-        logger.warning("求片命令格式错误")
-        query = None
-
-    if not query:
-        await safe_reply(event, "请在命令后添加您想搜索的电视剧或电影名称，例如: `/request 蝙蝠侠`")
-        return
-
-    request_service = RequestService(session, app)
-    result = await request_service.start_request_flow(event.sender_id, query)
-
-    if result.keyboard:
-        await safe_respond_keyboard(event, result.message, result.keyboard)
-    else:
-        await safe_reply(event, result.message)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_lib_([^_]+)_(\\d+)'))
-@provide_db_session
-async def request_library_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """求片-媒体库选择处理器"""
-    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    user_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
-
-    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
-
-    request_service = RequestService(session, app)
-    # Give user a feedback that we are searching
-    await event.answer("正在搜索中，请稍候...", alert=False)
-
-    result = await request_service.process_library_selection(user_id, library_name)
-
-    if result.success and result.keyboard:
-        await event.edit(result.message, buttons=result.keyboard)
-    else:
-         # If failed (e.g. session expired or no results), just edit text or answer
-        if result.keyboard:
-            await event.edit(result.message, buttons=result.keyboard)
-        else:
-            await event.answer(result.message, alert=True)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_sel_(\\d+)_(\\d+)'))
-@provide_db_session
-async def request_media_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """求片-媒体选择处理器"""
-    index = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
-    user_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
-
-    request_service = RequestService(session, app)
-    result = await request_service.process_media_selection(user_id, index)
-
-    if result.success:
-        await event.edit(result.message, buttons=None)
-    else:
-        await event.answer(result.message, alert=True)
-
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
 async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
     """求片-取消处理器"""
@@ -861,6 +787,149 @@ async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) 
     original_text = (await event.get_message()).text # type: ignore
     new_text = original_text + "\n\n❌ **已拒绝**"
     await event.edit(new_text, buttons=None)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_request_(\\d+)'))
+@provide_db_session
+async def start_request_conversation_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """开始求片处理器 (Conversation Mode)"""
+    user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+    chat_id = event.chat_id
+    request_service = RequestService(session, app)
+    client = app.state.telethon_client.client
+
+    # 检查权限
+    # start_request_flow 将检查权限并返回库按钮
+    result = await request_service.start_request_flow(user_id)
+
+    if not result.success:
+        await event.answer(result.message, alert=True)
+        return
+
+    # Start Conversation
+    try:
+        async with client.conversation(chat_id, timeout=300) as conv:
+            lib_msg = await conv.send_message(result.message, buttons=result.keyboard)
+
+            # 等待库选择
+            # 我们寻找此特定消息的回调
+            press_event = await conv.wait_event(
+                events.CallbackQuery(func=lambda e: e.message_id == lib_msg.id)
+            )
+
+            data = press_event.data.decode('utf-8')
+            if data == 'req_cancel':
+                await press_event.answer("已取消")
+                await press_event.delete()
+                return
+
+            # 解析库选择
+            # 预期：req_lib_{lib_b64}_{user_id}
+            if not data.startswith('req_lib_'):
+                await press_event.answer("无效选择")
+                return
+
+            parts = data.split('_')
+            # req, lib, b64, userid
+            lib_b64 = parts[2]
+            library_name = base64.b64decode(lib_b64).decode('utf-8')
+
+            await press_event.answer(f"已选择: {library_name}")
+
+
+
+            cancel_button = [Button.inline("取消", b"req_conv_cancel_query")]
+            query_prompt = await press_event.edit(
+                textwrap.dedent(f"""
+                已选择媒体库: **{library_name}**
+                
+                请发送您想搜索的关键词，支持：
+                1. 标题: 例如 `流浪地球`
+                2. ID: 例如 `tvdb:430047` 或 `tmdb:842675`
+                """),
+                buttons=cancel_button
+            )
+
+            # 等待文本输入或取消按钮
+            while True:
+                # Create tasks for both events
+                task_response = asyncio.create_task(conv.get_response())
+                task_cancel = asyncio.create_task(
+                    conv.wait_event(events.CallbackQuery(func=lambda e: e.message_id == query_prompt.id))
+                )
+
+                done, pending = await asyncio.wait(
+                    [task_response, task_cancel],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                # 检查哪一个完成了
+                if task_cancel in done:
+                    # 用户点击取消
+                    cancel_event = task_cancel.result()
+                    # 取消其他任务
+                    task_response.cancel()
+
+                    await cancel_event.answer("已取消")
+                    await cancel_event.delete()
+                    return
+                else:
+                    # 用户发送了一条消息
+                    response_msg = task_response.result()
+                    # 取消其他任务（虽然 wait_event 可能不需要取消）
+                    task_cancel.cancel()
+
+                    if response_msg.text and response_msg.text.startswith('/'):
+                        await conv.send_message("检测到命令，已取消求片。")
+                        return
+
+                    if not response_msg.text:
+                        await conv.send_message("无效输入，请发送关键词。")
+                        continue
+
+                    query = response_msg.text.strip()
+                    break
+
+            searching_msg = await conv.send_message(f"正在搜索: **{query}**...")
+
+            # 3. 执行搜索
+            search_result = await request_service.search_media(library_name, query)
+
+            if not search_result.success:
+                await searching_msg.edit(f"搜索失败: {search_result.message}")
+                return
+
+            # 显示结果按钮
+            results_msg = await searching_msg.edit(search_result.message, buttons=search_result.keyboard)
+
+            # 4.等待选择
+            sel_event = await conv.wait_event(
+                 events.CallbackQuery(func=lambda e: e.message_id == results_msg.id)
+            )
+
+            sel_data = sel_event.data.decode('utf-8')
+            if sel_data == 'req_cancel':
+                await sel_event.answer("已取消")
+                await sel_event.delete()
+                return
+
+            # Expected: req_sel_{media_id}
+            sel_parts = sel_data.split('_')
+            media_id = int(sel_parts[2])
+
+            # 提交
+            # process_media_selection 处理通知发送并返回成功消息
+            final_result = await request_service.process_media_selection(user_id, library_name, media_id)
+
+            if final_result.success:
+                await sel_event.edit(final_result.message, buttons=None)
+            else:
+                await sel_event.answer(final_result.message, alert=True)
+
+    except asyncio.TimeoutError:
+        await safe_respond(event, "操作超时，请重试。")
+    except Exception as e:
+        logger.error(f"Conversation error: {e}")
+        await safe_respond(event, f"发生错误: {str(e)}")
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_subtitle_(\\d+)'))
 @provide_db_session

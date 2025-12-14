@@ -138,7 +138,7 @@ class UserService:
         button_layout = [
         [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nfsw'), ('忘记密码', 'me_forget_password')],
         [('续期', 'me_renew'), ('线路查询', 'me_line'), ('查询续期积分', 'me_query_renew')],
-        [('上传字幕', f'me_subtitle_{user.id}')]
+        [('求片', f'me_request_{user.id}'), ('上传字幕', f'me_subtitle_{user.id}')]
         ]
         keyboard = [
             [Button.inline(text, data=data.encode('utf-8')) for text, data in row]

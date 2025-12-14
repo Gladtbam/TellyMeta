@@ -1,6 +1,5 @@
 import base64
 import textwrap
-from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI
@@ -22,19 +21,7 @@ from services.user_service import Result
 
 settings = get_settings()
 
-class RequestState:
-    def __init__(self, user_id: int, query: str):
-        self.user_id = user_id
-        self.query = query
-        self.library_name: str | None = None
-        self.timestamp = datetime.now()
-        self.results: list[Any] = []
-
 class RequestService:
-    # Simple in-memory cache for user request sessions
-    # Key: user_id, Value: RequestState
-    _sessions: dict[int, RequestState] = {}
-
     def __init__(self, session: AsyncSession, app: FastAPI):
         self.session = session
         self.app = app
@@ -73,20 +60,6 @@ class RequestService:
             raise RuntimeError("TVDB 客户端未配置")
         return self._tvdb_client
 
-    def _get_session(self, user_id: int) -> RequestState | None:
-        """获取会话"""
-        state = self._sessions.get(user_id)
-        if state and datetime.now() - state.timestamp > timedelta(minutes=10):
-            del self._sessions[user_id]
-            return None
-        return state
-
-    def create_session(self, user_id: int, query: str) -> RequestState:
-        """创建会话"""
-        state = RequestState(user_id, query)
-        self._sessions[user_id] = state
-        return state
-
     async def get_bound_libraries(self) -> list[LibraryBindingModel]:
         """获取绑定的媒体库"""
         bindings = await self.config_repo.get_all_library_bindings()
@@ -96,21 +69,13 @@ class RequestService:
                 valid_bindings.append(binding)
         return valid_bindings
 
-    async def start_request_flow(self, user_id: int, query: str) -> Result:
+    async def start_request_flow(self, user_id: int) -> Result:
         """开始求片流程
         Args:
             user_id: 用户 ID
-            query: 求片关键词
         Returns:
             Result: 求片流程结果
         """
-        # Check if user has permission (must be Emby user)
-        user = await self.telegram_repo.get_by_id(user_id)
-        if not user or not user.emby:
-            return Result(False, "您必须拥有已绑定的 Emby/Jellyfin 账户才能使用求片功能。")
-
-        self.create_session(user_id, query)
-
         libraries = await self.get_bound_libraries()
         if not libraries:
             return Result(False, "管理员尚未配置媒体库绑定，无法使用求片功能。")
@@ -124,58 +89,56 @@ class RequestService:
             keyboard.append([Button.inline(f"{lib.library_name} ({lib.arr_type})", data_str.encode('utf-8'))])
         keyboard.append([Button.inline("取消", b"req_cancel")])
 
-        msg = f"您正在请求: **{query}**\n请选择要请求的媒体库："
+        msg = "请选择要请求的媒体库："
+
         return Result(True, msg, keyboard=keyboard)
 
-    async def process_library_selection(self, user_id: int, library_name: str) -> Result:
-        """处理媒体库选择
-        Args:
-            user_id: 用户 ID
-            library_name: 选择的媒体库名称
-        Returns:
-            Result: 处理结果
-        """
-        #依赖会话状态
-        state = self._get_session(user_id)
 
-        if not state:
-            return Result(False, "会话已过期，请重新发起求片请求。")
 
-        state.library_name = library_name
+    async def search_media(self, library_name: str, query: str) -> Result:
+        """搜索媒体"""
+        if not query:
+            return Result(False, "搜索关键词为空。")
+
         binding = await self.config_repo.get_library_binding(library_name)
-
         results = []
-        if binding.arr_type == 'sonarr':
-            try:
-                async for series in self.sonarr_client.lookup(state.query):
-                    results.append(series)
-                    if len(results) >= 5:
-                        break
-            except RuntimeError as e:
-                return Result(False, f"搜索失败: {str(e)}")
-        elif binding.arr_type == 'radarr':
-            try:
-                async for movie in self.radarr_client.lookup(state.query):
-                    results.append(movie)
-                    if len(results) >= 5:
-                        break
-            except RuntimeError as e:
-                return Result(False, f"搜索失败: {str(e)}")
+        try:
+            if binding.arr_type == 'sonarr':
+                client = self.sonarr_client
+            elif binding.arr_type == 'radarr':
+                client = self.radarr_client
+            else:
+                return Result(False, f"不支持的媒体库类型: {binding.arr_type}")
 
-        state.results = results
+            # Both clients support lookup(term)
+            async for item in client.lookup(query):
+                results.append(item)
+                if len(results) >= 5:
+                    break
+        except RuntimeError as e:
+            return Result(False, f"配置错误: {str(e)}")
+        except Exception as e:
+            return Result(False, f"搜索失败: {str(e)}")
 
         if not results:
             return Result(False, "未找到相关结果，请尝试更换关键词。")
 
         keyboard = []
-        for idx, item in enumerate(results):
+        for item in results:
             title = item.title
             year = item.year or "未知年份"
-            # Format: req_sel_{index}_{user_id} - also embed user_id here for consistency
-            keyboard.append([Button.inline(f"{title} ({year})", f"req_sel_{idx}_{user_id}".encode('utf-8'))])
+
+            media_id = 0
+            if hasattr(item, 'tvdbId'):
+                media_id = item.tvdbId
+            elif hasattr(item, 'tmdbId'):
+                media_id = item.tmdbId
+
+            keyboard.append([Button.inline(f"{title} ({year})", f"req_sel_{media_id}".encode('utf-8'))])
+
         keyboard.append([Button.inline("取消", b"req_cancel")])
 
-        msg = f"在 **{library_name}** 中搜索 **{state.query}** 的结果："
+        msg = f"在 **{library_name}** 中搜索 **{query}** 的结果："
         return Result(True, msg, keyboard=keyboard)
 
     async def _get_media_content(self, item: Any) -> tuple[str, str, str | None]:
@@ -220,22 +183,68 @@ class RequestService:
 
         return title, overview, poster_url
 
-    async def process_media_selection(self, user_id: int, index: int) -> Result:
-        """处理媒体选择
+    async def process_media_selection(self, user_id: int, library_name: str, media_id: int) -> Result:
+        """处理媒体选择 (Stateless)
         Args:
             user_id: 用户 ID
-            index: 选择的媒体索引
+            library_name: 媒体库名称
+            media_id: 媒体 ID (TVDB ID for Sonarr, TMDB ID for Radarr)
         Returns:
             Result: 处理结果
         """
-        state = self._get_session(user_id)
-        if not state or not state.library_name:
-            return Result(False, "会话已过期，请重新发起求片请求。")
+        binding = await self.config_repo.get_library_binding(library_name)
 
-        if index >= len(state.results):
-            return Result(False, "选择无效。")
+        selected_media = None
+        id_label = ""
 
-        selected_media = state.results[index]
+        
+        search_query = ""
+        id_attr = ""
+        client = None
+
+        if binding.arr_type == 'sonarr':
+            client = self.sonarr_client
+            # 1. Check if already exists in library
+            try:
+                existing = await client.get_series_by_tvdb(media_id)
+                if existing:
+                    return Result(True, f"✅ 剧集 **{existing.title}** 已存在于媒体库中，无需请求。")
+            except Exception:
+                pass
+
+            # 2. Lookup metadata
+            search_query = f"tvdb:{media_id}"
+            id_attr = 'tvdbId'
+            id_label = "TVDB"
+
+        elif binding.arr_type == 'radarr':
+            client = self.radarr_client
+            # 1. Check if already exists in library
+            try:
+                existing = await client.get_movie_by_tmdb(media_id)
+                if existing:
+                    return Result(True, f"✅ 电影 **{existing.title}** 已存在于媒体库中，无需请求。")
+            except Exception:
+                pass
+
+            # 2. Lookup metadata
+            search_query = f"tmdb:{media_id}"
+            id_attr = 'tmdbId'
+            id_label = "TMDB"
+        else:
+            return Result(False, f"不支持的媒体库类型: {binding.arr_type}")
+        
+        # Perform lookup
+        try:
+            async for item in client.lookup(search_query):
+                if hasattr(item, id_attr) and getattr(item, id_attr) == media_id:
+                    selected_media = item
+                    break
+        except Exception as e:
+            logger.error(f"Lookup failed: {e}")
+
+        if not selected_media:
+            return Result(False, "无法获取媒体详情，或找不到该媒体信息。")
 
         topic_id_str = await self.config_repo.get_settings("requested_notify_topic")
         if not topic_id_str or topic_id_str == "未设置":
@@ -251,23 +260,7 @@ class RequestService:
         year = selected_media.year or ""
         short_overview = textwrap.shorten(overview or "无简介", width=200, placeholder="...")
 
-        binding = await self.config_repo.get_library_binding(state.library_name)
-        media_id = 0
-        id_label = ""
-
-        if binding.arr_type == 'sonarr':
-            if hasattr(selected_media, 'tvdbId') and selected_media.tvdbId:
-                media_id = selected_media.tvdbId
-                id_label = "TVDB"
-        elif binding.arr_type == 'radarr':
-            if hasattr(selected_media, 'tmdbId') and selected_media.tmdbId:
-                media_id = selected_media.tmdbId
-                id_label = "TMDB"
-
-        if not media_id:
-            return Result(False, "无法获取有效的媒体 ID，无法提交请求。")
-
-        lib_b64 = base64.b64encode(state.library_name.encode('utf-8')).decode('utf-8')
+        lib_b64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
 
         # Callback data: req_ap_{lib_b64}_{id}
         approve_data = f"req_ap_{lib_b64}_{media_id}"
@@ -285,7 +278,7 @@ class RequestService:
             
             👤 **申请人**: [{user_name}](tg://user?id={user_id})
             🎬 **标题**: {title} ({year})
-            📚 **媒体库**: {state.library_name}
+            📚 **媒体库**: {library_name}
             📝 **简介**: {short_overview}
             
             ID: {id_label}:{media_id}
@@ -296,9 +289,6 @@ class RequestService:
             await self.client.send_message(topic_id, msg, file=poster_url, buttons=buttons)
         else:
             await self.client.send_message(topic_id, msg, buttons=buttons)
-
-        # Clean up session
-        del self._sessions[user_id]
 
         return Result(True, "求片请求已提交，请等待管理员审核。")
 

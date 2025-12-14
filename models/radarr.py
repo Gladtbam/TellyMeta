@@ -127,7 +127,7 @@ class MediaInfoResource(BaseModel):
     videoDynamicRange: str | None = None
     videoDynamicRangeType: str | None = None
     resolution: str | None = None
-    runTime: int | time | None = None
+    runTime: int | str | None = None
     scanType: str | None = None
     subtitles: str | None = None
 
@@ -194,7 +194,7 @@ class MovieResource(BaseModel):
     minimumAvailability: str
     isAvailable: bool
     folderName: str | None = None
-    runtime: int
+    runtime: int | str | None = None
     cleanTitle: str | None = None
     imdbId: str | None = None
     tmdbId: int

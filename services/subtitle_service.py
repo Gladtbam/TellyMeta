@@ -39,15 +39,6 @@ class SubtitleService:
             raise RuntimeError("Radarr 客户端未配置")
         return self._radarr_client
 
-    async def get_bound_libraries(self):
-        """获取绑定的媒体库"""
-        bindings = await self.config_repo.get_all_library_bindings()
-        valid_bindings = []
-        for binding in bindings.values():
-            if binding.arr_type and binding.quality_profile_id and binding.root_folder:
-                valid_bindings.append(binding)
-        return valid_bindings
-
     async def handle_file_upload(self, user_id: int, file_path: str, file_name: str) -> Result:
         """处理字幕文件上传
         Args:
