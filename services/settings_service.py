@@ -337,13 +337,16 @@ class SettingsServices:
 
         points_enabled = self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_POINTS) == "true"
         verify_enabled = self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_VERIFICATION) == "true"
+        request_enabled = self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_REQUESTMEDIA) == "true"
 
         points_status = "✅ 开启" if points_enabled else "❌ 关闭"
         verify_status = "✅ 开启" if verify_enabled else "❌ 关闭"
+        request_status = "✅ 开启" if request_enabled else "❌ 关闭"
 
         keyboard = [
             [Button.inline(f"积分/签到功能: {points_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_POINTS}".encode('utf-8'))],
             [Button.inline(f"入群验证: {verify_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_VERIFICATION}".encode('utf-8'))],
+            [Button.inline(f"求片: {request_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_REQUESTMEDIA}".encode('utf-8'))],
             [Button.inline("« 返回管理面板", b"manage_main")]
         ]
         msg = textwrap.dedent("""\

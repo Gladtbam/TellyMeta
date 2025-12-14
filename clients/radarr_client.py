@@ -1,10 +1,13 @@
+from collections.abc import AsyncGenerator
+
 import httpx
-from pydantic import TypeAdapter
+from loguru import logger
+from pydantic import TypeAdapter, ValidationError
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
-from models.radarr import (MovieResource, QualityProfileResource,
-                           RootFolderResource)
+from models.radarr import (AddMovieOptions, MovieResource,
+                           QualityProfileResource, RootFolderResource)
 
 setting = get_settings()
 
@@ -29,19 +32,40 @@ class RadarrClient(AuthenticatedClient):
         Args:
             tmdb_id (int): TMDB 电影 ID。
         Returns:
-            dict | None: 返回电影信息的字典，如果查询失败则返回 None。
+            MovieResource | None: 返回电影信息，如果查询失败则返回 None。
         """
         url = "/api/v3/movie/lookup/tmdb"
         params = {'tmdbId': tmdb_id}
         response = await self.get(url, params=params, response_model=MovieResource)
         return response if isinstance(response, MovieResource) else None
 
+    async def lookup(self, term: str) -> AsyncGenerator[MovieResource, None]:
+        """根据电影名称查找 Radarr 中的电影信息。
+        Args:
+            term (str): 电影名称。
+        Returns:
+            AsyncGenerator[MovieResource, None]: 返回电影信息的生成器。
+        """
+        url = "/api/v3/movie/lookup"
+        params = {'term': term}
+        response = await self.get(url, params=params)
+        if response is None:
+            return
+
+        try:
+            movies = TypeAdapter(list[MovieResource]).validate_python(response.json())
+            for movie in movies:
+                yield movie
+        except ValidationError as e:
+            logger.error("无法解析电影查找响应：{}", repr(e.errors()))
+            return
+
     async def get_movie_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
         """根据 TMDB ID 获取 Radarr 中的电影信息。
         Args:
             tmdb_id (int): TMDB 电影 ID。
         Returns:
-            dict | None: 返回电影信息的字典，如果查询失败则返回 None。
+            MovieResource | None: 返回电影信息，如果查询失败则返回 None。
         """
         url = "/api/v3/movie"
         params = {'tmdbId': tmdb_id}
@@ -53,30 +77,51 @@ class RadarrClient(AuthenticatedClient):
         Args:
             movie_resource (MovieResource): 要添加的电影信息。
         Returns:
-            dict | None: 返回添加后的电影信息的字典，如果添加失败则返回 None。
+            MovieResource | None: 返回添加后的电影信息，如果添加失败则返回 None。
         """
         url = "/api/v3/movie"
-        response = await self.post(url, json=movie_resource.model_dump(), response_model=MovieResource)
+        movie_resource.monitored = True
+        movie_resource.minimumAvailability = "released"
+        movie_resource.addOptions = AddMovieOptions(
+            ignoreEpisodesWithFiles = False,
+            ignoreEpisodesWithoutFiles = False,
+            monitor = "movieOnly",
+            searchForMovie = True,
+            addMethod = "manual"
+        )
+        response = await self.post(url,
+            json=movie_resource.model_dump(exclude_unset=True),
+            response_model=MovieResource)
         return response if isinstance(response, MovieResource) else None
 
-    async def get_root_folders(self) -> None | list[RootFolderResource]:
+    async def get_root_folders(self) -> list[RootFolderResource] | None:
         """获取 Radarr 的根文件夹列表。
         Returns:
-            list[str] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
+            list[RootFolderResource] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/rootfolder"
         response = await self.get(url)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
+
+        try:
+            return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
+        except ValidationError as e:
+            logger.error("无法解析根文件夹响应：{}", repr(e.errors()))
+            return None
 
     async def get_quality_profiles(self) -> list[QualityProfileResource] | None:
         """获取 Radarr 的质量配置文件列表。
         Returns:
-            list[dict] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
+            list[QualityProfileResource] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/qualityprofile"
         response = await self.get(url)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())
+
+        try:
+            return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())
+        except ValidationError as e:
+            logger.error("无法解析质量配置文件响应：{}", repr(e.errors()))
+            return None

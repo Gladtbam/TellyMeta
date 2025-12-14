@@ -58,7 +58,7 @@ class SeriesStatisticsResource(BaseModel):
 
 class SeriesResource(BaseModel):
     """Sonarr 剧集模型"""
-    id: int
+    id: int | None = None
     title: str | None = None
     alternateTitles: list[AlternativeTitleResource] = Field(default_factory=list)
     sortTitle: str | None = None
@@ -102,7 +102,7 @@ class SeriesResource(BaseModel):
     ratings: Ratings | None = None
     statistics: SeriesStatisticsResource | None = None
     episodesChanged: bool | None = None
-    languageProfileId: int | None = None # deprecated
+    # languageProfileId: int | None = None # deprecated
 
     @field_validator('genres', mode='before')
     @classmethod

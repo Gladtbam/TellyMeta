@@ -1,10 +1,13 @@
+from collections.abc import AsyncGenerator
+
 import httpx
-from pydantic import TypeAdapter
+from loguru import logger
+from pydantic import TypeAdapter, ValidationError
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
 from models.radarr import QualityProfileResource, RootFolderResource
-from models.sonarr import EpisodeResource, SeriesResource
+from models.sonarr import AddSeriesOptions, EpisodeResource, SeriesResource
 
 setting = get_settings()
 
@@ -24,40 +27,53 @@ class SonarrClient(AuthenticatedClient):
             "Content-Type": "application/json"
         }
 
-    async def lookup_by_tvdb(self, tvdb_id: int) -> SeriesResource | None:
-        """根据 TVDB ID 查找 The TVDB 获取的剧集信息。
+    async def lookup(self, term: str) -> AsyncGenerator[SeriesResource, None]:
+        """根据电视剧名称查找 The TVDB 获取的剧集信息。
         Args:
-            tvdb_id (int): TVDB 剧集 ID。
+            term (str): 电视剧名称。
         Returns:
-            dict | None: 返回剧集信息的字典，如果查询失败则返回 None。
+            AsyncGenerator[SeriesResource, None]: 返回剧集信息的生成器。
         """
-        url = "/api/v3/series/lookup/tvdb"
-        params = {'term': f'tvdb:{tvdb_id}'}
+        url = "/api/v3/series/lookup"
+        params = {'term': term}
         response = await self.get(url, params=params)
-        if not response:
-            return None
-        return TypeAdapter(list[SeriesResource]).validate_python(response.json())[0]
+        if response is None:
+            return
+
+        try:
+            series = TypeAdapter(list[SeriesResource]).validate_python(response.json())
+            for serie in series:
+                yield serie
+        except ValidationError as e:
+            logger.error("无法解析剧集查找响应：{}", repr(e.errors()))
+            return
 
     async def get_series_by_tvdb(self, tvdb_id: int) -> SeriesResource | None:
         """根据 TVDB ID 获取 Sonarr 中的剧集信息。
         Args:
             tvdb_id (int): TVDB 剧集 ID。
         Returns:
-            dict | None: 返回剧集信息的字典，如果查询失败则返回 None。
+            SeriesResource | None: 返回剧集信息，如果查询失败则返回 None。
         """
         url = "/api/v3/series"
         params = {'tvdbId': tvdb_id, 'includeSeasonImages': 'true'}
         response = await self.get(url, params=params)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[SeriesResource]).validate_python(response.json())[0]
+
+        try:
+            series = TypeAdapter(list[SeriesResource]).validate_python(response.json())
+            return series[0] if series else None
+        except ValidationError as e:
+            logger.error("无法解析剧集查找响应：{}", repr(e.errors()))
+            return None
 
     async def get_episode_by_series_id(self, series_id: int) -> list[EpisodeResource] | None:
         """根据剧集 ID 获取 Sonarr 中的剧集的所有剧集信息。
         Args:
             series_id (int): 剧集 ID。
         Returns:
-            list[dict] | None: 返回剧集的所有剧集信息的列表，如果查询失败则返回 None。
+            list[EpisodeResource] | None: 返回剧集的所有剧集信息的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/episode"
         params = {
@@ -67,39 +83,65 @@ class SonarrClient(AuthenticatedClient):
             'includeImages': 'true'
             }
         response = await self.get(url, params=params)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[EpisodeResource]).validate_python(response.json())
+
+        try:
+            return TypeAdapter(list[EpisodeResource]).validate_python(response.json())
+        except ValidationError as e:
+            logger.error("无法解析剧集查找响应：{}", repr(e.errors()))
+            return None
 
     async def post_series(self, series_resource: SeriesResource) -> SeriesResource | None:
         """添加新剧集到 Sonarr。
         Args:
             series_data (dict): 包含剧集信息的字典。
         Returns:
-            dict | None: 返回添加的剧集信息的字典，如果添加失败则返回 None。
+            SeriesResource | None: 返回添加的剧集信息，如果添加失败则返回 None。
         """
         url = "/api/v3/series"
-        response = await self.post(url, json=series_resource.model_dump(), response_model=SeriesResource)
+        series_resource.addOptions = AddSeriesOptions(
+            ignoreEpisodesWithFiles = True,
+            ignoreEpisodesWithoutFiles = False,
+            monitor = "all",
+            searchForMissingEpisodes = True,
+            searchForCutoffUnmetEpisodes = False
+        )
+        series_resource.monitored = True
+        series_resource.seasonFolder = True
+        response = await self.post(url,
+            json=series_resource.model_dump(exclude_unset=True),
+            response_model=SeriesResource)
         return response if isinstance(response, SeriesResource) else None
 
-    async def get_root_folders(self) -> None | list[RootFolderResource]:
+    async def get_root_folders(self) -> list[RootFolderResource] | None:
         """获取 Sonarr 的根文件夹列表。
         Returns:
-            list[str] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
+            list[RootFolderResource] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/rootfolder"
         response = await self.get(url)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
 
-    async def get_quality_profiles(self) -> None | list[QualityProfileResource]:
+        try:
+            return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
+        except ValidationError as e:
+            logger.error("无法解析根文件夹响应：{}", repr(e.errors()))
+            return None
+
+    async def get_quality_profiles(self) -> list[QualityProfileResource] | None:
         """获取 Sonarr 的质量配置文件列表。
         Returns:
-            list[dict] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
+            list[QualityProfileResource] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/qualityprofile"
         response = await self.get(url)
-        if not response:
+        if response is None:
             return None
-        return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())
+
+        try:
+            return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())
+        except ValidationError as e:
+            logger.error("无法解析质量配置文件响应：{}", repr(e.errors()))
+            return None

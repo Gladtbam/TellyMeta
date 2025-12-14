@@ -12,7 +12,7 @@ class Languages(BaseModel):
 
 class AlternativeTitleResource(BaseModel):
     """Radarr 电影别名模型"""
-    id: int
+    id: int | None = None
     sourceType: str
     movieMetadataId: int
     title: str | None = None
@@ -164,7 +164,7 @@ class MovieStatisticsResource(BaseModel):
 
 class MovieResource(BaseModel):
     """Radarr 电影模型"""
-    id: int
+    id: int | None = None
     title: str | None = None
     originalTitle: str | None = None
     originalLanguage: Languages | None = None

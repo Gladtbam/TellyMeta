@@ -10,6 +10,7 @@ class ConfigRepository:
     # System Feature Keys
     KEY_ENABLE_POINTS = "system:enable_points"
     KEY_ENABLE_VERIFICATION = "system:enable_verification"
+    KEY_ENABLE_REQUESTMEDIA = "system:enable_requestmedia"
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -42,7 +43,8 @@ class ConfigRepository:
         # 用户之前将它们视为虚拟的，但它们可以是持久的
         persistent_defaults.update({
             cls.KEY_ENABLE_POINTS: "true",
-            cls.KEY_ENABLE_VERIFICATION: "true"
+            cls.KEY_ENABLE_VERIFICATION: "true",
+            cls.KEY_ENABLE_REQUESTMEDIA: "true"
         })
 
         new_items = []

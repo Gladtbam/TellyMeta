@@ -15,6 +15,7 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
+from services.request_service import RequestService
 from services.score_service import MessageTrackingState, ScoreService
 from services.settings_service import SettingsServices
 from services.user_service import Result, UserService
@@ -452,7 +453,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
-        'kick', 'ban'
+        'kick', 'ban', 'request'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore
@@ -484,7 +485,7 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     user_id = event.sender_id
     try:
-        args_str = event.pattern_match.group(1).strip() # type: ignore
+        args_str = event.pattern_match.group(2).strip() # type: ignore
     except (IndexError, AttributeError):
         args_str = None
 
@@ -514,7 +515,7 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
         return
 
     try:
-        args_str = event.pattern_match.group(1).strip() # type: ignore
+        args_str = event.pattern_match.group(2).strip() # type: ignore
     except (IndexError, AttributeError):
         await safe_reply(event, "请在命令后添加激活码，例如: /code YOUR_CODE")
         return
@@ -597,6 +598,7 @@ async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session
     await safe_respond_keyboard(event, result.message, result.keyboard, 600)
 
     await safe_respond_keyboard(event, result.message, result.keyboard, 600)
+    logger.info("管理员 {} 请求设置面板", event.sender_id)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_system_(.+)'))
 @provide_db_session
@@ -652,7 +654,7 @@ async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     panel_result = await settings_service.get_admins_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^notify_(sonarr|radarr|media)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^notify_(sonarr|radarr|media|requested)'))
 @provide_db_session
 async def notify_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """通知设置处理器
@@ -664,7 +666,7 @@ async def notify_setting_handler(app: FastAPI, event: events.CallbackQuery.Event
     result = await settings_service.get_notification_keyboard(setting_type)
     await event.edit(result.message, buttons=result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_notify_(sonarr|radarr|media)_(-?\\d+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_notify_(sonarr|radarr|media|requested)_(-?\\d+)'))
 @provide_db_session
 async def set_notify_topic_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """设置通知话题处理器
@@ -744,3 +746,116 @@ async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.
     # 刷新媒体库绑定面板
     binding_result = await settings_service.get_library_binding_panel(library_name)
     await event.edit(binding_result.message, buttons=binding_result.keyboard)
+
+@TelethonClientWarper.handler(events.NewMessage(
+    pattern=fr'^/request({settings.telegram_bot_name})?(\s.+)?$',
+    incoming=True
+    ))
+@provide_db_session
+async def request_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+    """求片处理器
+    处理用户求片请求
+    """
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_REQUESTMEDIA, "true") != "true":
+        return
+
+    if not event.is_private:
+        await safe_reply(event, "为保护隐私和避免刷屏，请**私聊**我使用求片功能。")
+        return
+
+    try:
+        query = event.pattern_match.group(2).strip() # type: ignore
+        logger.info("用户 {} 请求求片: {}", event.sender_id, query)
+    except (IndexError, AttributeError):
+        logger.warning("求片命令格式错误")
+        query = None
+
+    if not query:
+        await safe_reply(event, "请在命令后添加您想搜索的电视剧或电影名称，例如: `/request 蝙蝠侠`")
+        return
+
+    request_service = RequestService(session, app)
+    result = await request_service.start_request_flow(event.sender_id, query)
+
+    if result.keyboard:
+        await safe_respond_keyboard(event, result.message, result.keyboard)
+    else:
+        await safe_reply(event, result.message)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_lib_([^_]+)_(\\d+)'))
+@provide_db_session
+async def request_library_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """求片-媒体库选择处理器"""
+    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    user_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
+
+    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+
+    request_service = RequestService(session, app)
+    # Give user a feedback that we are searching
+    await event.answer("正在搜索中，请稍候...", alert=False)
+
+    result = await request_service.process_library_selection(user_id, library_name)
+
+    if result.success and result.keyboard:
+        await event.edit(result.message, buttons=result.keyboard)
+    else:
+         # If failed (e.g. session expired or no results), just edit text or answer
+        if result.keyboard:
+            await event.edit(result.message, buttons=result.keyboard)
+        else:
+            await event.answer(result.message, alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_sel_(\\d+)_(\\d+)'))
+@provide_db_session
+async def request_media_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """求片-媒体选择处理器"""
+    index = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+    user_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
+
+    request_service = RequestService(session, app)
+    result = await request_service.process_media_selection(user_id, index)
+
+    if result.success:
+        await event.edit(result.message, buttons=None)
+    else:
+        await event.answer(result.message, alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
+async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
+    """求片-取消处理器"""
+    await event.delete()
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_ap_([^_]+)_(\\d+)'))
+@provide_db_session
+@require_admin
+async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """求片-批准处理器"""
+    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    media_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
+
+    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+
+    request_service = RequestService(session, app)
+    # Give admin immediate feedback
+    await event.answer("正在添加中...", alert=False)
+
+    result = await request_service.handle_approval(library_name, media_id)
+
+    if result.success:
+        # Edit the message to show approved status and remove buttons
+        original_text = (await event.get_message()).text  # type: ignore
+        new_text = original_text + f"\n\n✅ **已批准**: {result.message}"
+        await event.edit(new_text, buttons=None)
+    else:
+        await event.answer(result.message, alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_deny_(\\d+)'))
+@require_admin
+async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
+    """求片-拒绝处理器"""
+    # user_id = int(event.pattern_match.group(1).decode('utf-8'))
+    # Optional: Notify user
+    original_text = (await event.get_message()).text # type: ignore
+    new_text = original_text + "\n\n❌ **已拒绝**"
+    await event.edit(new_text, buttons=None)

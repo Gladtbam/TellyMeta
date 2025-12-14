@@ -2,20 +2,22 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from loguru import logger
 from telethon import TelegramClient, errors
 from telethon.errors.rpcerrorlist import (ChannelInvalidError,
-                                          ChannelPublicGroupNaError, PeerIdInvalidError,
-                                          UserIdInvalidError, UserNotParticipantError)
+                                          ChannelPublicGroupNaError,
+                                          PeerIdInvalidError,
+                                          UserIdInvalidError,
+                                          UserNotParticipantError)
 from telethon.events.common import EventBuilder
 from telethon.tl import functions
 from telethon.tl.types import (Channel, ChannelParticipantCreator,
                                ChannelParticipantsAdmins, Chat,
                                ChatBannedRights, ForumTopic, ForumTopicDeleted,
-                               Message, User)
+                               KeyboardButtonCallback, Message, User)
 from telethon.tl.types.messages import ChatFull, ForumTopics
 
 from core.config import get_settings
@@ -193,7 +195,13 @@ class TelethonClientWarper:
             logger.error("请求频道 ID：{} 时超时，无法获取主题：{}", self.chat_id, e)
             return self.chat_id
 
-    async def send_message(self, chat_id: str | int, message: str) -> Message:
+    async def send_message(self,
+        chat_id: str | int,
+        message: str,
+        file: Any = None,
+        buttons: list[list[KeyboardButtonCallback]] | None = None,
+        reply_to: int | Message | None = None
+    ) -> Message:
         """发送消息到指定的聊天ID
         Args:
             message (str): 要发送的消息内容
@@ -202,7 +210,7 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            msg = await self.client.send_message(chat_id, message)
+            msg = await self.client.send_message(chat_id, message, file=file, buttons=buttons, reply_to=reply_to) # type: ignore
             return msg
         except errors.FloodWaitError as e:
             logger.error("Failed to send message: {}", e)
