@@ -564,10 +564,10 @@ async def create_code_confirm_handler(app: FastAPI, event: events.CallbackQuery.
 
     await safe_respond(event, result.message)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|nfsw|forget_password)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|nfsw|forget_password|query_renew)'))
 @provide_db_session
 async def nfsw_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """续期/NFSW/忘记密码处理器
+    """续期/NFSW/忘记密码处理器/查询续期积分
     处理用户点击续期/NFSW/忘记密码按钮的事件"""
     user_id: Any = event.sender_id
     action = event.pattern_match.group(1).decode('utf-8') # type: ignore
@@ -579,8 +579,12 @@ async def nfsw_handler(app: FastAPI, event: events.CallbackQuery.Event, session:
         result = await account_service.toggle_nsfw_policy(user_id)
     elif action == 'forget_password':
         result = await account_service.forget_password(user_id)
+    elif action == 'query_renew':
+        telegram_repo = TelegramRepository(session)
+        renew_score = int(await telegram_repo.get_renew_score())
+        result = Result(True, f"当前续期积分为 {renew_score}")
     else:
-        result  = Result(False, "未知操作。")
+        result = Result(False, "未知操作。")
 
     await safe_respond(event, result.message)
 
