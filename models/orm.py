@@ -22,25 +22,25 @@ class TelegramUser(Base):
     warning_count: Mapped[int] = mapped_column(server_default=text('0'), nullable=False)
     last_checkin: Mapped[datetime] = mapped_column(default=datetime(1970, 1, 1), nullable=False)
 
-    emby: Mapped[Emby | None] = relationship(
+    media_user: Mapped[MediaUser | None] = relationship(
         back_populates='telegram_user',
         uselist=False,
         cascade='all, delete-orphan',
         lazy='selectin'
     )
 
-class Emby(Base):
-    """Emby用户模型"""
-    __tablename__ = 'emby'
+class MediaUser(Base):
+    """Media 用户模型"""
+    __tablename__ = 'media_user'
 
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey('telegram_users.id'), primary_key=True)
-    emby_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    emby_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    media_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    media_name: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     is_banned: Mapped[bool] = mapped_column(server_default=text('false'), nullable=False)
     delete_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    telegram_user: Mapped[TelegramUser] = relationship(back_populates='emby')
+    telegram_user: Mapped[TelegramUser] = relationship(back_populates='media_user')
 
 class ActiveCode(Base):
     """激活码模型"""

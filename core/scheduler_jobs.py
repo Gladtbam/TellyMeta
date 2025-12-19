@@ -7,7 +7,7 @@ from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
-from repositories.emby_repo import EmbyRepository
+from repositories.media_repo import MediaRepository
 from services.media_service import MediaService
 from services.score_service import ScoreService
 
@@ -20,18 +20,18 @@ async def ban_expired_users() -> None:
     from main import app  # 避免循环导入
     async with async_session() as session:
         try:
-            emby_repo = EmbyRepository(session)
+            media_repo = MediaRepository(session)
             media_service: MediaService = app.state.media_client
 
-            users = await emby_repo.find_expired_for_ban()
+            users = await media_repo.find_expired_for_ban()
             if not users:
                 logger.info("没有需要封禁的用户。")
                 return
 
             for user in users:
-                logger.info("封禁用户: {} (ID: {})", user.id, user.emby_id)
+                logger.info("封禁用户: {} (ID: {})", user.id, user.media_id)
                 await media_service.ban_or_unban(
-                    user_id=user.emby_id,
+                    user_id=user.media_id,
                     is_ban=True
                 )
         except Exception as e:
@@ -47,19 +47,19 @@ async def delete_expired_banned_users() -> None:
     from main import app  # 避免循环导入
     async with async_session() as session:
         try:
-            emby_repo = EmbyRepository(session)
+            media_repo = MediaRepository(session)
             media_service: MediaService = app.state.media_client
 
-            users = await emby_repo.find_ban()
+            users = await media_repo.find_ban()
             if not users:
                 logger.info("没有需要删除的封禁用户。")
                 return
 
             for user in users:
-                await media_service.delete_user(user.emby_id)
+                await media_service.delete_user(user.media_id)
 
         except HTTPError:
-            logger.error("删除封禁用户: {} (ID: {})", user.id, user.emby_id) # type: ignore
+            logger.error("删除封禁用户: {} (ID: {})", user.id, user.media_id) # type: ignore
         except Exception as e:
             logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()

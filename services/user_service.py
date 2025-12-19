@@ -9,12 +9,14 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button
 
+from core.config import get_settings
 from models.orm import TelegramUser
 from repositories.code_repo import CodeRepository
-from repositories.emby_repo import EmbyRepository
+from repositories.media_repo import MediaRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 
+settings = get_settings()
 
 @dataclass
 class Result:
@@ -28,7 +30,7 @@ class UserService:
     def __init__(self, session: AsyncSession, media_service: MediaService) -> None:
         self.session = session
         self.telegram_repo = TelegramRepository(session)
-        self.emby_repo = EmbyRepository(session)
+        self.media_repo = MediaRepository(session)
         self.code_repo = CodeRepository(session)
         self.media_service = media_service
 
@@ -82,21 +84,21 @@ class UserService:
 
         if result in ['halfcode', 'weekcode', 'daycode']:
             days = {'halfcode': 15, 'weekcode': 7, 'daycode': 1}[result]
-            if user.emby:
-                await self.emby_repo.extend_expiry(user.emby, days)
+            if user.media_user:
+                await self.media_repo.extend_expiry(user.media_user, days)
                 await self.telegram_repo.update_checkin(user.id, 0)
-                await self.media_service.ban_or_unban(user.emby.emby_id, is_ban=False)
+                await self.media_service.ban_or_unban(user.media_user.media_id, is_ban=False)
                 return Result(
                     success=True,
-                    message=f"🎉 **恭喜中奖！** 您的 Emby 账户已延长 **{days}** 天有效期！"
+                    message=f"🎉 **恭喜中奖！** 您的 {settings.media_server.capitalize()} 账户已延长 **{days}** 天有效期！"
                 )
-            else:
-                score = int(current_renew_score / 30 * days)
-                await self.telegram_repo.update_checkin(user.id, score)
-                return Result(
-                    success=True,
-                    message=f"🎉 **恭喜中奖！** 由于您尚未绑定 Emby 账户，已已自动折算为 **{score}** 积分！"
-                )
+
+            score = int(current_renew_score / 30 * days)
+            await self.telegram_repo.update_checkin(user.id, score)
+            return Result(
+                success=True,
+                message=f"🎉 **恭喜中奖！** 由于您尚未绑定 {settings.media_server.capitalize()} 账户，已已自动折算为 **{score}** 积分！"
+            )
 
         if result == 'double':
             score = abs(randint(-2, 5)) * 2
@@ -107,7 +109,7 @@ class UserService:
         return Result(success=True, message="签到成功！您获得了保底 **1** 积分。")
 
     async def get_user_info(self, user_id: int) -> Result:
-        """获取用户信息，包括 Emby 账户信息。
+        """获取用户信息，包括 Media 账户信息。
         
         Args:
             user_id (int): 用户的 Telegram ID。
@@ -124,13 +126,13 @@ class UserService:
             **警告次数**: `{user.warning_count}`
         """)
 
-        if user.emby:
+        if user.media_user:
             message += textwrap.dedent(f"""\
-                **Emby 用户名**: `{user.emby.emby_name}`
-                **Emby 用户 ID**: `{user.emby.emby_id}`
-                **Emby 过期时间**: `{user.emby.expires_at}`
-                **Emby 删除时间**: `{user.emby.delete_at if user.emby.delete_at else '未设置'}`
-                **Emby 状态**: `{'封禁' if user.emby.is_banned else '正常'}`
+                **{settings.media_server.capitalize()} 用户名**: `{user.media_user.media_name}`
+                **{settings.media_server.capitalize()} 用户 ID**: `{user.media_user.media_id}`
+                **{settings.media_server.capitalize()} 过期时间**: `{user.media_user.expires_at}`
+                **{settings.media_server.capitalize()} 删除时间**: `{user.media_user.delete_at if user.media_user.delete_at else '未设置'}`
+                **{settings.media_server.capitalize()} 状态**: `{'封禁' if user.media_user.is_banned else '正常'}`
             """)
 
         button_layout = [
@@ -143,14 +145,14 @@ class UserService:
             for row in button_layout
         ]
 
-        return Result(success=True, message=message, keyboard=keyboard if user.emby else None)
+        return Result(success=True, message=message, keyboard=keyboard if user.media_user else None)
 
-    async def delete_account(self, user_id: int, account_type: Literal['emby', 'tg', 'both']) -> Result:
-        """删除用户账户，包括 Emby 账户和 Telegram 账户（可选）。
+    async def delete_account(self, user_id: int, account_type: Literal['media', 'tg', 'both']) -> Result:
+        """删除用户账户，包括 Media 账户和 Telegram 账户（可选）。
         
         Args:
             user_id (int): 用户的 Telegram ID。
-            account_type (Literal['emby', 'tg', 'both']): 要删除的账户类型。
+            account_type (Literal['media', 'tg', 'both']): 要删除的账户类型。
         """
         user = await self.telegram_repo.get_by_id(user_id)
         if not user:
@@ -158,10 +160,10 @@ class UserService:
 
         message = []
         try:
-            if account_type in ['emby', 'both'] and user.emby:
-                await self.media_service.delete_user(user.emby.emby_id)
-                await self.emby_repo.delete(user.emby)
-                message.append("Emby 账户已删除。")
+            if account_type in ['media', 'both'] and user.media_user:
+                await self.media_service.delete_user(user.media_user.media_id)
+                await self.media_repo.delete(user.media_user)
+                message.append(f"{settings.media_server.capitalize()} 账户已删除。")
 
             if account_type in ['tg', 'both']:
                 await self.telegram_repo.delete_by_id(user_id)
@@ -169,5 +171,5 @@ class UserService:
 
             return Result(True, " ".join(message))
         except HTTPError:
-            logger.error("删除账户失败{}：{}", user_id, user.emby)
+            logger.error("删除账户失败{}：{}", user_id, user.media_user)
             return Result(False, " ".join(message))

@@ -85,12 +85,12 @@ async def lifespan(app: FastAPI):
     else:
         app.state.radarr_client = None
 
-    if settings.media_server == 'emby':
+    if settings.media_server.lower() == 'emby':
         app.state.media_client = EmbyClient(
             client=httpx.AsyncClient(base_url=f'{settings.media_server_url}/emby'),
             api_key=settings.media_api_key
         )
-    elif settings.media_server == 'jellyfin':
+    elif settings.media_server.lower() == 'jellyfin':
         app.state.media_client = JellyfinClient(
             client=httpx.AsyncClient(base_url=f'{settings.media_server_url}'),
             api_key=settings.media_api_key

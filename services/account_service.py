@@ -8,13 +8,13 @@ from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
+from models.protocols import User
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import ConfigRepository
-from repositories.emby_repo import EmbyRepository
+from repositories.media_repo import MediaRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
-from models.protocols import User
 
 settings = get_settings()
 
@@ -25,7 +25,7 @@ class AccountService:
         self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)
         self.code_repo = CodeRepository(session)
-        self.emby_repo = EmbyRepository(session)
+        self.media_repo = MediaRepository(session)
 
     async def set_registration_mode(self, mode: str)  -> Result:
         """设置注册模式
@@ -91,7 +91,7 @@ class AccountService:
         if not username:
             return Result(False, "请先设置 Telegram 用户名，然后再尝试注册。")
 
-        if await self.emby_repo.get_by_id(user_id):
+        if await self.media_repo.get_by_id(user_id):
             return Result(False, "您已经注册过了，无需重复注册。")
 
         mode = await self.config_repo.get_settings('registration_mode', 'default')
@@ -102,10 +102,14 @@ class AccountService:
             if count > 0:
                 can_register = True
                 await self.config_repo.set_settings('registration_count_limit', str(count - 1))
+            else:
+                await self._set_closed()
         elif mode == 'time':
             timestamp = float(await self.config_repo.get_settings('registration_time_limit', '0') or '0')
             if timestamp > datetime.now().timestamp():
                 can_register = True
+            else:
+                await self._set_closed()
         else:
             user = await self.telegram_repo.get_or_create(user_id)
             register_score = int(await self.telegram_repo.get_renew_score())
@@ -117,8 +121,8 @@ class AccountService:
             return Result(False, "注册失败，当前未开放注册或您不满足注册条件。")
 
         try:
-            emby, pw = await self.media_service.create(username)
-            if not emby:
+            media, pw = await self.media_service.create(username)
+            if media is None:
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
             blocked_media_folders = await self.config_repo.get_settings('nsfw_library', '')
@@ -128,9 +132,9 @@ class AccountService:
                 blocked_media_folders = []
 
             policy = {"BlockedMediaFolders": blocked_media_folders}
-            await self.media_service.update_policy(emby.Id, policy, is_none=True)
+            await self.media_service.update_policy(media.Id, policy, is_none=True)
 
-            await self.emby_repo.create(user_id, emby.Id, username)
+            await self.media_repo.create(user_id, media.Id, username)
 
             return Result(True, textwrap.dedent(f"""\
                 注册成功！您的账户信息如下：
@@ -149,16 +153,16 @@ class AccountService:
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        emby_user = await self.emby_repo.get_by_id(user_id)
-        if not emby_user:
+        media_user = await self.media_repo.get_by_id(user_id)
+        if media_user is None:
             return Result(False, "您尚未注册，请先注册后再续期。")
 
-        emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not isinstance(emby_info, User):
+        media_info = await self.media_service.get_user_info(media_user.media_id)
+        if not isinstance(media_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
-        if emby_user.expires_at > datetime.now() + timedelta(days=7):
-            return Result(False, f"续期失败，您的账户有效期还有 **{(emby_user.expires_at - datetime.now()).days}** 天，无需续期。")
+        if media_user.expires_at > datetime.now() + timedelta(days=7):
+            return Result(False, f"续期失败，您的账户有效期还有 **{(media_user.expires_at - datetime.now()).days}** 天，无需续期。")
 
         if use_score:
             user = await self.telegram_repo.get_or_create(user_id)
@@ -167,11 +171,11 @@ class AccountService:
                 return Result(False, f"续期失败，您的积分不足，续期需要 **{renew_score}** 积分。")
             await self.telegram_repo.update_score(user_id, -renew_score)
 
-        emby_user = await self.emby_repo.extend_expiry(emby_user, 30)
-        if emby_info.Policy.IsDisabled:
-            await self.media_service.ban_or_unban(emby_user.emby_id, is_ban=False)
+        media_user = await self.media_repo.extend_expiry(media_user, 30)
+        if media_info.Policy.IsDisabled:
+            await self.media_service.ban_or_unban(media_user.media_id, is_ban=False)
 
-        return Result(True, f"续期成功，您的账户已延长至 **{emby_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。")
+        return Result(True, f"续期成功，您的账户已延长至 **{media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。")
 
     async def redeem_code(self, user_id: int, username: str | None | Literal[False], code_str: str) -> Result:
         """使用注册码或续期码注册或续期
@@ -231,12 +235,12 @@ class AccountService:
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        emby_user = await self.emby_repo.get_by_id(user_id)
-        if not emby_user:
+        media_user = await self.media_repo.get_by_id(user_id)
+        if media_user is None:
             return Result(False, "您尚未注册，请先注册后再设置。")
 
-        emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not isinstance(emby_info, User):
+        media_info = await self.media_service.get_user_info(media_user.media_id)
+        if not isinstance(media_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
         nsfw = await self.config_repo.get_settings('nsfw_library', '')
@@ -244,7 +248,7 @@ class AccountService:
             return Result(False, "管理员尚未设置 NSFW 过滤标签，无法切换 NSFW 策略。")
         nsfw = nsfw.split('|')
 
-        blocked_media_folders = emby_info.Policy.BlockedMediaFolders
+        blocked_media_folders = media_info.Policy.BlockedMediaFolders
         if nsfw in blocked_media_folders:
             blocked_media_folders = []
             action = '解除'
@@ -252,11 +256,11 @@ class AccountService:
             blocked_media_folders = nsfw
             action = '设置'
 
-        policy = emby_info.Policy.model_dump()
+        policy = media_info.Policy.model_dump()
         policy['BlockedMediaFolders'] = blocked_media_folders
 
         try:
-            await self.media_service.update_policy(emby_user.emby_id, policy)
+            await self.media_service.update_policy(media_user.media_id, policy)
 
             return Result(True, textwrap.dedent(f"""\
                 操作成功，已为您**{action}** NSFW 策略。
@@ -271,16 +275,16 @@ class AccountService:
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        emby_user = await self.emby_repo.get_by_id(user_id)
-        if not emby_user:
+        media_user = await self.media_repo.get_by_id(user_id)
+        if media_user is None:
             return Result(False, "您尚未注册，请先注册后再重置密码。")
 
-        emby_info = await self.media_service.get_user_info(emby_user.emby_id)
-        if not isinstance(emby_info, User):
+        media_info = await self.media_service.get_user_info(media_user.media_id)
+        if not isinstance(media_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
         try:
-            passwd = await self.media_service.post_password(emby_user.emby_id)
+            passwd = await self.media_service.post_password(media_user.media_id)
             return Result(True, textwrap.dedent(f"""\
                 密码重置成功！您的新密码是: `{passwd}`
                 请尽快登录并修改密码，祝您观影愉快！
