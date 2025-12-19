@@ -586,6 +586,9 @@ async def nfsw_handler(app: FastAPI, event: events.CallbackQuery.Event, session:
     else:
         result = Result(False, "未知操作。")
 
+    if action == 'forget_password':
+        await event.respond(result.message, parse_mode='markdown')
+        return
     await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
