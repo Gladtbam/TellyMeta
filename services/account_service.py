@@ -3,6 +3,8 @@ import textwrap
 from datetime import datetime, timedelta
 from typing import Literal
 
+from httpx import HTTPError
+from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
@@ -114,29 +116,33 @@ class AccountService:
         if not can_register:
             return Result(False, "注册失败，当前未开放注册或您不满足注册条件。")
 
-        emby, pw = await self.media_service.create(username)
-        if not emby:
-            return Result(False, "注册失败，无法创建账户，请联系管理员。")
+        try:
+            emby, pw = await self.media_service.create(username)
+            if not emby:
+                return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-        blocked_tags = await self.config_repo.get_settings('nsfw_library', '')
-        if blocked_tags:
-            blocked_tags = blocked_tags.split('|')
-        else:
-            blocked_tags = []
+            blocked_media_folders = await self.config_repo.get_settings('nsfw_library', '')
+            if blocked_media_folders:
+                blocked_media_folders = blocked_media_folders.split('|')
+            else:
+                blocked_media_folders = []
 
-        policy = {"BlockedTags": blocked_tags}
-        await self.media_service.update_policy(emby.Id, policy, is_none=True)
+            policy = {"BlockedMediaFolders": blocked_media_folders}
+            await self.media_service.update_policy(emby.Id, policy, is_none=True)
 
-        await self.emby_repo.create(user_id, emby.Id, username)
+            await self.emby_repo.create(user_id, emby.Id, username)
 
-        return Result(True, textwrap.dedent(f"""\
-            注册成功！您的账户信息如下：
-            - 服务器地址: `{settings.media_server_url}`
-            - 用户名: `{username}`
-            - 密码: `{pw}`
+            return Result(True, textwrap.dedent(f"""\
+                注册成功！您的账户信息如下：
+                - 服务器地址: `{settings.media_server_url}`
+                - 用户名: `{username}`
+                - 密码: `{pw}`
 
-            请尽快登录并修改密码，祝您观影愉快！
-        """))
+                请尽快登录并修改密码，祝您观影愉快！
+            """))
+        except HTTPError:
+            logger.error("{} 注册失败", user_id)
+            return Result(False, "注册失败，请联系管理员")
 
     async def renew(self, user_id: int, use_score: bool) -> Result:
         """续期
@@ -238,27 +244,27 @@ class AccountService:
             return Result(False, "管理员尚未设置 NSFW 过滤标签，无法切换 NSFW 策略。")
         nsfw = nsfw.split('|')
 
-        blocked_tags = emby_info.Policy.BlockedTags
-        if nsfw in blocked_tags:
-            blocked_tags = []
+        blocked_media_folders = emby_info.Policy.BlockedMediaFolders
+        if nsfw in blocked_media_folders:
+            blocked_media_folders = []
             action = '解除'
         else:
-            blocked_tags = nsfw
+            blocked_media_folders = nsfw
             action = '设置'
 
-        if settings.media_server == 'emby':
-            policy = emby_info.Policy.model_dump()
-            policy['BlockedTags'] = blocked_tags
-        else:
-            policy = emby_info.Policy.model_dump()# 预留给 Jellyfin 未来使用
-            policy['BlockedTags'] = blocked_tags
-        await self.media_service.update_policy(emby_user.emby_id, policy)
+        policy = emby_info.Policy.model_dump()
+        policy['BlockedMediaFolders'] = blocked_media_folders
 
-        return Result(True, textwrap.dedent(f"""\
-            操作成功，已为您**{action}** NSFW 策略。
-            - 当前 NSFW 策略: {'开启' if 'Japan' not in blocked_tags else '关闭'}
-            - 说明: 开启后，含有 'Japan' 标签的内容将被屏蔽。
-        """))
+        try:
+            await self.media_service.update_policy(emby_user.emby_id, policy)
+
+            return Result(True, textwrap.dedent(f"""\
+                操作成功，已为您**{action}** NSFW 策略。
+                - 当前 NSFW 策略: {'开启' if 'Japan' not in blocked_media_folders else '关闭'}
+                - 说明: 开启后，含有 'Japan' 标签的内容将被屏蔽。
+            """))
+        except HTTPError:
+            return Result(False, "请稍后重试")
 
     async def forget_password(self, user_id: int):
         """重置密码
@@ -273,8 +279,11 @@ class AccountService:
         if not isinstance(emby_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
-        passwd = await self.media_service.post_password(emby_user.emby_id)
-        return Result(True, textwrap.dedent(f"""\
-            密码重置成功！您的新密码是: `{passwd}`
-            请尽快登录并修改密码，祝您观影愉快！
-        """))
+        try:
+            passwd = await self.media_service.post_password(emby_user.emby_id)
+            return Result(True, textwrap.dedent(f"""\
+                密码重置成功！您的新密码是: `{passwd}`
+                请尽快登录并修改密码，祝您观影愉快！
+            """))
+        except HTTPError:
+            return Result(False, "请稍后重试或寻求管理员帮助")

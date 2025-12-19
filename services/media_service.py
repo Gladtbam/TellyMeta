@@ -14,12 +14,12 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co]):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
+    async def delete_user(self, user_id: str) -> None:
         """删除用户"""
         raise NotImplementedError
 
     @abstractmethod
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> None:
         """更新用户策略"""
         raise NotImplementedError
 
@@ -29,7 +29,7 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co]):
         raise NotImplementedError
 
     @abstractmethod
-    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> None:
         """更新媒体项信息"""
         raise NotImplementedError
 
@@ -39,18 +39,13 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co]):
         raise NotImplementedError
 
     @abstractmethod
-    async def post_password(self, user_id: str, reset_password: bool = False) -> str | None:
+    async def post_password(self, user_id: str, reset_password: bool = False) -> str:
         """更新用户密码"""
         raise NotImplementedError
 
     @abstractmethod
-    async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> bool:
+    async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> None:
         """封禁或解封用户"""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_user_playlist(self, user_id: str, expires_at: str) -> float:
-        """获取用户的播放记录"""
         raise NotImplementedError
 
     @abstractmethod

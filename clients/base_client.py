@@ -1,12 +1,14 @@
 import asyncio
 from abc import ABC, abstractmethod
-from typing import TypeVar
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar, overload
 
 import httpx
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 T = TypeVar('T', bound=BaseModel)
+T_parser = TypeVar('T_parser')
 
 class AuthenticatedClientError(Exception):
     """自定义认证失败异常"""
@@ -22,13 +24,16 @@ class BaseClient(ABC):
         if self._client:
             await self._client.aclose()
 
-    async def _request(self,
-                       method: str,
-                       url: str,
-                       *,
-                       response_model: type[T] | None = None,
-                       **kwargs
-    ) -> T | httpx.Response | None:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        response_model: type[T] | None = None,
+        parser: Callable[[Any], T_parser] | None = None,
+        raw: bool = False,
+        **kwargs
+    ) -> httpx.Response | T | T_parser | None:
         """发送HTTP请求，子类可以重写此方法以实现特定的认证逻辑
         Args:
             method (str): HTTP方法，如'GET', 'POST', 'DELETE'等。
@@ -36,7 +41,7 @@ class BaseClient(ABC):
             response_model (type[T], optional): 用于验证响应数据的Pydantic模型类。
             **kwargs: 传递给httpx请求方法的其他参数，如params, json, headers等。
         Returns:
-            httpx.Response | None: 如果请求成功且响应验证通过，返回httpx.Response对象，否则返回None。
+            T | None: 如果请求成功且响应验证通过，返回模型对象，否则返回None。
         """
         if self._client is None:
             raise RuntimeError("HTTP 客户端未初始化。首先调用 login()。")
@@ -44,13 +49,25 @@ class BaseClient(ABC):
         try:
             response = await self._client.request(method, url, **kwargs)
             response.raise_for_status()
-            if response_model:
-                try:
-                    return response_model.model_validate(response.json())
-                except ValidationError as e:
-                    logger.error("响应验证错误: {}", repr(e.errors()))
-                    return None
-            return response
+            if response_model and parser:
+                raise ValueError("response_model 和 parser 不能同时使用")
+
+            if raw:
+                return response
+            if response.status_code == 204 or not response.content:
+                return None
+
+            data = response.json()
+
+            if parser is not None:
+                return parser(data)
+
+            if response_model is not None:
+                return response_model.model_validate(data)
+            return None
+        except ValidationError as e:
+            logger.error("响应验证错误: {}", repr(e.errors()))
+            raise
         except httpx.HTTPStatusError as e:
             logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
             raise
@@ -61,17 +78,173 @@ class BaseClient(ABC):
             logger.error("未知错误：{}", e)
             raise
 
-    async def get(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+    @overload
+    async def get(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> None: ...
+
+    @overload
+    async def get(
+        self,
+        url: str,
+        *,
+        response_model: type[T],
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T | None: ...
+
+    @overload
+    async def get(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: Callable[[Any], T_parser],
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T_parser | None: ...
+
+    @overload
+    async def get(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[True],
+        **kwargs,
+    ) -> httpx.Response: ...
+
+    async def get(
+        self,
+        url: str,
+        *,
+        response_model: type[T] | None = None,
+        parser: Callable[[Any], T_parser] | None = None,
+        raw: bool = False,
+        **kwargs
+    ) -> httpx.Response | T | T_parser |  None:
         """发送GET请求"""
-        return await self._request("GET", url, response_model=response_model, **kwargs)
+        return await self._request("GET", url, response_model=response_model, parser=parser, raw=raw, **kwargs)
 
-    async def post(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+    @overload
+    async def post(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> None: ...
+
+    @overload
+    async def post(
+        self,
+        url: str,
+        *,
+        response_model: type[T],
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T | None: ...
+
+    @overload
+    async def post(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: Callable[[Any], T_parser],
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T_parser | None: ...
+
+    @overload
+    async def post(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[True],
+        **kwargs,
+    ) -> httpx.Response: ...
+
+    async def post(
+        self,
+        url: str,
+        *,
+        response_model: type[T] | None = None,
+        parser: Callable[[Any], T_parser] | None = None,
+        raw: bool = False,
+        **kwargs
+    ) -> httpx.Response | T | T_parser |  None:
         """发送POST请求"""
-        return await self._request("POST", url, response_model=response_model, **kwargs)
+        return await self._request("POST", url, response_model=response_model, parser=parser, raw=raw, **kwargs)
 
-    async def delete(self, url: str, *, response_model: type[T] | None = None, **kwargs) -> T | httpx.Response | None:
+    @overload
+    async def delete(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> None: ...
+
+    @overload
+    async def delete(
+        self,
+        url: str,
+        *,
+        response_model: type[T],
+        parser: None = None,
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T | None: ...
+
+    @overload
+    async def delete(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: Callable[[Any], T_parser],
+        raw: Literal[False] = False,
+        **kwargs,
+    ) -> T_parser | None: ...
+
+    @overload
+    async def delete(
+        self,
+        url: str,
+        *,
+        response_model: None = None,
+        parser: None = None,
+        raw: Literal[True],
+        **kwargs,
+    ) -> httpx.Response: ...
+
+    async def delete(
+        self,
+        url: str,
+        *,
+        response_model: type[T] | None = None,
+        parser: Callable[[Any], T_parser] | None = None,
+        raw: bool = False,
+        **kwargs
+    ) -> httpx.Response | T | T_parser |  None:
         """发送DELETE请求"""
-        return await self._request("DELETE", url, response_model=response_model, **kwargs)
+        return await self._request("DELETE", url, response_model=response_model, parser=parser, raw=raw, **kwargs)
 
 class AuthenticatedClient(BaseClient):
     def __init__(self, client: httpx.AsyncClient):
@@ -109,14 +282,17 @@ class AuthenticatedClient(BaseClient):
                 logger.error("登录期间出现意外错误：{}", e)
                 raise
 
-    async def _request(self,
-                       method: str,
-                       url: str,
-                       *,
-                       response_model: type[T] | None = None,
-                       _retry: int = 0,
-                       **kwargs
-    ) -> T | httpx.Response | None:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        response_model: type[T] | None = None,
+        parser: Callable[[Any], T_parser] | None = None,
+        raw: bool = False,
+        _retry: int = 0,
+        **kwargs
+    ) -> httpx.Response | T | T_parser |  None:
         '''自动登录逻辑'''
         if not self._is_logged_in:
             await self.login()
@@ -126,7 +302,7 @@ class AuthenticatedClient(BaseClient):
         if auth_headers:
             kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
         try:
-            return await super()._request(method, url, response_model=response_model, **kwargs)
+            return await super()._request(method, url, response_model=response_model, parser=parser, raw=raw, **kwargs)
         except AuthenticatedClientError as e:
             logger.error("身份验证错误：{}", e)
             raise

@@ -1,13 +1,13 @@
 import random
-import warnings
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
 from loguru import logger
+from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
-from models.emby import (BaseItemDto, BaseItemDtoQueryResult, UserDto,
+from models.emby import (BaseItemDto, BaseItemDtoQueryResult, QueryResult_VirtualFolderInfo, SessionInfoDto, UserDto,
                          UserPolicy)
 from models.protocols import BaseItem
 from services.media_service import MediaService
@@ -52,39 +52,30 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
 
         response = await self.post(url, json=payload, response_model=UserDto)
 
-        if isinstance(response, UserDto):
+        if response is not None:
             logger.info("创建用户 {} 成功", name)
             pw = await self.post_password(response.Id)
             if not pw:
                 logger.error("用户 {} 密码设置失败", name)
                 return response, pw
             return response, pw
-        else:
-            logger.error("创建用户 {} 失败: {}", name, response)
-            return None, None
 
-    async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
+        logger.error("创建用户 {} 失败: {}", name, response)
+        return None, None
+
+    async def delete_user(self, user_id: str) -> None:
         """删除用户。
-
         Args:
             user_id (str): Emby 用户的唯一标识符。
         """
+        url = f"/Users/{user_id}"
+        await self.delete(url)
 
-        if isinstance(user_id, str):
-            user_id = [user_id]
-        for uid in user_id:
-            url = f"/Users/{uid}"
-            response = await self.delete(url)
-            if response:
-                logger.info("删除用户 {} 成功", uid)
-            else:
-                logger.error("删除用户 {} 失败", uid)
-        return True
 
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> None:
         """更新用户策略。
         Args:
-            user_id (str): Jellyfin 用户的唯一标识符。
+            user_id (str): Emby 用户的唯一标识符。
             policy (dict): 用户策略字典。
             is_none (bool): 是否包含 None 值，默认为 False。
         Returns:
@@ -96,13 +87,7 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
         else:
             payload = UserPolicy(**policy).model_dump(exclude_unset=True)
 
-        response = await self.post(url, json=payload, response_model=UserPolicy)
-        if isinstance(response, UserPolicy):
-            logger.info("{} 的用户政策已成功更新", user_id)
-            return True
-        else:
-            logger.error("更新 {} 的用户策略失败：{}", user_id, response)
-            return False
+        await self.post(url, json=payload)
 
     async def get_item_info(self, item_id: str) -> None | BaseItemDto:
         """获取指定媒体项的信息。
@@ -128,12 +113,12 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
         }
 
         response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-        if not isinstance(response, BaseItemDtoQueryResult) or response.TotalRecordCount == 0 or not response.Items:
+        if response is None or response.TotalRecordCount == 0 or not response.Items:
             logger.warning("获取 Emby 项目 {} 信息失败: {}", item_id, response)
             return None
         return response.Items[0]
 
-    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> None:
         """更新指定媒体项的信息。
 
         Args:
@@ -145,12 +130,8 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
         """
         url = f"/Items/{item_id}"
 
-        response = await self.post(url, json=item_info.model_dump(exclude_unset=True))
-        if not response:
-            logger.error("更新项目 {} 失败", item_id)
-            return False
-        logger.info("已成功更新项目 {}", item_id)
-        return True
+        await self.post(url, json=item_info.model_dump(exclude_unset=True))
+
 
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取指定用户的信息。
@@ -162,13 +143,9 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             UserDto: Emby 用户对象，如果未找到则返回 None。
         """
         url = f"/Users/{user_id}"
-        response = await self.get(url, response_model=UserDto)
-        if not isinstance(response, UserDto):
-            logger.error("获取用户 {} 信息失败: {}", user_id, response)
-            return None
-        return response
+        return await self.get(url, response_model=UserDto)
 
-    async def post_password(self, user_id: str, reset_password: bool = False) -> str | None:
+    async def post_password(self, user_id: str, reset_password: bool = False) -> str:
         """更新用户密码。
 
         Args:
@@ -182,75 +159,46 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             'NewPw': passwd if not reset_password else None,
             'ResetPassword': reset_password
         }
-        response = await self.post(url, json=payload)
-        return passwd if not response else None
+        await self.post(url, json=payload)
+        return passwd
 
-    async def ban_or_unban(self, user_id: str | list[str], is_ban: bool = True) -> bool:
+    async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> None:
         """封禁或解封用户。
 
         Args:
             user_id (str): Emby 用户的唯一标识符。
             is_ban (bool): 如果为 True 则封禁用户，否则解封用户。
         """
-        if isinstance(user_id, str):
-            user_id = [user_id]
-        for uid in user_id:
-            user: UserDto | None = await self.get_user_info(uid)
-            if not user:
-                logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
-                continue
+        user: UserDto | None = await self.get_user_info(user_id)
+        if user is not None:
             policy = user.Policy.model_copy(update={'IsDisabled': is_ban}).model_dump()
-            success = await self.update_policy(uid, policy)
-            if not success:
-                logger.error("更新用户 {} 策略失败，无法进行封禁或解封操作", uid)
-        return True
-
-    async def get_user_playlist(self, user_id: str, expires_at: str) -> float:
-        """获取用户的播放记录。
-        Args:
-            emby_id (str): Emby 用户的唯一标识符。
-            expires_at (str): 过期时间，格式为 'YYYY-MM-DD'。
-        """
-        warnings.warn("EmbyClient.get_user_playlist 方法未实现完整功能，仅返回 0.0", DeprecationWarning)
-        total_duration = 0
-        url = "/user_usage_stats/UserPlaylist"
-        params = {
-            'user_id': user_id,
-            'aggregate_data': 'false',
-            'days': '30',
-            'end_date': expires_at
-        }
-        response = await self.get(url, params=params)
-        if not response:
-            return 0.0
-        data = response.json()
-        for item in data:
-            total_duration += int(item.get('duration', 0))
-        total_ratio = total_duration / 86400
-        return total_ratio
+            await self.update_policy(user_id, policy)
+        logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
 
     async def get_session_list(self) -> int:
         """获取用户在线数量"""
         url = "/Sessions"
-        response = await self.get(url)
-        if not response:
+        response = await self.get(url,
+            parser=lambda data: TypeAdapter(
+                list[SessionInfoDto]).validate_python(data)
+        )
+        if response is None:
             return 0
-        data = response.json()
-        return len([session for session in data if session.get('NowPlayingItem')])
+        return len([session for session in response if session.NowPlayingItem])
 
     async def get_library_names(self) -> list[str] | None:
         """获取 Emby 的媒体库列表。
         Returns:
             list[str] | None: 返回媒体库名称的列表，如果查询失败则返回 None。
         """
-        url = "Library/VirtualFolders/Query"
-        response = await self.get(url)
-        if not response:
+        url = "/Library/VirtualFolders/Query"
+        response = await self.get(url, response_model=QueryResult_VirtualFolderInfo)
+        if response is None:
             return None
         libraries: list[str] = []
-        for item in response.json().get('Items', []):
-            if item.get("Locations"):
-                libraries.append(item.get("Name", "Unknown"))
+        for item in response.Items:
+            if item.Locations:
+                libraries.append(item.Name)
         return libraries
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
@@ -268,7 +216,7 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
                 'Limit': page_size
             }
             response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-            if not isinstance(response, BaseItemDtoQueryResult):
+            if response is None:
                 break
             items = response.Items
             if not items:

@@ -39,8 +39,7 @@ class TmdbClient(AuthenticatedClient):
             "language": "zh-CN"
         }
 
-        response = await self.get(url, params=params, response_model=TmdbFindPayload)
-        return response if isinstance(response, TmdbFindPayload) else None
+        return await self.get(url, params=params, response_model=TmdbFindPayload)
 
     async def get_tv_details(self, tmdb_id: int) -> TmdbTv | None:
         """根据 TMDB ID 获取 TMDB 电视剧详情。
@@ -51,5 +50,4 @@ class TmdbClient(AuthenticatedClient):
         """
         url = f"/tv/{tmdb_id}"
         params = {"language": "zh-CN"}
-        response = await self.get(url, params=params, response_model=TmdbTv)
-        return response if isinstance(response, TmdbTv) else None
+        return await self.get(url, params=params, response_model=TmdbTv)

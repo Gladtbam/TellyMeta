@@ -1,7 +1,15 @@
 from pydantic import BaseModel, Field
 
 
-class QbittorrentPreference(BaseModel):
+class BuildInfo(BaseModel):
+    """qBittorrent 编译信息模型"""
+    qt: str
+    libtorrent: str
+    boost: str
+    openssl: str
+    bitness: str
+
+class Preference(BaseModel):
     """qBittorrent 首选项模型"""
     locale: str | None = Field(default=None, description="Language locale")
     create_subfolder_enabled: bool | None = None
@@ -150,7 +158,7 @@ class QbittorrentPreference(BaseModel):
     upnp_lease_duration: int | None = None
     utp_tcp_mixed_mode: int | None = None
 
-class QbittorrentTorrentProperties(BaseModel):
+class TorrentProperties(BaseModel):
     """qBittorrent Torrent 属性模型"""
     save_path: str | None = None
     creation_date: int | None = None

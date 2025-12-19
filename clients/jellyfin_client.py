@@ -4,10 +4,11 @@ from typing import Any
 
 import httpx
 from loguru import logger
+from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
-from models.jellyfin import (BaseItemDto, BaseItemDtoQueryResult, UserDto,
-                             UserPolicy)
+from models.jellyfin import (BaseItemDto, BaseItemDtoQueryResult,
+                             SessionInfoDto, UserDto, UserPolicy, VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
@@ -51,30 +52,22 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
         payload = {'Name': name, 'Password': pw}
 
         response = await self.post(url, json=payload, response_model=UserDto)
-        logger.info("创建用户 {} 成功", name)
-        if not isinstance(response, UserDto):
+        if response is None:
             logger.error("创建用户 {} 失败: {}", name, response)
             return None, None
+
+        logger.info("创建用户 {} 成功", name)
         return response, pw
 
-    async def delete_by_id(self, user_id: str | list[str]) -> bool | None:
+    async def delete_user(self, user_id: str) ->None:
         """删除用户。
-
         Args:
-            user_id (str | list[str]): Jellyfin 用户的唯一标识符。
+            user_id (str): Jellyfin 用户的唯一标识符。
         """
-        if isinstance(user_id, str):
-            user_id = [user_id]
-        for uid in user_id:
-            url = f"/Users/{uid}"
-            response = await self.delete(url)
-            if response is None:
-                logger.info("删除用户 {} 成功", uid)
-            else:
-                logger.error("删除用户 {} 失败: {}", uid, response)
-        return True
+        url = f"/Users/{user_id}"
+        await self.delete(url)
 
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> bool:
+    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> None:
         """更新用户策略。
         Args:
             user_id (str): Jellyfin 用户的唯一标识符。
@@ -89,13 +82,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
         else:
             payload = UserPolicy(**policy).model_dump(exclude_unset=True)
 
-        response = await self.post(url, json=payload, response_model=UserPolicy)
-        if isinstance(response, UserPolicy):
-            logger.info("{} 的用户政策已成功更新", user_id)
-            return True
-        else:
-            logger.error("更新 {} 的用户策略失败：{}", user_id, response)
-            return False
+        await self.post(url, json=payload)
 
     async def get_item_info(self, item_id: str) -> BaseItemDto | None:
         """获取媒体项信息。
@@ -122,12 +109,12 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             'ids': item_id
         }
         response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-        if not isinstance(response, BaseItemDtoQueryResult) or response.TotalRecordCount == 0 or not response.Items:
+        if response is None or response.TotalRecordCount == 0 or not response.Items:
             logger.warning("获取 Jellyfin 项目 {} 信息失败: {}", item_id, response)
             return None
         return response.Items[0]
 
-    async def post_item_info(self, item_id: str, item_info: BaseItem) -> bool:
+    async def post_item_info(self, item_id: str, item_info: BaseItem) -> None:
         """更新媒体项信息。
         Args:
             item_id (str): 媒体项的唯一标识符。
@@ -136,13 +123,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             bool: 更新是否成功。
         """
         url = f"/Items/{item_id}"
-        response = await self.post(url,
-                                   json=item_info.model_dump(exclude_unset=True))
-        if not response:
-            logger.error("更新项目 {} 失败", item_id)
-            return False
-        logger.info("已成功更新项目 {}", item_id)
-        return True
+        await self.post(url, json=item_info.model_dump(exclude_unset=True))
 
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取用户信息。
@@ -152,13 +133,9 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             UserDto: 包含用户信息的响应数据。
         """
         url = f"/Users/{user_id}"
-        response = await self.get(url, response_model=UserDto)
-        if not isinstance(response, UserDto):
-            logger.error("获取用户 {} 信息失败: {}", user_id, response)
-            return None
-        return response
+        return await self.get(url, response_model=UserDto)
 
-    async def post_password(self, user_id: str, reset_password: bool = False) -> str | None:
+    async def post_password(self, user_id: str, reset_password: bool = False) -> str:
         """更新用户密码。
         Args:
             user_id (str): Jellyfin 用户的唯一标识符。
@@ -173,67 +150,34 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             'NewPw': passwd,
             'ResetPassword': reset_password
         }
-        response = await self.post(url, params=params, json=payload)
-        return passwd if not response else None
+        await self.post(url, params=params, json=payload)
+        return passwd
 
-    async def ban_or_unban(self, user_id: str | list[str], is_ban: bool = True) -> bool:
+    async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> None:
         """封禁或解封用户。
         Args:
-            user_id (str | list[str]): Jellyfin 用户的唯一标识符。
+            user_id (str): Jellyfin 用户的唯一标识符。
             is_ban (bool): 如果为 True 则封禁用户，否则解封用户。
         """
-        if isinstance(user_id, str):
-            user_id = [user_id]
-        for uid in user_id:
-            user = await self.get_user_info(uid)
-            if not user:
-                logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", uid)
-                continue
+        user = await self.get_user_info(user_id)
+        if user is not None:
             policy = user.Policy.model_copy(update={'IsDisabled': is_ban}).model_dump()
-            success = await self.update_policy(uid, policy)
-            if not success:
-                logger.error("更新用户 {} 策略失败，无法进行封禁或解封操作", uid)
-        return True
-
-    async def get_user_playlist(self, user_id: str, expires_at: str) -> float:
-        """获取用户的播放记录。
-        Args:
-            user_id (str): Jellyfin 用户的唯一标识符。
-            expires_at (str): 过期时间，格式为 ISO 8601 字符串。
-        Returns:
-            float: 播放记录的总时长，单位为小时。
-        """
-        total_duration = 0
-        url = "/Sessions"
-        params = {
-            'controllableByUserId': user_id,
-            'activeWithinSeconds': 2592000  # 30 天内有活动的会话
-        }
-        response = await self.get(url, params=params)
-        if not response:
-            return 0.0
-        if isinstance(response, list):
-            for session in response:
-                if 'PlayState' in session:
-                    total_duration += int(session['PlayState'].get('PositionTicks', 0))
-        total_ratio = total_duration / 86400
-        return total_ratio
+            await self.update_policy(user_id, policy)
+        else:
+            logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
 
     async def get_session_list(self) -> int:
         """获取用户在线数量。
         Returns:
             int: 在线用户数量。
         """
-        now_playing_count = 0
         url = "/Sessions"
-        response = await self.get(url)
-        if not response:
+        response = await self.get(url,
+            parser=lambda data: TypeAdapter(
+                list[SessionInfoDto]).validate_python(data))
+        if response is None:
             return 0
-        if isinstance(response, list):
-            for session in response:
-                if session.get('NowPlayingItem'):
-                    now_playing_count += 1
-        return now_playing_count
+        return len([session for session in response if session.NowPlayingItem])
 
     async def get_library_names(self) -> list[str] | None:
         """获取 Jellyfin 的媒体库列表。
@@ -241,13 +185,14 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             list[str] | None: 返回媒体库名称的列表，如果查询失败则返回 None。
         """
         url = "/Library/VirtualFolders"
-        response = await self.get(url)
-        if not response:
+        response = await self.get(url,
+            parser=lambda data: TypeAdapter(list[VirtualFolderInfo]).validate_python(data))
+        if response is None:
             return None
         libraries: list[str] = []
-        for item in response.json():
-            if item.get("Locations"):
-                libraries.append(item.get("Name", "Unknown"))
+        for item in response:
+            if item.Locations:
+                libraries.append(item.Name)
         return libraries
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
@@ -265,7 +210,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
                 'limit': page_size
             }
             response = await self.get(url, params=params, response_model=BaseItemDtoQueryResult)
-            if not isinstance(response, BaseItemDtoQueryResult):
+            if response is None:
                 break
             items = response.Items
             if not items:

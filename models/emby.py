@@ -1,5 +1,6 @@
 # from __future__ import annotations
 
+from datetime import time
 from pydantic import BaseModel, Field
 
 
@@ -422,4 +423,217 @@ class BaseItemDto(BaseModel):
 class BaseItemDtoQueryResult(BaseModel):
     """Emby 搜索结果模型"""
     Items: list[BaseItemDto] = Field(default_factory=list)
+    TotalRecordCount: int
+
+class PlayerStateInfo(BaseModel):
+    """Emby 会话播放信息"""
+    PositionTicks: int | None = None
+    CanSeek: bool
+    IsPaused: bool
+    IsMuted: bool
+    VolumeLevel: int | None = None
+    AudioStreamIndex: int | None = None
+    SubtitleStreamIndex: int | None = None
+    MediaSourceId: str | None = None
+    MediaSource: MediaSourceInfo | None = None
+    PlayMethod: str | None = None
+    RepeatMode: str | None = None
+    SleepTimerMode: str | None = None
+    SleepTimerEndTime: time | None = None
+    SubtitleOffset: int
+    Shuffle: bool
+    PlaybackRate: float
+
+class SessionUserInfo(BaseModel):
+    """SessionUserInfo"""
+    UserId: str
+    UserName: str
+    UserInternalId: int
+
+class ProcessMetricPoint(BaseModel):
+    Time: time
+    CpuPercent: float
+    VirtualMemory: float
+    WorkingSet: float
+
+class ProcessStatistic(BaseModel):
+    CurrentCpu: float
+    AverageCpu: float
+    CurrentVirtualMemory: float
+    CurrentWorkingSet: float
+    Metrics: list[ProcessMetricPoint] = Field(default_factory=list)
+
+class TranscodingVpStepInfo(BaseModel):
+    StepType: str
+    StepTypeName: str
+    HardwareContextName: str
+    IsHardwareContext: bool
+    Name: str
+    Short: str
+    FfmpegName: str
+    FfmpegDescription: str
+    FfmpegOptions: str
+    Param: str
+    ParamShort: str
+
+class TranscodingInfoDto(BaseModel):
+    AudioCodec: str
+    VideoCodec: str
+    SubProtocol: str
+    Container: str
+    IsVideoDirect: bool
+    IsAudioDirect: bool
+    Bitrate: int | None = None
+    AudioBitrate: int | None = None
+    VideoBitrate: int | None = None
+    Framerate: float | None = None
+    CompletionPercentage: float | None = None
+    TranscodingPositionTicks: float | None = None
+    TranscodingStartPositionTicks: float | None = None
+    Width: int | None = None
+    Height: int | None = None
+    AudioChannels: int | None = None
+    TranscodeReasons: list[str] = Field(default_factory=list)
+    ProcessStatistics: ProcessStatistic
+    CurrentThrottle: int | None = None
+    VideoDecoder: str
+    VideoDecoderIsHardware: bool
+    VideoDecoderMediaType: str
+    VideoDecoderHwAccel: str
+    VideoEncoder: str
+    VideoEncoderIsHardware: bool
+    VideoEncoderMediaType: str
+    VideoEncoderHwAccel: str
+    VideoPipelineInfo: list[TranscodingVpStepInfo] = Field(default_factory=list)
+    SubtitlePipelineInfos: list[TranscodingVpStepInfo] = Field(default_factory=list)
+
+class SessionInfoDto(BaseModel):
+    """Emby 会话模型"""
+    PlayState: PlayerStateInfo
+    AdditionalUsers: list[SessionUserInfo] = Field(default_factory=list)
+    RemoteEndPoint: str
+    Protocol: str
+    PlayableMediaTypes: list[str] = Field(default_factory=list)
+    PlaylistItemId: str | None = None
+    PlaylistIndex: int
+    PlaylistLength: int
+    Id: str
+    ServerId: str
+    UserId: str
+    PartyId: str
+    UserName: str
+    UserPrimaryImageTag: str | None = None
+    Client: str
+    LastActivityDate: time
+    DeviceName: str
+    DeviceType: str | None = None
+    NowPlayingItem: BaseItemDto | None = None
+    InternalDeviceId: int
+    DeviceId: str
+    ApplicationVersion: str
+    AppIconUrl: str
+    SupportedCommands: list[str] = Field(default_factory=list)
+    TranscodingInfo: TranscodingInfoDto | None = None
+    SupportsRemoteControl: bool
+
+class MediaPathInfo(BaseModel):
+    Path: str
+    NetworkPath: str | None = None
+    Username: str | None = None
+    Password: str | None = None
+
+class ImageOption(BaseModel):
+    Type: str
+    Limit: int
+    MinWidth: int
+
+class TypeOption(BaseModel):
+    Type: str | None = None
+    MetadataFetchers: list[str] = Field(default_factory=list)
+    MetadataFetcherOrder: list[str] = Field(default_factory=list)
+    ImageFetchers: list[str] = Field(default_factory=list)
+    ImageFetcherOrder: list[str] = Field(default_factory=list)
+    ImageOptions: list[ImageOption] = Field(default_factory=list)
+
+class LibraryOption(BaseModel):
+    EnableArchiveMediaFiles: bool
+    EnablePhotos: bool
+    EnableRealtimeMonitor: bool
+    EnableMarkerDetection: bool
+    EnableMarkerDetectionDuringLibraryScan: bool
+    IntroDetectionFingerprintLength: int
+    EnableChapterImageExtraction: bool
+    ExtractChapterImagesDuringLibraryScan: bool
+    DownloadImagesInAdvance: bool
+    CacheImages: bool
+    ExcludeFromSearch: bool
+    EnablePlexIgnore: bool
+    PathInfos: list[MediaPathInfo] = Field(default_factory=list)
+    IgnoreHiddenFiles: bool
+    IgnoreFileExtensions: list[str] = Field(default_factory=list)
+    SaveLocalMetadata: bool
+    SaveMetadataHidden: bool
+    SaveLocalThumbnailSets: bool
+    ImportPlaylists: bool
+    EnableAutomaticSeriesGrouping: bool
+    ShareEmbeddedMusicAlbumImages: bool
+    EnableEmbeddedTitles: bool
+    EnableAudioResume: bool
+    AutoGenerateChapters: bool
+    MergeTopLevelFolders: bool
+    AutoGenerateChapterIntervalMinutes: int
+    AutomaticRefreshIntervalDays: int
+    PlaceholderMetadataRefreshIntervalDays: int
+    PreferredMetadataLanguage: str | None = None
+    PreferredImageLanguage: str | None = None
+    ContentType: str
+    MetadataCountryCode: str | None = None
+    MetadataSavers: list[str] = Field(default_factory=list)
+    DisabledLocalMetadataReaders: list[str] = Field(default_factory=list)
+    LocalMetadataReaderOrder: list[str] = Field(default_factory=list)
+    DisabledLyricsFetchers: list[str] = Field(default_factory=list)
+    SaveLyricsWithMedia: bool
+    LyricsDownloadMaxAgeDays: int
+    LyricsFetcherOrder: list[str] = Field(default_factory=list)
+    LyricsDownloadLanguages: list[str] = Field(default_factory=list)
+    DisabledSubtitleFetchers: list[str] = Field(default_factory=list)
+    SubtitleFetcherOrder: list[str] = Field(default_factory=list)
+    SkipSubtitlesIfEmbeddedSubtitlesPresent: bool
+    SkipSubtitlesIfAudioTrackMatches: bool
+    SubtitleDownloadLanguages: list[str] = Field(default_factory=list)
+    SubtitleDownloadMaxAgeDays: int
+    RequirePerfectSubtitleMatch: bool
+    SaveSubtitlesWithMedia: bool
+    ForcedSubtitlesOnly: bool
+    HearingImpairedSubtitlesOnly: bool
+    TypeOptions: list[TypeOption] = Field(default_factory=list)
+    CollapseSingleItemFolders: bool
+    EnableAdultMetadata: bool
+    ImportCollections: bool
+    EnableMultiVersionByFiles: bool
+    EnableMultiVersionByMetadata: bool
+    EnableMultiPartItems: bool
+    MinCollectionItems: int
+    MusicFolderStructure: str | None = None
+    MinResumePct: int
+    MaxResumePct: int
+    MinResumeDurationSeconds: int
+    ThumbnailImagesIntervalSeconds: int
+    SampleIgnoreSize: int
+
+class VirtualFolderInfo(BaseModel):
+    Name: str = "Unknown"
+    Locations: list[str] = Field(default_factory=list)
+    CollectionType: str
+    LibraryOptions: LibraryOption
+    ItemId: str
+    Id: str
+    Guid: str
+    PrimaryImageItemId: str
+    PrimaryImageTag: str
+    RefreshProgress: float | None = None
+    RefreshStatus: str | None = None
+
+class QueryResult_VirtualFolderInfo(BaseModel):
+    Items: list[VirtualFolderInfo] = Field(default_factory=list)
     TotalRecordCount: int

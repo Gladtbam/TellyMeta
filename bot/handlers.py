@@ -501,7 +501,7 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     else:
         user_name = await client.get_user_name(user_id, need_username=True)
         result = await registration_service.register(user_id, user_name)
-        await safe_respond(event, result.message)
+        await event.respond(result.message, parse_mode='markdown')
 
 @TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/code({settings.telegram_bot_name})?(\s.+)?$',

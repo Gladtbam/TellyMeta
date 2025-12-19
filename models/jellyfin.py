@@ -1,7 +1,9 @@
+from datetime import time
 from typing import TypeAlias
 
 from pydantic import BaseModel, Field
-from models.emby import ExternalUrl, NameLongIdPair
+
+from models.emby import ExternalUrl, NameLongIdPair, TypeOption
 
 NameGuidPair: TypeAlias = NameLongIdPair
 
@@ -442,3 +444,205 @@ class BaseItemDtoQueryResult(BaseModel):
     Items: list[BaseItemDto] = Field(default_factory=list)
     TotalRecordCount: int
     StartIndex: int
+
+class PlayerStateInfo(BaseModel):
+    """Jellyfin 会话播放信息"""
+    PositionTicks: int | None = None
+    CanSeek: bool
+    IsPaused: bool
+    IsMuted: bool
+    VolumeLevel: int | None = None
+    AudioStreamIndex: int | None = None
+    SubtitleStreamIndex: int | None = None
+    MediaSourceId: str | None = None
+    PlayMethod: str | None = None
+    RepeatMode: str | None = None
+    PlaybackOrder: str | None = None
+    LiveStreamId: str | None = None
+
+class SessionUserInfo(BaseModel):
+    UserId: str
+    UserName: str | None = None
+
+class DirectPlayProfile(BaseModel):
+    Container: str
+    AudioCodec: str
+    VideoCodec: str
+    Type: str
+
+class ProfileCondition(BaseModel):
+    Condition: str
+    Property: str
+    Value: str | None = None
+    IsRequired: bool
+
+class TranscodingProfile(BaseModel):
+    Container: str
+    Type: str
+    VideoCodec: str
+    AudioCodec: str
+    Protocol: str
+    EstimateContentLength: bool = False
+    EnableMpegtsM2TsMode: bool = False
+    TranscodeSeekInfo: str
+    CopyTimestamps: bool = False
+    Context: str
+    EnableSubtitlesInManifest: bool = False
+    MaxAudioChannels: bool = True
+    MinSegments: int = 0
+    SegmentLength: int = 0
+    BreakOnNonKeyFrames: bool = False
+    Conditions: list[ProfileCondition] = Field(default_factory=list)
+    EnableAudioVbrEncoding: bool = True
+
+class ContainerProfile(BaseModel):
+    Type: str
+    Conditions: list[ProfileCondition] = Field(default_factory=list)
+    Container: str | None = None
+    SubContainer: str | None = None
+
+class CodecProfile(BaseModel):
+    Type: str
+    Conditions: list[ProfileCondition] = Field(default_factory=list)
+    ApplyConditions: list[ProfileCondition] = Field(default_factory=list)
+    Codec: str | None = None
+    Container: str | None = None
+    SubContainer: str | None = None
+
+class SubtitleProfile(BaseModel):
+    Format: str | None = None
+    Method: str
+    DidlMode: str | None = None
+    Language: str | None = None
+    Container: str | None = None
+
+class DeviceProfileDto(BaseModel):
+    Name: str | None = None
+    Id: str | None = None
+    MaxStreamingBitrate: int | None = None
+    MaxStaticBitrate: int | None = None
+    MusicStreamingTranscodingBitrate: int | None = None
+    MaxStaticMusicBitrate: int | None = None
+    DirectPlayProfiles: list[DirectPlayProfile] = Field(default_factory=list)
+    TranscodingProfiles: list[TranscodingProfile] = Field(default_factory=list)
+    ContainerProfiles: list[ContainerProfile] = Field(default_factory=list)
+    CodecProfiles: list[CodecProfile] = Field(default_factory=list)
+    SubtitleProfiles: list[SubtitleProfile] = Field(default_factory=list)
+
+class ClientCapabilitiesDto(BaseModel):
+    PlayableMediaTypes: list[str] = Field(default_factory=list)
+    SupportedCommands: list[str] = Field(default_factory=list)
+    SupportsMediaControl: bool
+    SupportsPersistentIdentifier: bool
+    DeviceProfile: DeviceProfileDto
+    AppStoreUrl: str | None = None
+    IconUrl: str | None = None
+
+class TranscodingInfoDto(BaseModel):
+    AudioCodec: str | None = None
+    VideoCodec: str | None = None
+    Container: str | None = None
+    IsVideoDirect: bool
+    IsAudioDirect: bool
+    Bitrate: int | None = None
+    Framerate: float | None = None
+    CompletionPercentage: float | None = None
+    Width: int | None = None
+    Height: int | None = None
+    AudioChannels: int | None = None
+    HardwareAccelerationType: str
+    TranscodeReasons: list[str] = Field(default_factory=list)
+
+class QueueItem(BaseModel):
+    Id: str
+    PlaylistItemId: str | None = None
+
+class SessionInfoDto(BaseModel):
+    """Jellyfin 会话模型"""
+    PlayState: PlayerStateInfo
+    AdditionalUsers: list[SessionUserInfo] = Field(default_factory=list)
+    Capabilities: ClientCapabilitiesDto
+    RemoteEndPoint: str | None = None
+    PlayableMediaTypes: list[str] = Field(default_factory=list)
+    Id: str | None = None
+    UserId: str
+    UserName: str | None = None
+    UserPrimaryImageTag: str | None = None
+    Client: str | None = None
+    LastActivityDate: time
+    LastPlaybackCheckIn: time
+    LastPausedDate: time | None = None
+    DeviceName: str | None = None
+    DeviceType: str | None = None
+    NowPlayingItem: BaseItemDto | None = None
+    NowViewingItem: BaseItemDto | None = None
+    DeviceId: str | None = None
+    ApplicationVersion: str
+    AppIconUrl: str
+    TranscodingInfo: TranscodingInfoDto | None = None
+    IsActive: bool
+    SupportsMediaControl: bool
+    SupportsRemoteControl: bool
+    NowPlayingQueue: list[QueueItem] = Field(default_factory=list)
+    NowPlayingQueueFullItems: list[BaseItemDto] = Field(default_factory=list)
+    HasCustomDeviceName: bool
+    PlaylistItemId: str | None = None
+    ServerId: str | None = None
+    UserPrimaryImageTag: str | None = None
+    SupportedCommands: list[str] = Field(default_factory=list)
+
+class MediaPathInfo(BaseModel):
+    Path: str
+
+class LibraryOption(BaseModel):
+    Enabled: bool
+    EnablePhotos: bool
+    EnableRealtimeMonitor: bool
+    EnableLUFSScan: bool
+    EnableChapterImageExtraction: bool
+    ExtractChapterImagesDuringLibraryScan: bool
+    EnableTrickplayImageExtraction: bool
+    ExtractTrickplayImagesDuringLibraryScan: bool
+    PathInfos: list[MediaPathInfo] = Field(default_factory=list)
+    SaveLocalMetadata: bool
+    EnableAutomaticSeriesGrouping: bool
+    EnableEmbeddedTitles: bool
+    EnableEmbeddedExtrasTitles: bool
+    EnableEmbeddedEpisodeInfos: bool
+    AutomaticRefreshIntervalDays: int
+    PreferredMetadataLanguage: str | None = None
+    MetadataCountryCode: str | None = None
+    SeasonZeroDisplayName: str
+    MetadataSavers: list[str] = Field(default_factory=list)
+    DisabledLocalMetadataReaders: list[str] = Field(default_factory=list)
+    LocalMetadataReaderOrder: list[str] = Field(default_factory=list)
+    DisabledSubtitleFetchers: list[str] = Field(default_factory=list)
+    SubtitleFetcherOrder: list[str] = Field(default_factory=list)
+    DisabledMediaSegmentProviders: list[str] = Field(default_factory=list)
+    MediaSegmentProviderOrder: list[str] = Field(default_factory=list)
+    SkipSubtitlesIfEmbeddedSubtitlesPresent: bool
+    SkipSubtitlesIfAudioTrackMatches: bool
+    SubtitleDownloadLanguages: list[str] = Field(default_factory=list)
+    RequirePerfectSubtitleMatch: bool
+    SaveSubtitlesWithMedia: bool
+    SaveLyricsWithMedia: bool = False
+    SaveTrickplayWithMedia: bool = False
+    DisabledLyricFetchers: list[str] = Field(default_factory=list)
+    LyricFetcherOrder: list[str] = Field(default_factory=list)
+    PreferNonstandardArtistsTag: bool = False
+    UseCustomTagDelimiters: bool = False
+    CustomTagDelimiters: list[str] = Field(default_factory=list)
+    DelimiterWhitelist: list[str] = Field(default_factory=list)
+    AutomaticallyAddToCollection: bool
+    AllowEmbeddedSubtitles: str
+    TypeOptions: list[TypeOption] = Field(default_factory=list)
+
+class VirtualFolderInfo(BaseModel):
+    Name: str = "Unknown"
+    Locations: list[str] = Field(default_factory=list)
+    CollectionType: str
+    LibraryOptions: LibraryOption | None = None
+    ItemId: str | None = None
+    PrimaryImageItemId: str | None = None
+    RefreshProgress: float | None = None
+    RefreshStatus: str | None = None

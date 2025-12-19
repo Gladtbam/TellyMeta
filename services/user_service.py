@@ -4,6 +4,8 @@ from datetime import date
 from random import choice, choices, randint
 from typing import Any, Literal
 
+from httpx import HTTPError
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button
 
@@ -123,10 +125,6 @@ class UserService:
         """)
 
         if user.emby:
-            # played_ratio = await self.media_service.get_user_playlist(
-            # user.emby.emby_id,
-            # user.emby.expires_at.strftime('%Y-%m-{}')
-            # )
             message += textwrap.dedent(f"""\
                 **Emby 用户名**: `{user.emby.emby_name}`
                 **Emby 用户 ID**: `{user.emby.emby_id}`
@@ -159,13 +157,17 @@ class UserService:
             return Result(True, "未找到该 Telegram 账户，无需删除。")
 
         message = []
-        if account_type in ['emby', 'both'] and user.emby:
-            await self.media_service.delete_by_id(user.emby.emby_id)
-            await self.emby_repo.delete(user.emby)
-            message.append("Emby 账户已删除。")
+        try:
+            if account_type in ['emby', 'both'] and user.emby:
+                await self.media_service.delete_user(user.emby.emby_id)
+                await self.emby_repo.delete(user.emby)
+                message.append("Emby 账户已删除。")
 
-        if account_type in ['tg', 'both']:
-            await self.telegram_repo.delete_by_id(user_id)
-            message.append("Telegram 账户已删除。")
+            if account_type in ['tg', 'both']:
+                await self.telegram_repo.delete_by_id(user_id)
+                message.append("Telegram 账户已删除。")
 
-        return Result(True, " ".join(message))
+            return Result(True, " ".join(message))
+        except HTTPError:
+            logger.error("删除账户失败{}：{}", user_id, user.emby)
+            return Result(False, " ".join(message))

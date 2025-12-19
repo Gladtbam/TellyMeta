@@ -45,12 +45,11 @@ class TvdbClient(AuthenticatedClient):
             language (str): 语言代码，默认为 'zho'
         Returns:
             TvdbPayload: 包含翻译信息的响应数据"""
-        response = await self.get(
+        return await self.get(
             f"/episodes/{episode_id}/translations/{language}",
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        return response if isinstance(response, TvdbPayload) else None
 
     async def episodes_extended(self, episode_id: int) -> TvdbEpisodesData | None:
         """获取指定剧集的扩展信息
@@ -66,7 +65,7 @@ class TvdbClient(AuthenticatedClient):
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        if isinstance(response, TvdbPayload) and isinstance(response.data, TvdbEpisodesData):
+        if response is not None and isinstance(response.data, TvdbEpisodesData):
             return response.data
         return None
 
@@ -79,12 +78,11 @@ class TvdbClient(AuthenticatedClient):
         Returns:
             TvdbPayload: 包含翻译信息的响应数据
         """
-        response = await self.get(
+        return await self.get(
             f"/seasons/{season_id}/translations/{language}",
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        return response if isinstance(response, TvdbPayload) else None
 
     async def seasons_extended(self, season_id: int) -> TvdbPayload | None:
         """获取指定季的扩展信息
@@ -94,12 +92,11 @@ class TvdbClient(AuthenticatedClient):
         Returns:
             TvdbPayload: 包含扩展信息的响应数据
         """
-        response = await self.get(
+        return await self.get(
             f"/seasons/{season_id}/extended",
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        return response if isinstance(response, TvdbPayload) else None
 
     async def series_extended(self, series_id: int, meta: str = 'translations') -> TvdbSeriesData | None:
         """获取指定剧集的扩展信息
@@ -116,7 +113,7 @@ class TvdbClient(AuthenticatedClient):
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        if isinstance(response, TvdbPayload) and isinstance(response.data, TvdbSeriesData):
+        if response is not None and isinstance(response.data, TvdbSeriesData):
             return response.data
         return None
 
@@ -129,9 +126,8 @@ class TvdbClient(AuthenticatedClient):
         Returns:
             TvdbPayload: 包含翻译信息的响应数据
         """
-        response = await self.get(
+        return await self.get(
             f"/series/{series_id}/translations/{language}",
             headers={'Accept': 'application/json'},
             response_model=TvdbPayload
         )
-        return response if isinstance(response, TvdbPayload) else None

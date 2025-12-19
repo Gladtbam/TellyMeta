@@ -36,8 +36,7 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie/lookup/tmdb"
         params = {'tmdbId': tmdb_id}
-        response = await self.get(url, params=params, response_model=MovieResource)
-        return response if isinstance(response, MovieResource) else None
+        return await self.get(url, params=params, response_model=MovieResource)
 
     async def lookup(self, term: str) -> AsyncGenerator[MovieResource, None]:
         """根据电影名称查找 Radarr 中的电影信息。
@@ -48,17 +47,13 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie/lookup"
         params = {'term': term}
-        response = await self.get(url, params=params)
+        response = await self.get(url, params=params,
+            parser=lambda data: TypeAdapter(list[MovieResource]).validate_python(data))
         if response is None:
             return
 
-        try:
-            movies = TypeAdapter(list[MovieResource]).validate_python(response.json())
-            for movie in movies:
-                yield movie
-        except ValidationError as e:
-            logger.error("无法解析电影查找响应：{}", repr(e.errors()))
-            return
+        for movie in response:
+            yield movie
 
     async def get_movie_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
         """根据 TMDB ID 获取 Radarr 中的电影信息。
@@ -69,16 +64,10 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie"
         params = {'tmdbId': tmdb_id}
-        response = await self.get(url, params=params)
-        if response is None:
-            return None
+        response = await self.get(url, params=params,
+            parser=lambda data: TypeAdapter(list[MovieResource]).validate_python(data))
 
-        try:
-            movies = TypeAdapter(list[MovieResource]).validate_python(response.json())
-            return movies[0] if movies else None
-        except ValidationError as e:
-            logger.error("无法解析电影查找响应：{}", repr(e.errors()))
-            return None
+        return response[0] if response else None
 
     async def post_movie(self, movie_resource: MovieResource) -> MovieResource | None:
         """向 Radarr 添加电影。
@@ -97,10 +86,9 @@ class RadarrClient(AuthenticatedClient):
             searchForMovie = True,
             addMethod = "manual"
         )
-        response = await self.post(url,
+        return await self.post(url,
             json=movie_resource.model_dump(exclude_unset=True),
             response_model=MovieResource)
-        return response if isinstance(response, MovieResource) else None
 
     async def get_root_folders(self) -> list[RootFolderResource] | None:
         """获取 Radarr 的根文件夹列表。
@@ -108,15 +96,8 @@ class RadarrClient(AuthenticatedClient):
             list[RootFolderResource] | None: 返回根文件夹路径的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/rootfolder"
-        response = await self.get(url)
-        if response is None:
-            return None
-
-        try:
-            return TypeAdapter(list[RootFolderResource]).validate_python(response.json())
-        except ValidationError as e:
-            logger.error("无法解析根文件夹响应：{}", repr(e.errors()))
-            return None
+        return await self.get(url,
+            parser=lambda data: TypeAdapter(list[RootFolderResource]).validate_python(data))
 
     async def get_quality_profiles(self) -> list[QualityProfileResource] | None:
         """获取 Radarr 的质量配置文件列表。
@@ -124,12 +105,5 @@ class RadarrClient(AuthenticatedClient):
             list[QualityProfileResource] | None: 返回质量配置文件的列表，如果查询失败则返回 None。
         """
         url = "/api/v3/qualityprofile"
-        response = await self.get(url)
-        if response is None:
-            return None
-
-        try:
-            return TypeAdapter(list[QualityProfileResource]).validate_python(response.json())
-        except ValidationError as e:
-            logger.error("无法解析质量配置文件响应：{}", repr(e.errors()))
-            return None
+        return await self.get(url,
+            parser=lambda data: TypeAdapter(list[QualityProfileResource]).validate_python(data))

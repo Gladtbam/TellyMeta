@@ -1,5 +1,6 @@
 import textwrap
 
+from httpx import HTTPError
 from loguru import logger
 
 from core.config import get_settings
@@ -55,9 +56,10 @@ async def delete_expired_banned_users() -> None:
                 return
 
             for user in users:
-                logger.info("删除封禁用户: {} (ID: {})", user.id, user.emby_id)
-                await media_service.delete_by_id(user.emby_id)
+                await media_service.delete_user(user.emby_id)
 
+        except HTTPError:
+            logger.error("删除封禁用户: {} (ID: {})", user.id, user.emby_id) # type: ignore
         except Exception as e:
             logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()
