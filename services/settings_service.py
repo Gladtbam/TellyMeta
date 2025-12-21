@@ -200,6 +200,7 @@ class SettingsServices:
             library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8') # 避免回调数据中出现特殊字符
             keyboard.append([Button.inline(button_text, f"bind_library_{library_name_base64}".encode('utf-8'))])
         keyboard.append([Button.inline("设置 NSFW 媒体库", b"manage_nsfw_library")])
+        keyboard.append([Button.inline("设置账户默认有效期", b'manage_registration_expiry')])
         keyboard.append([Button.inline("« 返回管理面板", b"manage_main")])
 
 
@@ -456,3 +457,28 @@ class SettingsServices:
             await self.config_repo.set_settings('nsfw_sub_library', value=new_sub_ids_str)
 
         return Result(success=True, message=f"已{action}该媒体库。")
+
+    async def get_registration_expiry_panel(self) -> Result:
+        """获取 账户有效期 设置面板"""
+        days = await self.config_repo.get_settings('registration_expiry_days') or '0'
+
+        keyboard = [
+            [Button.inline("一月(30 天)", b'set_registration_expiry_30')],
+            [Button.inline("一季(90 天)", b'set_registration_expiry_90')],
+            [Button.inline("一年(365 天)", b'set_registration_expiry_365')],
+            [Button.inline("永久(9999 天)", b'set_registration_expiry_9999')],
+            [Button.inline("« 返回媒体设置", b"manage_media")]
+        ]
+
+        msg = textwrap.dedent(f"""\
+            **账户有效期设置**
+            注册和续期账户有效时长
+
+            当前有效期 {days} 天
+        """)
+        return Result(success=True, message=msg, keyboard=keyboard)
+
+    async def set_registration_expiry(self, days: str) -> Result:
+        """设置 账户有效期"""
+        await self.config_repo.set_settings('registration_expiry_days', days)
+        return Result(success=True, message=f"已设为 {days} 天")

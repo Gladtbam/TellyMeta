@@ -34,6 +34,7 @@ class ConfigRepository:
             'registration_mode': 'default',
             'registration_count_limit': '0',
             'registration_time_limit': '0',
+            'registration_expiry_days': '30',
             'code_expiry_days': '30',
             'nsfw_library': '',
             'nsfw_sub_library': '',

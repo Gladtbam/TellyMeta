@@ -621,7 +621,8 @@ async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event,
     panel_result = await settings_service.get_system_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media|system|main|nsfw_library)'))
+@TelethonClientWarper.handler(events.CallbackQuery(
+    pattern=b'manage_(admins|notify|media|system|main|nsfw_library|registration_expiry)'))
 @provide_db_session
 async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """管理面板处理器
@@ -640,6 +641,8 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
         result = await settings_service.get_system_panel()
     elif action == 'nsfw_library':
         result = await settings_service.get_nsfw_library_panel()
+    elif action == 'registration_expiry':
+        result = await settings_service.get_registration_expiry_panel()
     elif action == 'main':
         result = await settings_service.get_admin_management_keyboard()
     else:
@@ -769,6 +772,19 @@ async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.
     # 刷新媒体库绑定面板
     binding_result = await settings_service.get_library_binding_panel(library_name)
     await event.edit(binding_result.message, buttons=binding_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_registration_expiry_(\\d+)'))
+@provide_db_session
+async def set_registration_expiry_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置账户有效期处理器"""
+    days = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.set_registration_expiry(days)
+
+    await event.answer(result.message)
+
+    expiry_result = await settings_service.get_registration_expiry_panel()
+    await event.edit(expiry_result.message, buttons=expiry_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
 async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:

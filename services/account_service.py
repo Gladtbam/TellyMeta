@@ -135,7 +135,8 @@ class AccountService:
             if media is None:
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-            await self.media_repo.create(user_id, media.Id, username)
+            expires_at = int(await self.config_repo.get_settings('registration_expiry_days', '0') or '0')
+            await self.media_repo.create(user_id, media.Id, username, expires_at)
 
             # 应用默认 NSFW 策略
             # 如果默认禁用 NSFW (nsfw_enabled='false')，则限制对 NSFW 库的访问。
@@ -204,7 +205,8 @@ class AccountService:
                 return Result(False, f"续期失败，您的积分不足，续期需要 **{renew_score}** 积分。")
             await self.telegram_repo.update_score(user_id, -renew_score)
 
-        media_user = await self.media_repo.extend_expiry(media_user, 30)
+        days = int(await self.config_repo.get_settings('registration_expiry_days', '0') or '0')
+        media_user = await self.media_repo.extend_expiry(media_user, days)
         if media_info.Policy.IsDisabled:
             await self.media_service.ban_or_unban(media_user.media_id, is_ban=False)
 

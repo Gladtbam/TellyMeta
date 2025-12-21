@@ -31,7 +31,7 @@ class MediaRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, user_id: int, media_id: str, media_name: str) -> MediaUser:
+    async def create(self, user_id: int, media_id: str, media_name: str, expires_at: int) -> MediaUser:
         """创建新的 Media 用户
         Args:
             user_id (int): 关联的Telegram用户ID
@@ -44,7 +44,7 @@ class MediaRepository:
             id=user_id,
             media_id=media_id,
             media_name=media_name,
-            expires_at=datetime.now() + timedelta(days=30),  # 默认30天有效期
+            expires_at=datetime.now() + timedelta(days=expires_at),
         )
         self.session.add(media_user)
         await self.session.commit()
