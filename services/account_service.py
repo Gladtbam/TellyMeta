@@ -32,10 +32,11 @@ class AccountService:
             mode (str): 注册模式:
             - 如果是纯数字，则按名额限制。
             - 如果是时间格式 (e.g., "1h30m"), 则按时间限制。
+            - 如果是 'open' 或 'start', 则不限制注册
             - 如果是 'close' 或 'stop', 则关闭开放注册，仅允许注册码和积分注册。
         """
         if re.fullmatch(r'\d+', mode):
-            return await self._set_by_limit(int(mode))
+            return await self._set_by_count(int(mode))
         elif re.fullmatch(r'(\d+h)?(\d+m)?(\d+s)?', mode):
             return await self._set_by_time(mode)
         elif mode in ('close', 'stop'):
@@ -43,19 +44,19 @@ class AccountService:
         else:
             return Result(False, "无效的注册模式。请使用纯数字、时间格式 (e.g., '1h30m') 或 'close'/'stop'。")
 
-    async def _set_by_limit(self, limit: int) -> Result:
+    async def _set_by_count(self, count: int) -> Result:
         """按名额限制设置注册模式
         Args:
-            limit (int): 名额限制
+            count (int): 名额限制
         """
-        if limit <= 0:
+        if count <= 0:
             return Result(False, "名额限制必须是正整数。")
 
-        await self.config_repo.set_settings('registration_mode', 'limit')
-        await self.config_repo.set_settings('registration_count_limit', str(limit))
+        await self.config_repo.set_settings('registration_mode', 'count')
+        await self.config_repo.set_settings('registration_count_limit', str(count))
         await self.config_repo.set_settings('registration_time_limit', '0') # 清除时间限制
 
-        return Result(True, f"注册已开启，当前剩余名额: **{limit}**。")
+        return Result(True, f"注册已开启，当前剩余名额: **{count}**。")
 
     async def _set_by_time(self, time_str: str) -> Result:
         """按时间限制设置注册模式
@@ -72,6 +73,14 @@ class AccountService:
         await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
 
         return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-{} %H:%M:{}')}**。")
+
+    async def _set_open(self) -> Result:
+        """开启开放注册, 无限制"""
+        await self.config_repo.set_settings('registration_mode', 'unlimit')
+        await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
+        await self.config_repo.set_settings('registration_time_limit', '0') # 清除时间限制
+
+        return Result(False, "注册已开启，无限制注册。")
 
     async def _set_closed(self) -> Result:
         """关闭开放注册，仅允许注册码和积分注册"""
@@ -96,7 +105,7 @@ class AccountService:
         mode = await self.config_repo.get_settings('registration_mode', 'default')
         can_register = False
 
-        if mode == 'limit':
+        if mode == 'count':
             count = int(await self.config_repo.get_settings('registration_count_limit', '0') or '0')
             if count > 0:
                 can_register = True
@@ -109,6 +118,8 @@ class AccountService:
                 can_register = True
             else:
                 await self._set_closed()
+        elif mode == 'unlimit':
+            can_register = True
         else:
             user = await self.telegram_repo.get_or_create(user_id)
             register_score = int(await self.telegram_repo.get_renew_score())
