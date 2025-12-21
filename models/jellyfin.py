@@ -77,8 +77,8 @@ class UserPolicy(BaseModel):
     BlockedMediaFolders: list[str] = Field(default_factory=list)
     BlockedChannels: list[str] = Field(default_factory=list)
     RemoteClientBitrateLimit: int = 0
-    AuthenticationProviderId: str | None = None
-    PasswordResetProviderId: str | None = None
+    AuthenticationProviderId: str = "Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider"
+    PasswordResetProviderId: str = "Jellyfin.Server.Implementations.Users.DefaultPasswordResetProvider"
     SyncPlayAccess: str | None = None
 
 class UserDto(BaseModel):

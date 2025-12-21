@@ -159,16 +159,16 @@ class AccountService:
                         'EnableAllFolders': False,
                         'EnabledFolders': safe_libs,
                         'ExcludedSubFolders': nsfw_sub_ids
-                    })
+                    }, is_none=True)
                 else:
                     await self.media_service.update_policy(media.Id, {
                         'EnableAllFolders': False,
                         'EnabledFolders': safe_libs
-                    })
+                    }, is_none=True)
             else:
                 await self.media_service.update_policy(media.Id, {
                     'EnableAllFolders': True
-                })
+                }, is_none=True)
 
             return Result(True, textwrap.dedent(f"""\
                 注册成功！您的账户信息如下：
