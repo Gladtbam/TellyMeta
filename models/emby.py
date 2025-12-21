@@ -1,6 +1,6 @@
 # from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
 from pydantic import BaseModel, Field
 
 
@@ -289,7 +289,7 @@ class BaseItemDto(BaseModel):
     CanLeaveContent: bool | None = None
     CanMakePublic: bool | None = None
     Container: str | None = None
-    SortName: str
+    SortName: str | None = None
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
     PremiereDate: str | None = None # datetime
@@ -439,7 +439,7 @@ class PlayerStateInfo(BaseModel):
     PlayMethod: str | None = None
     RepeatMode: str | None = None
     SleepTimerMode: str | None = None
-    SleepTimerEndTime: time | None = None
+    SleepTimerEndTime: datetime | None = None
     SubtitleOffset: int
     Shuffle: bool
     PlaybackRate: float
@@ -519,19 +519,19 @@ class SessionInfoDto(BaseModel):
     PlaylistLength: int
     Id: str
     ServerId: str
-    UserId: str
-    PartyId: str
-    UserName: str
+    UserId: str | None = None
+    PartyId: str | None = None
+    UserName: str | None = None
     UserPrimaryImageTag: str | None = None
     Client: str
-    LastActivityDate: time
+    LastActivityDate: datetime
     DeviceName: str
     DeviceType: str | None = None
     NowPlayingItem: BaseItemDto | None = None
     InternalDeviceId: int
     DeviceId: str
     ApplicationVersion: str
-    AppIconUrl: str
+    AppIconUrl: str | None = None
     SupportedCommands: list[str] = Field(default_factory=list)
     TranscodingInfo: TranscodingInfoDto | None = None
     SupportsRemoteControl: bool

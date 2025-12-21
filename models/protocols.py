@@ -38,7 +38,7 @@ class BaseItem(Dumpable, Protocol):
     """定义媒体项的协议"""
     Name: str
     Id: str
-    SortName: str
+    SortName: str | None = None
     Overview: str | None = None
     Genres: list
     ProviderIds: dict

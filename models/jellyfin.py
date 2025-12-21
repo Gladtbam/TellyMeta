@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import datetime
 from typing import TypeAlias
 
 from pydantic import BaseModel, Field
@@ -302,7 +302,7 @@ class BaseItemDto(BaseModel):
     PreferredMetadataLanguage: str | None = None
     PreferredMetadataCountryCode: str | None = None
     Container: str | None = None
-    SortName: str
+    SortName: str | None = None
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
     PremiereDate: str | None = None # datetime
@@ -534,7 +534,7 @@ class ClientCapabilitiesDto(BaseModel):
     SupportedCommands: list[str] = Field(default_factory=list)
     SupportsMediaControl: bool
     SupportsPersistentIdentifier: bool
-    DeviceProfile: DeviceProfileDto
+    DeviceProfile: DeviceProfileDto | None = None
     AppStoreUrl: str | None = None
     IconUrl: str | None = None
 
@@ -569,16 +569,16 @@ class SessionInfoDto(BaseModel):
     UserName: str | None = None
     UserPrimaryImageTag: str | None = None
     Client: str | None = None
-    LastActivityDate: time
-    LastPlaybackCheckIn: time
-    LastPausedDate: time | None = None
+    LastActivityDate: datetime
+    LastPlaybackCheckIn: datetime
+    LastPausedDate: datetime | None = None
     DeviceName: str | None = None
     DeviceType: str | None = None
     NowPlayingItem: BaseItemDto | None = None
     NowViewingItem: BaseItemDto | None = None
     DeviceId: str | None = None
     ApplicationVersion: str
-    AppIconUrl: str
+    AppIconUrl: str | None = None
     TranscodingInfo: TranscodingInfoDto | None = None
     IsActive: bool
     SupportsMediaControl: bool

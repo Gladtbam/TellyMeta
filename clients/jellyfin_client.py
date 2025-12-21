@@ -92,7 +92,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Vir
         Returns:
             BaseItemDto: 媒体项对象，如果未找到则返回 None。
         """
-        url = f"/Items/{item_id}"
+        url = "/Items"
         fields = ["AirTime", "CanDelete", "CanDownload", "ChannelInfo", "Chapters", "Trickplay",
             "ChildCount", "CumulativeRunTimeTicks", "CustomRating", "DateCreated", "DateLastMediaAdded",
             "DisplayPreferencesId", "Etag", "ExternalUrls", "Genres", "ItemCounts", "MediaSourceCount",
