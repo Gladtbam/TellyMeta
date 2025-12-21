@@ -564,18 +564,18 @@ async def create_code_confirm_handler(app: FastAPI, event: events.CallbackQuery.
 
     await safe_respond(event, result.message)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|nfsw|forget_password|query_renew)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|nsfw|forget_password|query_renew)'))
 @provide_db_session
-async def nfsw_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """续期/NFSW/忘记密码处理器/查询续期积分
-    处理用户点击续期/NFSW/忘记密码按钮的事件"""
+async def nsfw_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """续期/NSFW/忘记密码处理器/查询续期积分
+    处理用户点击续期/NSFW/忘记密码按钮的事件"""
     user_id: Any = event.sender_id
     action = event.pattern_match.group(1).decode('utf-8') # type: ignore
 
     account_service = AccountService(session, app.state.media_client)
     if action == 'renew':
         result = await account_service.renew(user_id, True)
-    elif action == 'nfsw':
+    elif action == 'nsfw':
         result = await account_service.toggle_nsfw_policy(user_id)
     elif action == 'forget_password':
         result = await account_service.forget_password(user_id)
@@ -601,10 +601,8 @@ async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session
     """设置处理器
     处理管理员请求设置面板
     """
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     result = await settings_service.get_admin_management_keyboard()
-
-    await safe_respond_keyboard(event, result.message, result.keyboard, 600)
 
     await safe_respond_keyboard(event, result.message, result.keyboard, 600)
     logger.info("管理员 {} 请求设置面板", event.sender_id)
@@ -614,7 +612,7 @@ async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session
 async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """系统功能开关处理器"""
     key = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
 
     result = await settings_service.toggle_system_setting(key)
     await event.answer(result.message)
@@ -630,7 +628,7 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
     处理管理员点击管理面板按钮的事件
     """
     action = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
 
     if action == 'admins':
         result = await settings_service.get_admins_panel()
@@ -654,7 +652,7 @@ async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     处理管理员点击切换管理员按钮的事件
     """
     user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
 
     result = await settings_service.toggle_admin(user_id)
     await event.answer(result.message)
@@ -671,7 +669,7 @@ async def notify_setting_handler(app: FastAPI, event: events.CallbackQuery.Event
     """
     setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
 
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     result = await settings_service.get_notification_keyboard(setting_type)
     await event.edit(result.message, buttons=result.keyboard)
 
@@ -684,7 +682,7 @@ async def set_notify_topic_handler(app: FastAPI, event: events.CallbackQuery.Eve
     setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
     topic_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
 
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     result = await settings_service.set_notification_topic(setting_type, topic_id)
 
     await event.answer(result.message)
@@ -702,7 +700,7 @@ async def bind_library_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
     library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
 
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     result = await settings_service.get_library_binding_panel(library_name)
 
     await event.edit(result.message, buttons=result.keyboard)
@@ -717,7 +715,7 @@ async def select_library_setting_handler(app: FastAPI, event: events.CallbackQue
     library_name_base64 = event.pattern_match.group(2).decode('utf-8') # type: ignore
     library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
 
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     if setting_type == 'typed':
         result = await settings_service.get_type_selection_keyboard(library_name)
     elif setting_type == 'quality':
@@ -747,7 +745,7 @@ async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.
         setting_type = 'arr_type'
     if setting_type == 'folder':
         setting_type = 'root_folder'
-    settings_service = SettingsServices(session, app)
+    settings_service = SettingsServices(app, session)
     result = await settings_service.set_library_binding(library_name, setting_type, value)
 
     await event.answer(result.message)
@@ -771,7 +769,7 @@ async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Even
 
     library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
 
-    request_service = RequestService(session, app)
+    request_service = RequestService(app, session)
     # Give admin immediate feedback
     await event.answer("正在添加中...", alert=False)
 
@@ -801,7 +799,7 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
     """开始求片处理器 (Conversation Mode)"""
     user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
     chat_id = event.chat_id
-    request_service = RequestService(session, app)
+    request_service = RequestService(app, session)
     client = app.state.telethon_client.client
 
     # 检查权限
@@ -944,7 +942,7 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
     """开始上传字幕处理器 (Conversation Mode)"""
     user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
     chat_id = event.chat_id
-    subtitle_service = SubtitleService(session, app)
+    subtitle_service = SubtitleService(app, session)
     client = app.state.telethon_client.client
 
     # Start Conversation

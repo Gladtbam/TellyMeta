@@ -626,7 +626,7 @@ class VirtualFolderInfo(BaseModel):
     Locations: list[str] = Field(default_factory=list)
     CollectionType: str
     LibraryOptions: LibraryOption
-    ItemId: str
+    ItemId: str | None = None
     Id: str
     Guid: str
     PrimaryImageItemId: str
@@ -637,3 +637,16 @@ class VirtualFolderInfo(BaseModel):
 class QueryResult_VirtualFolderInfo(BaseModel):
     Items: list[VirtualFolderInfo] = Field(default_factory=list)
     TotalRecordCount: int
+
+class LibrarySubFolder(BaseModel):
+    Name: str
+    Id: str
+    Path: str
+    IsUserAccessConfigurable: bool
+
+class LibraryMediaFolder(BaseModel):
+    Name: str
+    Id: str
+    Guid: str
+    SubFolders: list[LibrarySubFolder] = Field(default_factory=list)
+    IsUserAccessConfigurable: bool

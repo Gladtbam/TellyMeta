@@ -20,7 +20,6 @@ settings = get_settings()
 
 class AccountService:
     def __init__(self, session: AsyncSession, media_service: MediaService) -> None:
-        self.session = session
         self.media_service = media_service
         self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)

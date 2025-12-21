@@ -7,13 +7,14 @@ from loguru import logger
 from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
-from models.emby import (BaseItemDto, BaseItemDtoQueryResult, QueryResult_VirtualFolderInfo, SessionInfoDto, UserDto,
-                         UserPolicy)
+from models.emby import (BaseItemDto, BaseItemDtoQueryResult, LibraryMediaFolder,
+                         QueryResult_VirtualFolderInfo, SessionInfoDto,
+                         UserDto, UserPolicy, VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
+class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -186,20 +187,22 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             return 0
         return len([session for session in response if session.NowPlayingItem])
 
-    async def get_library_names(self) -> list[str] | None:
+    async def get_libraries(self) -> list[VirtualFolderInfo] | None:
         """获取 Emby 的媒体库列表。
         Returns:
-            list[str] | None: 返回媒体库名称的列表，如果查询失败则返回 None。
+            list[VirtualFolderInfo] | None: 返回媒体库信息的列表，如果查询失败则返回 None。
         """
         url = "/Library/VirtualFolders/Query"
         response = await self.get(url, response_model=QueryResult_VirtualFolderInfo)
         if response is None:
             return None
-        libraries: list[str] = []
-        for item in response.Items:
-            if item.Locations:
-                libraries.append(item.Name)
-        return libraries
+        return response.Items
+
+    async def get_selectable_media_folders(self) -> list[LibraryMediaFolder] | None:
+        """获取 Emby 媒体文件夹"""
+        url = "/Library/SelectableMediaFolders"
+        return await self.get(url,
+            parser=lambda data: TypeAdapter(list[LibraryMediaFolder]).validate_python(data))
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Emby 媒体库中的所有媒体项。

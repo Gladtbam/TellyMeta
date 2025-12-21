@@ -19,12 +19,26 @@ from services.user_service import Result
 settings = get_settings()
 
 class SettingsServices:
-    def __init__(self, session: AsyncSession, app: FastAPI ) -> None:
+    def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.app = app
-        self.session = session
         self.client: TelethonClientWarper = app.state.telethon_client
         self.telegram_repo = TelegramRepository(session)
         self.config_repo = ConfigRepository(session)
+        self.media_client: MediaService = app.state.media_client
+        self._sonarr_client = app.state.sonarr_client
+        self._radarr_client = app.state.radarr_client
+
+    @property
+    def sonarr_client(self) -> SonarrClient:
+        if self._sonarr_client is None:
+            raise RuntimeError("Sonarr 客户端未配置")
+        return self._sonarr_client
+
+    @property
+    def radarr_client(self) -> RadarrClient:
+        if self._radarr_client is None:
+            raise RuntimeError("Radarr 客户端未配置")
+        return self._radarr_client
 
     async def get_admin_management_keyboard(self) -> Result:
         """获取管理员管理面板的键盘布局。
@@ -171,8 +185,11 @@ class SettingsServices:
         bindings = await self.config_repo.get_all_library_bindings()
         keyboard = []
 
-        for library_name in library_names:
+        for lib in libraries:
+            library_name = lib.Name
+
             binding = bindings.get(library_name, LibraryBindingModel(library_name=library_name))
+
             status = "❓ 未配置"
             if binding.quality_profile_id and binding.root_folder:
                 status = "✅"
@@ -184,6 +201,7 @@ class SettingsServices:
             library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8') # 避免回调数据中出现特殊字符
             keyboard.append([Button.inline(button_text, f"bind_library_{library_name_base64}".encode('utf-8'))])
         keyboard.append([Button.inline("« 返回管理面板", b"manage_main")])
+
 
         msg = textwrap.dedent("""\
             **媒体设置面板**
@@ -247,16 +265,13 @@ class SettingsServices:
         Returns:
             Result: 包含键盘布局的结果对象。
         """
-        sonarr_client: SonarrClient | None = self.app.state.sonarr_client if self.app.state.sonarr_client else None
-        radarr_client: RadarrClient | None = self.app.state.radarr_client if self.app.state.radarr_client else None
-        if sonarr_client is None or radarr_client is None:
-            return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
+        try:
         binding = await self.config_repo.get_library_binding(library_name)
         library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
         arr_type = binding.arr_type
 
         if arr_type == 'sonarr':
-            quality_profiles = await sonarr_client.get_quality_profiles()
+                quality_profiles = await self.sonarr_client.get_quality_profiles()
         elif arr_type == 'radarr':
             quality_profiles = await radarr_client.get_quality_profiles()
         else:
@@ -278,6 +293,8 @@ class SettingsServices:
             请选择一个质量配置文件。
         """)
         return Result(success=True, message=msg, keyboard=keyboard)
+        except RuntimeError:
+            return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
 
     async def get_root_folder_selection_keyboard(self, library_name: str) -> Result:
         """获取根文件夹选择的键盘布局。
@@ -286,18 +303,15 @@ class SettingsServices:
         Returns:
             Result: 包含键盘布局的结果对象.
         """
-        sonarr_client: SonarrClient | None = self.app.state.sonarr_client if self.app.state.sonarr_client else None
-        radarr_client: RadarrClient | None = self.app.state.radarr_client if self.app.state.radarr_client else None
-        if sonarr_client is None or radarr_client is None:
-            return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
+        try:
         binding = await self.config_repo.get_library_binding(library_name)
         library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
         arr_type = binding.arr_type
 
         if arr_type == 'sonarr':
-            root_folders = await sonarr_client.get_root_folders()
+                root_folders = await self.sonarr_client.get_root_folders()
         elif arr_type == 'radarr':
-            root_folders = await radarr_client.get_root_folders()
+                root_folders = await self.radarr_client.get_root_folders()
         else:
             return Result(success=False, message="请先设置媒体库的类型为 Sonarr 或 Radarr。",
                           keyboard=[Button.inline("去设置类型", data=f"select_typed_{library_name_base64}".encode('utf-8'))])
@@ -317,6 +331,8 @@ class SettingsServices:
             请选择一个根文件夹。
         """)
         return Result(success=True, message=msg, keyboard=keyboard)
+        except RuntimeError:
+            return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
 
     async def set_library_binding(self, library_name: str, key: str, value: str | int) -> Result:
         """设置媒体库绑定的某个属性。

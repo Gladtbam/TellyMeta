@@ -28,11 +28,10 @@ class Result:
 
 class UserService:
     def __init__(self, session: AsyncSession, media_service: MediaService) -> None:
-        self.session = session
         self.telegram_repo = TelegramRepository(session)
         self.media_repo = MediaRepository(session)
         self.code_repo = CodeRepository(session)
-        self.media_service = media_service
+        self.media_service: MediaService = media_service
 
     async def perform_checkin(self, user_id: int) -> Result:
         """用户签到，更新签到时间和签到次数。
@@ -136,7 +135,7 @@ class UserService:
             """)
 
         button_layout = [
-        [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nfsw'), ('忘记密码', 'me_forget_password')],
+        [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nsfw'), ('忘记密码', 'me_forget_password')],
         [('续期', 'me_renew'), ('线路查询', 'me_line'), ('查询续期积分', 'me_query_renew')],
         [('求片', f'me_request_{user.id}'), ('上传字幕', f'me_subtitle_{user.id}')]
         ]

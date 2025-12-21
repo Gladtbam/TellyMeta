@@ -20,7 +20,6 @@ settings = get_settings()
 
 class VerificationService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
-        self.session = session
         self.client: TelethonClientWarper = app.state.telethon_client
         self.scheduler: AsyncIOScheduler = app.state.scheduler
         self.verification_repo = VerificationRepository(session)

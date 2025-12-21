@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any, Generic
 
-from models.protocols import BaseItem, UserT, BaseItemT_co
+from models.emby import LibraryMediaFolder
+from models.protocols import BaseItem, BaseItemT_co, LibraryT, UserT
 
 
-class MediaService(ABC, Generic[UserT, BaseItemT_co]):
+class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT]):
     """定义媒体服务的抽象基类"""
 
     @abstractmethod
@@ -54,8 +55,15 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co]):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_library_names(self) -> list[str] | None:
-        """获取媒体库名称列表"""
+    async def get_libraries(self) -> Sequence[LibraryT] | None:
+        """获取媒体库列表"""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_selectable_media_folders(self) -> list[LibraryMediaFolder] | None:
+        """获取 Emby 媒体文件夹
+        仅 Emby
+        """
         raise NotImplementedError
 
     @abstractmethod

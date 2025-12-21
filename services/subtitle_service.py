@@ -19,9 +19,7 @@ from services.user_service import Result
 settings = get_settings()
 
 class SubtitleService:
-    def __init__(self, session: AsyncSession, app: FastAPI):
-        self.session = session
-        self.app = app
+    def __init__(self, app: FastAPI, session: AsyncSession):
         self.config_repo = ConfigRepository(session)
         self._sonarr_client = app.state.sonarr_client
         self._radarr_client = app.state.radarr_client

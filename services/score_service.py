@@ -22,7 +22,6 @@ class SettlementResult:
 
 class ScoreService:
     def __init__(self, session: AsyncSession, state: MessageTrackingState) -> None:
-        self.session = session
         self.state = state
         self.telegram_repo = TelegramRepository(session)
 

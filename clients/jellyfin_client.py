@@ -8,12 +8,13 @@ from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from models.jellyfin import (BaseItemDto, BaseItemDtoQueryResult,
-                             SessionInfoDto, UserDto, UserPolicy, VirtualFolderInfo)
+                             SessionInfoDto, UserDto, UserPolicy,
+                             VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
+class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo]):
     """Jellyfin 客户端
     用于与 Jellyfin 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -35,7 +36,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
 
     async def _apply_auth(self):
         return {
-            "Authorization": f"MediaBrowser Token {self._api_key}",
+            "Authorization": f"MediaBrowser Token={self._api_key}",
             "accept": "application/json",
             "Content-Type": "application/json"
         }
@@ -179,21 +180,17 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto]):
             return 0
         return len([session for session in response if session.NowPlayingItem])
 
-    async def get_library_names(self) -> list[str] | None:
+    async def get_libraries(self) -> list[VirtualFolderInfo] | None:
         """获取 Jellyfin 的媒体库列表。
         Returns:
-            list[str] | None: 返回媒体库名称的列表，如果查询失败则返回 None。
+            list[VirtualFolderInfo] | None: 返回媒体库信息的列表，如果查询失败则返回 None。
         """
         url = "/Library/VirtualFolders"
         response = await self.get(url,
             parser=lambda data: TypeAdapter(list[VirtualFolderInfo]).validate_python(data))
         if response is None:
             return None
-        libraries: list[str] = []
-        for item in response:
-            if item.Locations:
-                libraries.append(item.Name)
-        return libraries
+        return response
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Jellyfin 媒体库中的所有媒体项。

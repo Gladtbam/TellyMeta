@@ -26,6 +26,14 @@ class Dumpable(Protocol):
         ...
 
 @runtime_checkable
+class Library(Dumpable, Protocol):
+    """定义媒体库的协议"""
+    Name: str
+    ItemId: str | None
+
+LibraryT = TypeVar("LibraryT", bound=Library)
+
+@runtime_checkable
 class BaseItem(Dumpable, Protocol):
     """定义媒体项的协议"""
     Name: str
