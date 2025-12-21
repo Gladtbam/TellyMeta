@@ -64,3 +64,11 @@ class User(Dumpable, Protocol[PolicyT]):
     Policy: PolicyT
 
 UserT = TypeVar("UserT", bound=User)
+
+@runtime_checkable
+class DeviceInfo(Dumpable, Protocol):
+    """定义设备信息的协议"""
+    LastUserName: str
+    LastUserId: str
+
+DeviceInfoT = TypeVar("DeviceInfoT", bound=DeviceInfo)

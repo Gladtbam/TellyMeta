@@ -650,3 +650,16 @@ class LibraryMediaFolder(BaseModel):
     Guid: str
     SubFolders: list[LibrarySubFolder] = Field(default_factory=list)
     IsUserAccessConfigurable: bool
+
+class DevicesDeviceInfo(BaseModel):
+    Name: str
+    Id: str
+    InternalId: int | None = None
+    ReportedDeviceId: str
+    LastUserName: str
+    AppName: str
+    AppVersion: str
+    LastUserId: str
+    DateLastActivity: datetime
+    IconUrl: str
+    IpAddress: str

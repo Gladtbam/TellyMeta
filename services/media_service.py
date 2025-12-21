@@ -3,10 +3,11 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Generic
 
 from models.emby import LibraryMediaFolder
-from models.protocols import BaseItem, BaseItemT_co, LibraryT, UserT
+from models.protocols import (BaseItem, BaseItemT_co, DeviceInfoT, LibraryT,
+                              UserT)
 
 
-class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT]):
+class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT]):
     """定义媒体服务的抽象基类"""
 
     @abstractmethod
@@ -64,6 +65,11 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT]):
         """获取 Emby 媒体文件夹
         仅 Emby
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfoT | None:
+        """"通过设备 ID 获取用户 ID"""
         raise NotImplementedError
 
     @abstractmethod

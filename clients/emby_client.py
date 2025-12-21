@@ -7,14 +7,15 @@ from loguru import logger
 from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
-from models.emby import (BaseItemDto, BaseItemDtoQueryResult, LibraryMediaFolder,
+from models.emby import (BaseItemDto, BaseItemDtoQueryResult,
+                         DevicesDeviceInfo, LibraryMediaFolder,
                          QueryResult_VirtualFolderInfo, SessionInfoDto,
                          UserDto, UserPolicy, VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo]):
+class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo, DevicesDeviceInfo]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -203,6 +204,17 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Virtual
         url = "/Library/SelectableMediaFolders"
         return await self.get(url,
             parser=lambda data: TypeAdapter(list[LibraryMediaFolder]).validate_python(data))
+
+    async def get_user_id_by_device_id(self, device_id: str) -> DevicesDeviceInfo | None:
+        """通过设备 ID 获取用户 ID
+        Args:
+            device_id (str): Emby 用户设备 ID
+        Returns:
+            DevicesDeviceInfo | None
+        """
+        url = "/Devices/Info"
+        params = {'Id': device_id}
+        return await self.get(url, params=params, response_model=DevicesDeviceInfo)
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Emby 媒体库中的所有媒体项。

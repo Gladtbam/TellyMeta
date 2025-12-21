@@ -8,13 +8,13 @@ from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from models.jellyfin import (BaseItemDto, BaseItemDtoQueryResult,
-                             SessionInfoDto, UserDto, UserPolicy,
-                             VirtualFolderInfo)
+                             DeviceInfoDto, SessionInfoDto, UserDto,
+                             UserPolicy, VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo]):
+class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo, DeviceInfoDto]):
     """Jellyfin 客户端
     用于与 Jellyfin 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -194,6 +194,17 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Vir
 
     async def get_selectable_media_folders(self):
         raise NotImplementedError
+
+    async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfoDto | None:
+        """通过设备 ID 获取用户 ID
+        Args:
+            device_id (str): Jellyfin 用户设备 ID
+        Returns:
+            DeviceInfoDto | None
+        """
+        url = "/Devices/Info"
+        params = {'id': device_id}
+        return await self.get(url, params=params, response_model=DeviceInfoDto)
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Jellyfin 媒体库中的所有媒体项。

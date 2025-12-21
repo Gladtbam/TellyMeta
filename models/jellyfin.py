@@ -646,3 +646,16 @@ class VirtualFolderInfo(BaseModel):
     PrimaryImageItemId: str | None = None
     RefreshProgress: float | None = None
     RefreshStatus: str | None = None
+
+class DeviceInfoDto(BaseModel):
+    Name: str | None = None
+    CustomName: str | None = None
+    AccessToken: str | None = None
+    Id: str | None = None
+    LastUserName: str
+    AppName: str | None = None
+    AppVersion: str | None = None
+    LastUserId: str
+    DateLastActivity: str | None = None
+    Capabilities: ClientCapabilitiesDto
+    IconUrl:str | None = None
