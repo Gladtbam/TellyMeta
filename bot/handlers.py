@@ -621,7 +621,7 @@ async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event,
     panel_result = await settings_service.get_system_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media|system|main)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_(admins|notify|media|system|main|nsfw_library)'))
 @provide_db_session
 async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """管理面板处理器
@@ -638,12 +638,28 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
         result = await settings_service.get_media_panel()
     elif action == 'system':
         result = await settings_service.get_system_panel()
+    elif action == 'nsfw_library':
+        result = await settings_service.get_nsfw_library_panel()
     elif action == 'main':
         result = await settings_service.get_admin_management_keyboard()
     else:
         result = Result(False, "该功能尚未实现。")
 
     await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_nsfw_lib_(.+)'))
+@provide_db_session
+async def toggle_nsfw_lib_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """切换nsfw媒体库处理器"""
+    lib_id = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    settings_service = SettingsServices(app, session)
+
+    result = await settings_service.toggle_nsfw_library(lib_id)
+    await event.answer(result.message)
+
+    # 刷新面板
+    panel_result = await settings_service.get_nsfw_library_panel()
+    await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_admin_(\\d+)'))
 @provide_db_session

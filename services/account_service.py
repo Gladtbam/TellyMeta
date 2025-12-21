@@ -124,16 +124,39 @@ class AccountService:
             if media is None:
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-            blocked_media_folders = await self.config_repo.get_settings('nsfw_library', '')
-            if blocked_media_folders:
-                blocked_media_folders = blocked_media_folders.split('|')
-            else:
-                blocked_media_folders = []
-
-            policy = {"BlockedMediaFolders": blocked_media_folders}
-            await self.media_service.update_policy(media.Id, policy, is_none=True)
-
             await self.media_repo.create(user_id, media.Id, username)
+
+            # 应用默认 NSFW 策略
+            # 如果默认禁用 NSFW (nsfw_enabled='false')，则限制对 NSFW 库的访问。
+            nsfw_enabled = await self.config_repo.get_settings('nsfw_enabled', 'true') == 'true'
+            nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
+            nsfw_sub_ids_str = await self.config_repo.get_settings('nsfw_sub_library', '')
+
+            if not nsfw_enabled and nsfw_ids_str:
+                nsfw_ids = nsfw_ids_str.split('|')
+                all_libs = await self.media_service.get_libraries() or []
+
+                safe_libs = [
+                    lib.ItemId for lib in all_libs
+                    if lib.ItemId and lib.ItemId not in nsfw_ids
+                ]
+
+                if settings.media_server.lower() == 'emby' and nsfw_sub_ids_str:
+                    nsfw_sub_ids = nsfw_sub_ids_str.split('|')
+                    await self.media_service.update_policy(media.Id, {
+                        'EnableAllFolders': False,
+                        'EnabledFolders': safe_libs,
+                        'ExcludedSubFolders': nsfw_sub_ids
+                    })
+                else:
+                    await self.media_service.update_policy(media.Id, {
+                        'EnableAllFolders': False,
+                        'EnabledFolders': safe_libs
+                    })
+            else:
+                await self.media_service.update_policy(media.Id, {
+                    'EnableAllFolders': True
+                })
 
             return Result(True, textwrap.dedent(f"""\
                 注册成功！您的账户信息如下：
@@ -242,29 +265,67 @@ class AccountService:
         if not isinstance(media_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
-        nsfw = await self.config_repo.get_settings('nsfw_library', '')
-        if not nsfw:
-            return Result(False, "管理员尚未设置 NSFW 过滤标签，无法切换 NSFW 策略。")
-        nsfw = nsfw.split('|')
+        is_emby = settings.media_server.lower() == 'emby'
+        nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
+        if not nsfw_ids_str:
+            return Result(False, "管理员尚未设置 NSFW 媒体库，无法切换 NSFW 策略。")
+        nsfw_ids = {i for i in nsfw_ids_str.split('|') if i}
 
-        blocked_media_folders = media_info.Policy.BlockedMediaFolders
-        if nsfw in blocked_media_folders:
-            blocked_media_folders = []
-            action = '解除'
+        nsfw_sub_ids: set[str] = set()
+        if is_emby:
+            nsfw_sub_ids_str = await self.config_repo.get_settings('nsfw_sub_library', '')
+            nsfw_sub_ids = {i for i in nsfw_sub_ids_str.split('|') if i} if nsfw_sub_ids_str else set()
+
+        all_libs = await self.media_service.get_libraries()
+        if not all_libs:
+            return Result(False, "获取媒体库列表失败，请稍后重试。")
+
+
+        current_enabled_folders = media_info.Policy.EnabledFolders
+        enable_all_folders = media_info.Policy.EnableAllFolders
+
+        is_nsfw_enabled = False
+        if not enable_all_folders:
+            is_nsfw_enabled = True
         else:
-            blocked_media_folders = nsfw
-            action = '设置'
+            if any(nid in current_enabled_folders for nid in nsfw_ids):
+                is_nsfw_enabled = True
 
         policy = media_info.Policy.model_dump()
-        policy['BlockedMediaFolders'] = blocked_media_folders
+
+        if is_nsfw_enabled:
+            # Turn OFF
+            policy['EnableAllFolders'] = True
+            policy['EnabledFolders'] = []
+            if is_emby:
+                policy['ExcludedSubFolders'] = []
+            action = "关闭"
+
+        else:
+            # Turn ON
+            new_enabled = [
+                lib.ItemId
+                for lib in all_libs
+                if lib.ItemId and lib.ItemId not in nsfw_ids
+            ]
+            if is_emby:
+                new_enabled = [
+                    lib.Guid
+                    for lib in all_libs
+                    if lib.Guid and lib.Guid not in nsfw_ids
+                ]
+            policy['EnableAllFolders'] = False
+            policy['EnabledFolders'] = new_enabled
+            if is_emby:
+                policy['ExcludedSubFolders'] = nsfw_sub_ids
+            action = "开启"
 
         try:
             await self.media_service.update_policy(media_user.media_id, policy)
 
             return Result(True, textwrap.dedent(f"""\
                 操作成功，已为您**{action}** NSFW 策略。
-                - 当前 NSFW 策略: {'开启' if 'Japan' not in blocked_media_folders else '关闭'}
-                - 说明: 开启后，含有 'Japan' 标签的内容将被屏蔽。
+                - 当前 NSFW 策略: {action}
             """))
         except HTTPError:
             return Result(False, "请稍后重试")

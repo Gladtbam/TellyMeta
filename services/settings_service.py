@@ -10,6 +10,7 @@ from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from models.emby import LibraryMediaFolder
 from models.orm import LibraryBindingModel
 from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
@@ -176,10 +177,8 @@ class SettingsServices:
         Returns:
             Result: 包含媒体设置和键盘布局的结果对象。
         """
-        media_client: MediaService = self.app.state.media_client
-
-        library_names = await media_client.get_library_names()
-        if library_names is None:
+        libraries = await self.media_client.get_libraries()
+        if libraries is None:
             return Result(success=False, message="获取媒体库名称失败，请检查媒体服务器连接。")
 
         bindings = await self.config_repo.get_all_library_bindings()
@@ -200,6 +199,7 @@ class SettingsServices:
             """)
             library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8') # 避免回调数据中出现特殊字符
             keyboard.append([Button.inline(button_text, f"bind_library_{library_name_base64}".encode('utf-8'))])
+        keyboard.append([Button.inline("设置 NSFW 媒体库", b"manage_nsfw_library")])
         keyboard.append([Button.inline("« 返回管理面板", b"manage_main")])
 
 
@@ -266,33 +266,33 @@ class SettingsServices:
             Result: 包含键盘布局的结果对象。
         """
         try:
-        binding = await self.config_repo.get_library_binding(library_name)
-        library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
-        arr_type = binding.arr_type
+            binding = await self.config_repo.get_library_binding(library_name)
+            library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
+            arr_type = binding.arr_type
 
-        if arr_type == 'sonarr':
+            if arr_type == 'sonarr':
                 quality_profiles = await self.sonarr_client.get_quality_profiles()
-        elif arr_type == 'radarr':
-            quality_profiles = await radarr_client.get_quality_profiles()
-        else:
-            return Result(success=False, message="请先设置媒体库的类型为 Sonarr 或 Radarr。",
-                          keyboard=[Button.inline("去设置类型", data=f"select_typed_{library_name_base64}".encode('utf-8'))])
+            elif arr_type == 'radarr':
+                quality_profiles = await self.radarr_client.get_quality_profiles()
+            else:
+                return Result(success=False, message="请先设置媒体库的类型为 Sonarr 或 Radarr。",
+                    keyboard=[Button.inline("去设置类型", data=f"select_typed_{library_name_base64}".encode('utf-8'))])
 
-        if quality_profiles is None:
-            return Result(success=False, message="获取质量配置文件失败，请检查 Sonarr/Radarr 连接。")
+            if quality_profiles is None:
+                return Result(success=False, message="获取质量配置文件失败，请检查 Sonarr/Radarr 连接。")
 
-        keyboard = []
-        for profile in quality_profiles:
-            callback_data = f"set_quality_{profile.id}_{library_name_base64}"
-            keyboard.append([Button.inline(f"{profile.name}: {profile.id}", callback_data.encode('utf-8'))])
+            keyboard = []
+            for profile in quality_profiles:
+                callback_data = f"set_quality_{profile.id}_{library_name_base64}"
+                keyboard.append([Button.inline(f"{profile.name}: {profile.id}", callback_data.encode('utf-8'))])
 
-        keyboard.append([Button.inline("« 返回媒体库绑定设置", data=f"bind_library_{library_name_base64}".encode('utf-8'))])
+            keyboard.append([Button.inline("« 返回媒体库绑定设置", data=f"bind_library_{library_name_base64}".encode('utf-8'))])
 
-        msg = textwrap.dedent(f"""\
-            **选择 {library_name} 的质量配置文件**
-            请选择一个质量配置文件。
-        """)
-        return Result(success=True, message=msg, keyboard=keyboard)
+            msg = textwrap.dedent(f"""\
+                **选择 {library_name} 的质量配置文件**
+                请选择一个质量配置文件。
+            """)
+            return Result(success=True, message=msg, keyboard=keyboard)
         except RuntimeError:
             return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
 
@@ -304,33 +304,33 @@ class SettingsServices:
             Result: 包含键盘布局的结果对象.
         """
         try:
-        binding = await self.config_repo.get_library_binding(library_name)
-        library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
-        arr_type = binding.arr_type
+            binding = await self.config_repo.get_library_binding(library_name)
+            library_name_base64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
+            arr_type = binding.arr_type
 
-        if arr_type == 'sonarr':
+            if arr_type == 'sonarr':
                 root_folders = await self.sonarr_client.get_root_folders()
-        elif arr_type == 'radarr':
+            elif arr_type == 'radarr':
                 root_folders = await self.radarr_client.get_root_folders()
-        else:
-            return Result(success=False, message="请先设置媒体库的类型为 Sonarr 或 Radarr。",
-                          keyboard=[Button.inline("去设置类型", data=f"select_typed_{library_name_base64}".encode('utf-8'))])
+            else:
+                return Result(success=False, message="请先设置媒体库的类型为 Sonarr 或 Radarr。",
+                    keyboard=[Button.inline("去设置类型", data=f"select_typed_{library_name_base64}".encode('utf-8'))])
 
-        if root_folders is None:
-            return Result(success=False, message="获取根文件夹失败，请检查 Sonarr/Radarr 连接。")
+            if root_folders is None:
+                return Result(success=False, message="获取根文件夹失败，请检查 Sonarr/Radarr 连接。")
 
-        keyboard = []
-        for folder in root_folders:
-            callback_data = f"set_folder_{folder.path}_{library_name_base64}"
-            keyboard.append([Button.inline(folder.path, callback_data.encode('utf-8'))])
+            keyboard = []
+            for folder in root_folders:
+                callback_data = f"set_folder_{folder.path}_{library_name_base64}"
+                keyboard.append([Button.inline(folder.path, callback_data.encode('utf-8'))])
 
-        keyboard.append([Button.inline("« 返回媒体库绑定设置", data=f"bind_library_{library_name_base64}".encode('utf-8'))])
+            keyboard.append([Button.inline("« 返回媒体库绑定设置", data=f"bind_library_{library_name_base64}".encode('utf-8'))])
 
-        msg = textwrap.dedent(f"""\
-            **选择 {library_name} 的根文件夹**
-            请选择一个根文件夹。
-        """)
-        return Result(success=True, message=msg, keyboard=keyboard)
+            msg = textwrap.dedent(f"""\
+                **选择 {library_name} 的根文件夹**
+                请选择一个根文件夹。
+            """)
+            return Result(success=True, message=msg, keyboard=keyboard)
         except RuntimeError:
             return Result(success=False, message="Sonarr 或 Radarr 客户端未配置，无法获取媒体设置面板。")
 
@@ -359,10 +359,14 @@ class SettingsServices:
         verify_status = "✅ 开启" if verify_enabled else "❌ 关闭"
         request_status = "✅ 开启" if request_enabled else "❌ 关闭"
 
+        nsfw_enabled = await self.config_repo.get_settings('nsfw_enabled', 'true') == 'true'
+        nsfw_status = "✅ 开启" if nsfw_enabled else "❌ 关闭"
+
         keyboard = [
             [Button.inline(f"积分/签到功能: {points_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_POINTS}".encode('utf-8'))],
             [Button.inline(f"入群验证: {verify_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_VERIFICATION}".encode('utf-8'))],
             [Button.inline(f"求片: {request_status}", f"toggle_system_{ConfigRepository.KEY_ENABLE_REQUESTMEDIA}".encode('utf-8'))],
+            [Button.inline(f"新用户默认开启 NSFW: {nsfw_status}", b"toggle_system_nsfw_enabled")],
             [Button.inline("« 返回管理面板", b"manage_main")]
         ]
         msg = textwrap.dedent("""\
@@ -383,3 +387,72 @@ class SettingsServices:
             return Result(success=True, message=f"已{status_text}该功能。")
         except Exception as e:
             return Result(success=False, message=f"设置失败: {str(e)}")
+
+    async def get_nsfw_library_panel(self) -> Result:
+        """获取 nsfw 媒体库设置面板"""
+        libraries = await self.media_client.get_libraries()
+
+        if libraries is None:
+            return Result(success=False, message="获取媒体库列表失败，请检查媒体服务器连接。")
+
+
+        nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
+        nsfw_ids = nsfw_ids_str.split('|') if nsfw_ids_str else []
+
+        keyboard = []
+        for lib in libraries:
+            lib_name = lib.Name
+            lib_id = lib.ItemId if settings.media_server.lower() == 'jellyfin' else lib.Guid
+
+            if not lib_id:
+                continue
+
+            status = "✅" if lib_id in nsfw_ids else "❌"
+
+            button_text = f"{status} {lib_name}"
+            callback_data = f"toggle_nsfw_lib_{lib_id}"
+            keyboard.append([Button.inline(button_text, callback_data.encode('utf-8'))])
+
+        keyboard.append([Button.inline("« 返回媒体设置", b"manage_media")])
+
+        msg = textwrap.dedent("""\
+            **nsfw 媒体库设置**
+            点击按钮以将其标记为 NSFW 媒体库。
+            标记为 NSFW 的媒体库将允许用户自行选择是否单独开启/关闭。
+        """)
+        return Result(success=True, message=msg, keyboard=keyboard)
+
+    async def toggle_nsfw_library(self, lib_id: str) -> Result:
+        """切换 nsfw 媒体库设置"""
+        is_emby = settings.media_server.lower() == 'emby'
+        nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
+        # nsfw_ids = set(nsfw_ids_str.split('|')) if nsfw_ids_str else set()
+        nsfw_ids = {i for i in nsfw_ids_str.split('|') if i} if nsfw_ids_str else set()
+        sub_folders: list[LibraryMediaFolder] | None = None
+        nsfw_sub_ids: set[str] = set()
+
+        if is_emby:
+            nsfw_sub_ids_str = await self.config_repo.get_settings('nsfw_sub_library', '')
+            nsfw_sub_ids = {i for i in nsfw_sub_ids_str.split('|') if i} if nsfw_sub_ids_str else set()
+            sub_folders = await self.media_client.get_selectable_media_folders()
+
+        if lib_id in nsfw_ids:
+            nsfw_ids.remove(lib_id)
+            if is_emby:
+                nsfw_sub_ids = {sub_id for sub_id in nsfw_sub_ids if not sub_id.startswith(f"{lib_id}_")}
+            action = "移除"
+        else:
+            nsfw_ids.add(lib_id)
+            if is_emby and sub_folders:
+                for folder in sub_folders:
+                    if folder.Guid == lib_id:
+                        nsfw_sub_ids.update(f"{lib_id}_{sub.Id}" for sub in folder.SubFolders)
+            action = "添加"
+
+        new_ids_str = '|'.join(nsfw_ids)
+        await self.config_repo.set_settings('nsfw_library', new_ids_str)
+        if is_emby:
+            new_sub_ids_str = '|'.join(nsfw_sub_ids)
+            await self.config_repo.set_settings('nsfw_sub_library', value=new_sub_ids_str)
+
+        return Result(success=True, message=f"已{action}该媒体库。")

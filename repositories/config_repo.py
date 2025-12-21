@@ -35,7 +35,8 @@ class ConfigRepository:
             'registration_count_limit': '0',
             'registration_time_limit': '0',
             'code_expiry_days': '30',
-            'nsfw_library': 'Japan|Hentai|Erotica|Adult',
+            'nsfw_library': '',
+            'nsfw_sub_library': '',
             'nsfw_enabled': 'true'
         }
 
