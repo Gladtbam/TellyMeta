@@ -25,7 +25,7 @@ def setup_logging():
 
     logger.add(
         LOGS_DIR / "tellymeta.log",
-        level=settings.log_level,
+        level=settings.log_level.upper(),
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
         rotation="00:00",  # 每天生成一个新的日志文件
         retention="7 days",  # 保留最近7天的日志文件
@@ -63,6 +63,7 @@ class Settings(BaseSettings):
 
     log_level: str = 'INFO'
     timezone: str = 'Asia/Shanghai'
+    port: int = 5080
     tmdb_api_key: str = ''
     tvdb_api_key: str = ''
     media_server_url: str = ''

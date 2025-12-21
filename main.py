@@ -4,11 +4,12 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 import bot.handlers
-from core.config import setup_logging
+from core.config import get_settings, setup_logging
 from core.lifespan import lifespan
 from routes.webhooks import router as webhooks_router
 
 setup_logging()
+settings = get_settings()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(webhooks_router)
@@ -23,4 +24,4 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=5080, log_level="info", reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, log_level=settings.log_level.lower(), reload=False)
