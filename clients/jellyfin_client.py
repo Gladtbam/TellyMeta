@@ -192,6 +192,9 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Vir
             return None
         return response
 
+    async def get_selectable_media_folders(self):
+        raise NotImplementedError
+
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Jellyfin 媒体库中的所有媒体项。
         Yields:
