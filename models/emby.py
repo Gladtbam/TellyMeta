@@ -4,17 +4,6 @@ from datetime import datetime, time
 from pydantic import BaseModel, Field
 
 
-class EmbyItem(BaseModel):
-    """Emby Webhook Item 模型"""
-    Name: str
-    Id: str
-    Path: str | None = None
-
-class EmbyPayload(BaseModel):
-    """Emby Webhook 接收数据模型"""
-    Event: str
-    Item: EmbyItem | None = None
-
 class AccessSchedule(BaseModel):
     """Emby 访问时间模型"""
     DayOfWeek: str
@@ -267,8 +256,8 @@ class BaseItemDto(BaseModel):
     Prefix: str | None = None
     TunerName: str | None = None
     PlaylistItemId: str | None = None
-    DateCreated: str | None = None # datetime
-    DateModified: str | None = None # datetime
+    DateCreated: datetime | None = None
+    DateModified: datetime | None = None
     VideoCodec: str | None = None
     AudioCodec: str | None = None
     AverageFrameRate: float | None = None
@@ -292,7 +281,7 @@ class BaseItemDto(BaseModel):
     SortName: str | None = None
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
-    PremiereDate: str | None = None # datetime
+    PremiereDate: datetime | None = None
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None = None
@@ -322,7 +311,7 @@ class BaseItemDto(BaseModel):
     RemoteTrailers: list[ExternalUrl] = Field(default_factory=list) # MediaUrl
     ProviderIds: dict[str, str] = Field(default_factory=dict)
     IsFolder: bool | None = None
-    ParentId: str
+    ParentId: str | None = None
     Type: str
     People: list[BaseItemPerson] = Field(default_factory=list)
     Studios: list[NameLongIdPair] = Field(default_factory=list)
@@ -509,32 +498,32 @@ class TranscodingInfoDto(BaseModel):
 
 class SessionInfoDto(BaseModel):
     """Emby 会话模型"""
-    PlayState: PlayerStateInfo
+    PlayState: PlayerStateInfo | None = None
     AdditionalUsers: list[SessionUserInfo] = Field(default_factory=list)
     RemoteEndPoint: str
-    Protocol: str
+    Protocol: str | None = None
     PlayableMediaTypes: list[str] = Field(default_factory=list)
     PlaylistItemId: str | None = None
-    PlaylistIndex: int
-    PlaylistLength: int
+    PlaylistIndex: int | None = None
+    PlaylistLength: int | None = None
     Id: str
-    ServerId: str
+    ServerId: str | None = None
     UserId: str | None = None
     PartyId: str | None = None
     UserName: str | None = None
     UserPrimaryImageTag: str | None = None
     Client: str
-    LastActivityDate: datetime
+    LastActivityDate: datetime | None = None
     DeviceName: str
     DeviceType: str | None = None
     NowPlayingItem: BaseItemDto | None = None
-    InternalDeviceId: int
+    InternalDeviceId: int | None = None
     DeviceId: str
     ApplicationVersion: str
     AppIconUrl: str | None = None
     SupportedCommands: list[str] = Field(default_factory=list)
     TranscodingInfo: TranscodingInfoDto | None = None
-    SupportsRemoteControl: bool
+    SupportsRemoteControl: bool | None = None
 
 class MediaPathInfo(BaseModel):
     Path: str
@@ -663,3 +652,83 @@ class DevicesDeviceInfo(BaseModel):
     DateLastActivity: datetime
     IconUrl: str
     IpAddress: str
+
+#====================================================
+#      WebHook
+#====================================================
+class EmbyUser(BaseModel):
+    """用户信息"""
+    Name: str
+    Id: str
+
+class ServerDto(BaseModel):
+    """服务端信息"""
+    Name: str
+    Id: str
+    Version: str
+
+class PlaybackInfoDto(BaseModel):
+    """播放信息"""
+    PositionTicks: int
+    PlaylistIndex: int
+    PlaylistLength: int
+    PlaySessionId: str
+    MediaSource: MediaSourceInfo
+
+class DeviceInfoDto(BaseModel):
+    """客户端信息"""
+    Name: str
+    AppName: str
+    AppVersion: str
+
+class PackageVersionInfoDto(BaseModel):
+    """Plugin 信息"""
+    name: str
+    versionStr: str
+    classification: str
+    description: str
+    requiredVersionStr: str
+    sourceUrl: str
+    checksum: str
+    targetFilename: str
+    runtimes: str
+    timestamp: datetime
+
+class EmbyPayload(BaseModel):
+    """Emby Webhook 接收数据模型
+    Evnet:
+        library:
+            new
+            deleted
+        playback:
+            start
+            unpause
+            pause
+            stop
+        plugins:
+            plugininstalled
+        scheduledtasks:
+            completed
+        system:
+            notificationtest
+            serverrestartrequired
+            serverstartup
+        user:
+            authenticated
+            authenticationfailed
+            deleted
+            passwordchanged
+            policyupdated
+    """
+    Event: str
+    Title: str
+    Description: str | None = None
+    Date: datetime
+    Severity: str
+    Item: BaseItemDto | None = None
+    User: EmbyUser | None = None
+    Server: ServerDto
+    Session: SessionInfoDto | None = None
+    PlaybackInfo: PlaybackInfoDto | None = None
+    DeviceInfo: DeviceInfoDto | None = None
+    PackageVersionInfo: PackageVersionInfoDto | None = None

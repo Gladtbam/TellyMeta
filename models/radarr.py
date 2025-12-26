@@ -1,9 +1,13 @@
 # from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
+from typing import Annotated, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field, field_validator
 
 from core.config import genre_mapping
+
+
+EventT = TypeVar("EventT", bound=str)
 
 class Languages(BaseModel):
     """Radarr 语言模型"""
@@ -267,3 +271,191 @@ class QualityProfileResource(BaseModel):
     def to_dict(self) -> dict[int, str]:
         """将质量配置文件转换为字典形式，键为 id，值为 name。"""
         return {self.id: self.name if self.name else ""}
+
+#====================================================
+#      RadarrWebHook
+#====================================================
+class customFormatInfoDto(BaseModel):
+    customFormats: list[CustomFormatResource] = Field(default_factory=list)
+    customFormatScore: int | None = None
+
+    @property
+    def formats_str(self):
+        """将 format 列表 输出 字符串"""
+        if not self.customFormats:
+            return ""
+        return ",".join(_format.name for _format in self.customFormats if _format.name)
+
+class Movie(BaseModel):
+    """Radarr movie 模型"""
+    id: int
+    title: str
+    year: int
+    releaseDate: str
+    folderPath: str
+    tmdbId: int
+    imdbId: str
+    overview: str
+    genres: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    images: list[MediaCover] = Field(default_factory=list)
+    originalLanguage: Languages
+
+    @field_validator('genres', mode='before')
+    @classmethod
+    def validate_genres(cls, value):
+        if not isinstance(value, list):
+            return value
+        return [genre_mapping.get(genre, genre) for genre in value]
+
+class RemoteMovie(BaseModel):
+    """Radarr remote"""
+    tmdbId: int
+    imdbId: str
+    title: str
+    year: int
+
+class MediaInfoDto(BaseModel):
+    """Radarr 媒体信息"""
+    audioChannels: float
+    audioCodec: str
+    audioLanguage: list[str] = Field(default_factory=list)
+    height: int
+    width: int
+    subtitles: list[str] = Field(default_factory=list)
+    videoCodec: str | None = None
+    videoDynamicRange: str | None = None
+    videoDynamicRangeType: str | None = None
+
+class FileInfoDto(BaseModel):
+    """Radarr 文件模型"""
+    id: int
+    relativePath: str
+    path: str
+    quality: str
+    qualityVersion: int
+    releaseGroup: str
+    sceneName: str
+    indexerFlags: str
+    size: int
+    dateAdded: datetime
+    languages: list[Languages] = Field(default_factory=list)
+    mediaInfo: MediaInfoDto | None = None
+    sourcePath: str| None = None
+
+class RadarrRelease(BaseModel):
+    """release"""
+    quality: str
+    qualityVersion: int
+    releaseGroup: str
+    releaseTitle: str
+    indexer: str
+    size: str
+    customFormatScore: int | None = None
+    customFormats: list[str] = Field(default_factory=list)
+    languages: list[Languages] = Field(default_factory=list)
+    indexerFlags: list[str] = Field(default_factory=list)
+
+class RenamedMovieFiles(BaseModel):
+    previousRelativePath: str
+    previousPath: str
+
+class DownloadInfo(BaseModel):
+    quality: str
+    qualityVersion: int
+    title: str
+    size: int
+
+class WebhookBase(BaseModel, Generic[EventT]):
+    eventType: EventT
+    instanceName: str | None = None
+    applicationUrl: str | None = None
+
+class RadarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
+    eventType: Literal["Grab"]
+    movie: Movie
+    remoteMovie: RemoteMovie
+    release: RadarrRelease
+    downloadClient: str
+    downloadClientType: str
+    downloadId: str
+    customFormatInfo: customFormatInfoDto
+
+class RadarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
+    """
+        WebhookImportPayload
+    """
+    eventType: Literal["Download"]
+    movie: Movie
+    remoteMovie: RemoteMovie
+    movieFile: FileInfoDto
+    release: RadarrRelease
+    isUpgrade: bool
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str
+    customFormatInfo: customFormatInfoDto
+
+class RadarrWebhookAddedPayload(WebhookBase[Literal["MovieAdded"]]):
+    eventType: Literal["MovieAdded"]
+    movie: Movie
+    addMethod: str
+
+class RadarrWebhookMovieFileDeletePayload(WebhookBase[Literal["MovieFileDelete"]]):
+    eventType: Literal["MovieFileDelete"]
+    movie: Movie
+    movieFile: FileInfoDto
+    deleteReason: str
+
+class RadarrWebhookMovieDeletePayload(WebhookBase[Literal["MovieDelete"]]):
+    eventType: Literal["MovieDelete"]
+    movie: Movie
+    deletedFiles: bool
+    movieFolderSize: int | None = None
+
+class RadarrWebhookRenamePayload(WebhookBase[Literal["Rename"]]):
+    eventType: Literal["Rename"]
+    movie: Movie
+    renamedMovieFiles: list[RenamedMovieFiles] = Field(default_factory=list)
+
+class RadarrWebhookHealthPayload(WebhookBase[Literal["Health", "HealthRestored"]]):
+    eventType: Literal["Health", "HealthRestored"]
+    level: str
+    message: str
+    type: str
+    wikiUrl: str | None = None
+
+class RadarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpdate"]]):
+    eventType: Literal["ApplicationUpdate"]
+    message: str
+    previousVersion: str
+    newVersion: str
+
+class RadarrWebhookManualInteractionPayload(WebhookBase[Literal["ManualInteractionRequired"]]):
+    eventType: Literal["ManualInteractionRequired"]
+    movie: Movie
+    downloadInfo: DownloadInfo
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str
+    downloadStatus: str
+    # downloadStatusMessages: list[dict] = Field(default_factory=list)
+    customFormatInfo: customFormatInfoDto
+    # release: RadarrRelease
+
+class RadarrWebhookTestPayload(WebhookBase[Literal["Test"]]):
+    eventType: Literal["Test"]
+
+RadarrPayload = Annotated[
+    RadarrWebhookGrabPayload |
+    RadarrWebhookDownloadPayload |
+    RadarrWebhookAddedPayload |
+    RadarrWebhookMovieFileDeletePayload |
+    RadarrWebhookMovieDeletePayload |
+    RadarrWebhookRenamePayload |
+    RadarrWebhookHealthPayload |
+    RadarrWebhookApplicationUpdatePayload |
+    RadarrWebhookManualInteractionPayload |
+    RadarrWebhookTestPayload,
+    Field(discriminator="eventType")
+]

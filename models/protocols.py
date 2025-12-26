@@ -9,6 +9,7 @@ class Dumpable(Protocol):
     def model_dump(
         self,
         *,
+        mode: str | Literal['json', 'python'] = 'json',
         context: Any | None = None,
         by_alias: bool | None = None,
         exclude_unset: bool = False,

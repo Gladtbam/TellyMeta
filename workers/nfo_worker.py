@@ -7,15 +7,16 @@ from loguru import logger
 
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
-from models.sonarr import SonarrPayload
+from models.sonarr import (SonarrWebhookDownloadPayload,
+                           SonarrWebhookSeriesAddPayload)
 from models.tmdb import TmdbEpisode, TmdbFindPayload, TmdbTv
 from models.tvdb import TvdbEpisodesData, TvdbSeriesData
 
 
-async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbClient, tvdb: TvdbClient | None = None) -> None:
+async def create_series_nfo(payload: SonarrWebhookSeriesAddPayload, tmdb: TmdbClient, tvdb: TvdbClient | None = None) -> None:
     """创建剧集 NFO 文件
     Args:
-        payload (SonarrPayload): Sonarr Webhook 负载数据。
+        payload (WebhookSeriesAddPayload): Sonarr Webhook SeriesAdd 负载数据。
         tmdb (TmdbClient): 用于获取 TMDB 信息的客户端实例。
         tvdb (TvdbClient | None): 用于获取 TVDB 信息的客户端实例。
     """
@@ -67,10 +68,10 @@ async def create_series_nfo(payload: SonarrPayload, tmdb: TmdbClient, tvdb: Tvdb
         await nfo_file.write(nfo_content)
     logger.info("已为系列 {} 创建 tvshow.nfo", payload.series.title)
 
-async def create_episode_nfo(payload: SonarrPayload, tmdb: TmdbClient, tvdb: TvdbClient | None = None) -> None:
+async def create_episode_nfo(payload: SonarrWebhookDownloadPayload, tmdb: TmdbClient, tvdb: TvdbClient | None = None) -> None:
     """创建剧集 NFO 文件
     Args:
-        payload (SonarrPayload): Sonarr Webhook 负载数据。
+        payload (WebhookDownloadPayload): Sonarr Webhook DownloadPayload负载数据。
         tmdb (TmdbClient): 用于获取 TMDB 信息的客户端实例。
     """
     if not payload.episodes or not payload.episodeFile:

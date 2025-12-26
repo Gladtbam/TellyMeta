@@ -11,7 +11,9 @@ from core.config import get_settings
 from core.dependencies import (get_qb_client, get_task_queue, get_tmdb_client,
                                get_tvdb_client)
 from models.emby import EmbyPayload
-from models.sonarr import SonarrPayload
+from models.jellyfin_webhook import JellyfinWebhookPayload
+from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
+                           SonarrWebhookSeriesAddPayload)
 from workers.nfo_worker import create_episode_nfo, create_series_nfo
 from workers.translator_worker import (cancel_translate_emby_item,
                                        translate_emby_item)
@@ -29,16 +31,14 @@ async def sonarr_webhook(
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
     logger.info("收到 Sonarr 的 {} 事件: {}", payload.eventType, payload)
-    # Grab, Rename, SeriesAdd, SeriesDelete, EpisodeFileDelete, Download
-    # HealthIssue, HealthRestored, ManualInteractionRequired
-    # ImportComplete, ApplicationUpdate, Test
 
-    if payload.eventType == 'SeriesAdd':
+    if isinstance(payload, SonarrWebhookSeriesAddPayload):
         asyncio.create_task(create_series_nfo(payload, tmdb_client))
-    elif payload.eventType == 'Download':
+    elif isinstance(payload, SonarrWebhookDownloadPayload):
         if payload.episodeFile and payload.episodeFile.path and 'VCB-Studio' not in payload.episodeFile.path:
             asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
             await task_queue.put(Path(payload.episodeFile.path))
+
         if payload.downloadId:
             asyncio.create_task(qb_client.torrents_set_share_limits(
                     torrent_hash=payload.downloadId,

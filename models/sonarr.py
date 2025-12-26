@@ -1,10 +1,14 @@
 # from __future__ import annotations
 
+from datetime import date, datetime
+from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from core.config import genre_mapping
 from models.radarr import (CustomFormatResource, Languages, MediaCover,
-                           MediaInfoResource, QualityModel)
+                           MediaInfoDto, MediaInfoResource, QualityModel,
+                           WebhookBase, customFormatInfoDto)
 
 
 class AlternativeTitleResource(BaseModel):
@@ -159,15 +163,26 @@ class EpisodeResource(BaseModel):
     series: SeriesResource | None = None
     images: list[MediaCover] = Field(default_factory=list)
 
-class SonarrSeries(BaseModel):
-    """Sonarr 系列模型"""
+#====================================================
+#      SonarrWebhook
+#====================================================
+class Series(BaseModel):
+    """Sonarr series 模型"""
+    id: int
     title: str
+    year: int
+    titleSlug: str
     path: str
+    tvMazeId: int
     tvdbId: int
     tmdbId: int
-    imdbId: str | None = None # Test WebHook
-    year: int
+    imdbId: str
+    type: str
+    overview: str | None = None
     genres: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    images: list[MediaCover] = Field(default_factory=list)
+    originalLanguage: Languages | None = None
 
     @field_validator('genres', mode='before')
     @classmethod
@@ -178,20 +193,148 @@ class SonarrSeries(BaseModel):
 
 class SonarrEpisode(BaseModel):
     """Sonarr 剧集模型"""
+    id: int
     seasonNumber: int
     episodeNumber: int
+    title: str
+    overview: str | None = None
+    airDate: date
+    airDateUtc: datetime | None = None
+    seriesId: int
     tvdbId: int
+    finaleType: str | None = None
 
-class SonarrEpisodeFile(BaseModel):
-    """Sonarr 剧集文件模型"""
+class FileInfoDto(BaseModel):
+    """Sonarr 文件模型"""
+    id: int
+    relativePath: str
     path: str
+    quality: str
+    qualityVersion: int
+    releaseGroup: str
+    sceneName: str
+    size: int
+    dateAdded: datetime
+    languages: list[Languages] = Field(default_factory=list)
+    mediaInfo: MediaInfoDto | None = None
+    sourcePath: str| None = None
 
-class SonarrPayload(BaseModel):
-    """Sonarr Webhook 接收事件"""
-    eventType: str
-    downloadId: str | None = None
-    series: SonarrSeries
+class SonarrRelease(BaseModel):
+    """release"""
+    quality: str | None = None
+    qualityVersion: int | None = None
+    releaseGroup: str | None = None
+    releaseTitle: str | None = None
+    indexer: str | None = None
+    size: int | None = None
+    customFormatScore: int | None = None
+    customFormats: list[str] = Field(default_factory=list)
+    languages: list[Languages] = Field(default_factory=list)
+    releaseType: str | None = None
+    indexerFlags: list[str] = Field(default_factory=list)
+
+class RenamedEpisodeFiles(BaseModel):
+    previousRelativePath: str
+    previousPath: str
+
+class DownloadInfo(BaseModel):
+    quality: str
+    qualityVersion: int
+    title: str
+    indexer: str
+    size: int
+
+class SonarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
+    eventType: Literal["Grab"]
+    series: Series
     episodes: list[SonarrEpisode] = Field(default_factory=list)
-    episodeFile: SonarrEpisodeFile | None = None
-    instanceName: str | None = None
-    applicationUrl: str | None = None
+    release: SonarrRelease
+    downloadClient: str
+    downloadClientType: str
+    downloadId: str
+    customFormatInfo: customFormatInfoDto
+
+class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
+    """
+        SonarrWebhookImportPayload
+        SonarrWebhookImportCompletePayload
+    """
+    eventType: Literal["Download"]
+    series: Series
+    episodes: list[SonarrEpisode] = Field(default_factory=list)
+    episodeFile: FileInfoDto | None = None
+    episodeFiles: list[FileInfoDto] = Field(default_factory=list)
+    release: SonarrRelease
+    isUpgrade: bool | None = None
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str | None = None
+    customFormatInfo: customFormatInfoDto | None = None
+    deletedFiles: FileInfoDto | None = None
+
+    sourcePath: str | None = None
+    destinationPath: str | None = None
+
+class SonarrWebhookEpisodeDeletePayload(WebhookBase[Literal["EpisodeFileDelete"]]):
+    eventType: Literal["EpisodeFileDelete"]
+    series: Series
+    episodes: list[SonarrEpisode] = Field(default_factory=list)
+    episodeFile: FileInfoDto
+    deleteReason: str
+
+class SonarrWebhookSeriesAddPayload(WebhookBase[Literal["SeriesAdd"]]):
+    eventType: Literal["SeriesAdd"]
+    series: Series
+
+class SonarrWebhookSeriesDeletePayload(WebhookBase[Literal["SeriesDelete"]]):
+    eventType: Literal["SeriesDelete"]
+    series: Series
+    deletedFiles: bool
+
+class SonarrWebhookRenamePayload(WebhookBase[Literal["Rename"]]):
+    eventType: Literal["Rename"]
+    series: Series
+    renamedEpisodeFiles: list[RenamedEpisodeFiles] = Field(default_factory=list)
+
+class SonarrWebhookHealthPayload(WebhookBase[Literal["Health", "HealthRestored"]]):
+    eventType: Literal["Health", "HealthRestored"]
+    level: str
+    message: str
+    type: str
+    wikiUrl: str | None = None
+
+class SonarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpdate"]]):
+    eventType: Literal["ApplicationUpdate"]
+    message: str
+    previousVersion: str
+    newVersion: str
+
+class SonarrWebhookManualInteractionPayload(WebhookBase[Literal["ManualInteractionRequired"]]):
+    eventType: Literal["ManualInteractionRequired"]
+    series: Series
+    episodes: list[SonarrEpisode] = Field(default_factory=list)
+    downloadInfo: DownloadInfo
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str
+    downloadStatus: str
+    # downloadStatusMessages: list[dict] = Field(default_factory=list)
+    customFormatInfo: customFormatInfoDto
+    # release: SonarrRelease
+
+class SonarrWebhookTestPayload(WebhookBase[Literal["Test"]]):
+    eventType: Literal["Test"]
+
+SonarrPayload = Annotated[
+    SonarrWebhookGrabPayload |
+    SonarrWebhookDownloadPayload |
+    SonarrWebhookEpisodeDeletePayload |
+    SonarrWebhookSeriesAddPayload |
+    SonarrWebhookSeriesDeletePayload |
+    SonarrWebhookRenamePayload |
+    SonarrWebhookHealthPayload |
+    SonarrWebhookApplicationUpdatePayload |
+    SonarrWebhookManualInteractionPayload |
+    SonarrWebhookTestPayload,
+    Field(discriminator="eventType")
+]

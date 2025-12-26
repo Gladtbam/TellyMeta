@@ -132,7 +132,7 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Virtual
         """
         url = f"/Items/{item_id}"
 
-        await self.post(url, json=item_info.model_dump(exclude_unset=True))
+        await self.post(url, json=item_info.model_dump(exclude_unset=True, mode="json"))
 
 
     async def get_user_info(self, user_id: str) -> UserDto | None:

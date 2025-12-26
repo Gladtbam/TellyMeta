@@ -124,7 +124,7 @@ class JellyfinClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Vir
             bool: 更新是否成功。
         """
         url = f"/Items/{item_id}"
-        await self.post(url, json=item_info.model_dump(exclude_unset=True))
+        await self.post(url, json=item_info.model_dump(exclude_unset=True, mode="json"))
 
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取用户信息。
