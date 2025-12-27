@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, Response
 from loguru import logger
@@ -10,8 +11,9 @@ from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.dependencies import (get_qb_client, get_task_queue, get_tmdb_client,
                                get_tvdb_client)
-from models.emby import EmbyPayload
-from models.jellyfin_webhook import JellyfinWebhookPayload
+from models.emby_webhook import (EmbyPayload, LibraryDeletedEvent,
+                                 LibraryNewEvent)
+from models.jellyfin_webhook import JellyfinPayload, NotificationType
 from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
 from workers.nfo_worker import create_episode_nfo, create_series_nfo
@@ -41,8 +43,8 @@ async def sonarr_webhook(
 
         if payload.downloadId:
             asyncio.create_task(qb_client.torrents_set_share_limits(
-                    torrent_hash=payload.downloadId,
-                    seeding_time_limit=settings.qbittorrent_torrent_limit
+                torrent_hash=payload.downloadId,
+                seeding_time_limit=settings.qbittorrent_torrent_limit
             ))
 
     return Response(content="Webhook received", status_code=200)
@@ -50,20 +52,36 @@ async def sonarr_webhook(
 @router.post("/webhook/emby", status_code=202)
 async def emby_webhook(payload: EmbyPayload) -> Response:
     """处理来自 Emby 的 Webhook"""
-    logger.info("收到 Emby 的 {} 事件: {}", payload.Event, payload)
-
-    if payload.Event == 'library.new' and payload.Item:
+    if isinstance(payload, LibraryNewEvent):
         asyncio.create_task(
-            translate_emby_item(payload.Item.Id)
-            )
-    if payload.Event == 'library.delete' and payload.Item:
+            translate_emby_item(payload.item.id)
+        )
+    elif isinstance(payload, LibraryDeletedEvent):
         asyncio.create_task(
-            cancel_translate_emby_item(payload.Item.Id)
-            )
+            cancel_translate_emby_item(payload.item.id)
+        )
 
+    return Response(content="Webhook received", status_code=200)
+
+@router.post("webhook/jellyfin", status_code=202)
+async def jellyfin(payload: JellyfinPayload) -> Response:
+    """处理来自 Jellyfin 的 Webhook"""
+    if payload.notification_type == NotificationType.ITEM_ADDED:
+        asyncio.create_task(
+            translate_emby_item(payload.item_id)
+        )
+    elif payload.notification_type == NotificationType.ITEM_DELETED:
+        asyncio.create_task(
+            cancel_translate_emby_item(payload.item_id)
+        )
     return Response(content="Webhook received", status_code=200)
 
 @router.get("/health", status_code=200)
 async def health_check() -> dict[str, str]:
     """健康检查端点"""
     return {"status": "ok"}
+
+@router.post("/webhook/test", status_code=202)
+async def test_webhook(payload: dict[str, Any]) -> Response:
+    logger.info("收到 test 事件： {}", payload)
+    return Response(status_code=200)

@@ -654,7 +654,7 @@ class DevicesDeviceInfo(BaseModel):
     IpAddress: str
 
 #====================================================
-#      WebHook
+#      WebHook - 已废弃 见 emby_webhook 模块
 #====================================================
 class EmbyUser(BaseModel):
     """用户信息"""
