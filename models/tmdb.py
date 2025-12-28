@@ -20,8 +20,8 @@ class TmdbTv(BaseModel):
         elif isinstance(value, str):
             return [genre_mapping.get(value, value)]
         else:
-            raise ValueError("Invalid genre_ids format, expected list or string")
-    
+            raise ValueError("无效的genre_ids格式，预期的列表或字符串")
+
     @field_validator('genres', mode='before')
     @classmethod
     def validate_genres(cls, value):
@@ -30,7 +30,7 @@ class TmdbTv(BaseModel):
         elif isinstance(value, str):
             return [genre_mapping.get(value, value)]
         else:
-            raise ValueError("Invalid genres format, expected list or string")
+            raise ValueError("类型格式、预期列表或字符串无效")
 
 class TmdbEpisode(BaseModel):
     id: int
@@ -62,3 +62,19 @@ class TmdbFindPayload(BaseModel):
             return [TmdbEpisode.model_validate(value)]
         else:
             raise ValueError("Invalid tv_episode_results format, expected list or dict")
+
+class TmdbMovie(BaseModel):
+    id: int
+    imdb_id: str
+    origin_country: list[str] = Field(default_factory=list)
+    original_language: str
+    original_title: str
+    overview: str
+    popularity: float = 0
+    poster_path: str
+    release_date: str
+    runtime: int = 0
+    status: str
+    title: str
+    vote_average: float = 0
+    vote_count: int = 0

@@ -2,7 +2,7 @@ import httpx
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
-from models.tmdb import TmdbFindPayload, TmdbTv
+from models.tmdb import TmdbFindPayload, TmdbMovie, TmdbTv
 
 setting = get_settings()
 
@@ -51,3 +51,14 @@ class TmdbClient(AuthenticatedClient):
         url = f"/tv/{tmdb_id}"
         params = {"language": "zh-CN"}
         return await self.get(url, params=params, response_model=TmdbTv)
+
+    async def get_movie_details(self, tmdb_id: int) -> TmdbMovie | None:
+        """根据 TMDB ID 获取 TMDB 电影详情。
+        Args:
+            tmdb_id (int): TMDB 电影 ID。
+        Returns:
+            TmdbMovie | None: TmdbMovie 对象，如果查询失败则返回 None。
+        """
+        url = f"/movie/{tmdb_id}"
+        params = {"language": "zh-CN"}
+        return await self.get(url, params=params, response_model=TmdbMovie)
