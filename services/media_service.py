@@ -3,11 +3,11 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, Generic
 
 from models.emby import LibraryMediaFolder
-from models.protocols import (BaseItem, BaseItemT_co, DeviceInfoT, LibraryT,
+from models.protocols import (BaseItem, BaseItemT_co, DeviceInfoT, LibraryT, PublicSystemInfoT,
                               UserT)
 
 
-class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT]):
+class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, PublicSystemInfoT]):
     """定义媒体服务的抽象基类"""
 
     @abstractmethod
@@ -70,6 +70,11 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT]):
     @abstractmethod
     async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfoT | None:
         """"通过设备 ID 获取用户 ID"""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_system_info_public(self) -> PublicSystemInfoT | None:
+        """获取公开信息"""
         raise NotImplementedError
 
     @abstractmethod

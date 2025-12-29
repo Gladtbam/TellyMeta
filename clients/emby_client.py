@@ -9,13 +9,18 @@ from pydantic import TypeAdapter
 from clients.base_client import AuthenticatedClient
 from models.emby import (BaseItemDto, BaseItemDtoQueryResult,
                          DevicesDeviceInfo, LibraryMediaFolder,
-                         QueryResult_VirtualFolderInfo, SessionInfoDto,
-                         UserDto, UserPolicy, VirtualFolderInfo)
+                         PublicSystemInfo, QueryResult_VirtualFolderInfo,
+                         SessionInfoDto, UserDto, UserPolicy,
+                         VirtualFolderInfo)
 from models.protocols import BaseItem
 from services.media_service import MediaService
 
 
-class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, VirtualFolderInfo, DevicesDeviceInfo]):
+class EmbyClient(
+    AuthenticatedClient,
+    MediaService[
+        UserDto, BaseItemDto, VirtualFolderInfo, DevicesDeviceInfo, PublicSystemInfo
+]):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
@@ -215,6 +220,11 @@ class EmbyClient(AuthenticatedClient, MediaService[UserDto, BaseItemDto, Virtual
         url = "/Devices/Info"
         params = {'Id': device_id}
         return await self.get(url, params=params, response_model=DevicesDeviceInfo)
+
+    async def get_system_info_public(self) -> PublicSystemInfo | None:
+        """获取 Emby 公开信息"""
+        url = "System/Info/Public"
+        return await self.get(url, response_model=PublicSystemInfo)
 
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Emby 媒体库中的所有媒体项。

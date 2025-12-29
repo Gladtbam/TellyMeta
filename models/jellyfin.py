@@ -659,3 +659,11 @@ class DeviceInfoDto(BaseModel):
     DateLastActivity: str | None = None
     Capabilities: ClientCapabilitiesDto
     IconUrl:str | None = None
+
+class PublicSystemInfo(BaseModel):
+    LocalAddress: str | None
+    ServerName: str | None
+    Version: str
+    Id: str
+    OperatingSystem: str
+    StartupWizardCompleted: bool | None

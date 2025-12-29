@@ -73,3 +73,11 @@ class DeviceInfo(Dumpable, Protocol):
     LastUserId: str
 
 DeviceInfoT = TypeVar("DeviceInfoT", bound=DeviceInfo)
+
+@runtime_checkable
+class PublicSystemInfo(Dumpable, Protocol):
+    """定义公共信息的协议"""
+    Version: str
+    Id: str
+
+PublicSystemInfoT = TypeVar("PublicSystemInfoT", bound=PublicSystemInfo)

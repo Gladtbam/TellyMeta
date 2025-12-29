@@ -653,6 +653,15 @@ class DevicesDeviceInfo(BaseModel):
     IconUrl: str
     IpAddress: str
 
+class PublicSystemInfo(BaseModel):
+    LocalAddress: str
+    LocalAddresses: list[str] = Field(default_factory=list)
+    WanAddress: str
+    RemoteAddresses: list[str] = Field(default_factory=list)
+    ServerName: str
+    Version: str
+    Id: str
+
 #====================================================
 #      WebHook - 已废弃 见 emby_webhook 模块
 #====================================================
