@@ -31,29 +31,19 @@ class ConfigRepository:
         # 定义默认值以确保它们存在于数据库（持久性）和缓存中
         # 字典格式：{key:value}
         persistent_defaults = {
-            'registration_mode': 'default',
-            'registration_count_limit': '0',
-            'registration_time_limit': '0',
-            'registration_expiry_days': '30',
-            'code_expiry_days': '30',
-            'nsfw_library': '',
-            'nsfw_sub_library': '',
-            'nsfw_enabled': 'true'
-        }
-
-        # 系统状态默认值（如果不仅仅是虚拟的话，也是持久的）
-        # 用户之前将它们视为虚拟的，但它们可以是持久的
-        persistent_defaults.update({
             cls.KEY_ENABLE_POINTS: "true",
             cls.KEY_ENABLE_VERIFICATION: "true",
-            cls.KEY_ENABLE_REQUESTMEDIA: "true"
-        })
+            cls.KEY_ENABLE_REQUESTMEDIA: "true",
+            # 通知相关话题 ID (全局)
+            "sonarr_notify_topic": "未设置",
+            "radarr_notify_topic": "未设置",
+            "media_notify_topic": "未设置",
+            "requested_notify_topic": "未设置"
+        }
 
         new_items = []
         for key, value in persistent_defaults.items():
             if key not in cls.cache:
-                # 不在数据库中（因为缓存刚刚从数据库加载）
-                # 添加到数据库和缓存
                 cls.cache[key] = value
                 new_items.append(BotConfiguration(key=key, value=value))
 
@@ -91,10 +81,8 @@ class ConfigRepository:
         setting = await self.session.get(BotConfiguration, key)
 
         if setting:
-            # 更新现有配置
             setting.value = value
         else:
-            # 创建新配置
             setting = BotConfiguration(key=key, value=value)
             self.session.add(setting)
 

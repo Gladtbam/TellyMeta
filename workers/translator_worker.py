@@ -13,7 +13,7 @@ from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 
 
-async def translate_emby_item(item_id: str) -> None:
+async def translate_emby_item(server_id: int, item_id: str) -> None:
     """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。
     Args:
         scheduler (AsyncIOScheduler): 任务调度器，用于安排重试任务。
@@ -25,9 +25,13 @@ async def translate_emby_item(item_id: str) -> None:
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
     tmdb_client: TmdbClient = app.state.tmdb_client
-    media_client: MediaService = app.state.media_client
+    media_clients: dict[int, MediaService] = app.state.media_clients
     ai_client: AIClientWarper = app.state.ai_client
 
+    media_client = media_clients.get(server_id)
+    if not media_client:
+        logger.error("服务器 [{}] 客户端未运行或不存在，跳过翻译任务: {}", server_id, item_id)
+        return
     is_translated = False
 
     item_info: BaseItem | None = await media_client.get_item_info(item_id)
@@ -87,21 +91,21 @@ async def translate_emby_item(item_id: str) -> None:
         item = item.model_copy(update=updates)
 
     if is_translated:
-        logger.info("正在翻译项目 {}：{}", item_id, item.Name)
+        logger.info("[{}]正在翻译项目 {}：{}", server_id, item_id, item.Name)
         await media_client.post_item_info(item_id, item)
         scheduler.add_job(
             translate_emby_item,
             'date',
             run_date=(datetime.now() + timedelta(days=8)),
-            id=f'translate_emby_item_{item_id}',
+            id=f'translate_emby_item_{server_id}_{item_id}',
             replace_existing=True,
-            args=[item_id]
+            args=[server_id, item_id]
         )
-        logger.info("计划在 8 天后重试项目 {}", item_id)
+        logger.info("[{}]计划在 8 天后重试项目 {}", server_id, item_id)
     else:
-        logger.info("无需翻译ID: {}", item_id)
+        logger.info("[{}]无需翻译ID: {}", server_id, item_id)
 
-async def cancel_translate_emby_item(item_id: str) -> None:
+async def cancel_translate_emby_item(server_id: int, item_id: str) -> None:
     """取消已计划的翻译任务。
     Args:
         scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
@@ -110,7 +114,7 @@ async def cancel_translate_emby_item(item_id: str) -> None:
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
 
-    job_id = f'translate_emby_item_{item_id}'
+    job_id = f'translate_emby_item_{server_id}_{item_id}'
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)

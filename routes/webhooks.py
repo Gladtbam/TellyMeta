@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from loguru import logger
 
 from clients.qb_client import QbittorrentClient
@@ -50,29 +50,35 @@ async def sonarr_webhook(
     return Response(content="Webhook received", status_code=200)
 
 @router.post("/webhook/emby", status_code=202)
-async def emby_webhook(payload: EmbyPayload) -> Response:
+async def emby_webhook(
+    payload: EmbyPayload,
+    server_id: int = Query(..., description="TellyMeta Server ID")
+) -> Response:
     """处理来自 Emby 的 Webhook"""
     if isinstance(payload, LibraryNewEvent):
         asyncio.create_task(
-            translate_emby_item(payload.item.id)
+            translate_emby_item(server_id, payload.item.id)
         )
     elif isinstance(payload, LibraryDeletedEvent):
         asyncio.create_task(
-            cancel_translate_emby_item(payload.item.id)
+            cancel_translate_emby_item(server_id, payload.item.id)
         )
 
     return Response(content="Webhook received", status_code=200)
 
-@router.post("webhook/jellyfin", status_code=202)
-async def jellyfin(payload: JellyfinPayload) -> Response:
+@router.post("/webhook/jellyfin", status_code=202)
+async def jellyfin(
+    payload: JellyfinPayload,
+    server_id: int = Query(..., description="TellyMeta Server ID")
+) -> Response:
     """处理来自 Jellyfin 的 Webhook"""
     if payload.notification_type == NotificationType.ITEM_ADDED:
         asyncio.create_task(
-            translate_emby_item(payload.item_id)
+            translate_emby_item(server_id, payload.item_id)
         )
     elif payload.notification_type == NotificationType.ITEM_DELETED:
         asyncio.create_task(
-            cancel_translate_emby_item(payload.item_id)
+            cancel_translate_emby_item(server_id, payload.item_id)
         )
     return Response(content="Webhook received", status_code=200)
 

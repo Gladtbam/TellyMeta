@@ -11,16 +11,27 @@ class MediaRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_id(self, user_id: int) -> MediaUser | None:
-        """通过ID获取 Media 用户
+    async def get_by_id(self, id: int, server_id: int) -> MediaUser | None:
+        """通过 ID 获取 Media 用户
         Args:
-            user_id (int): MediaUser 用户ID
+            id (int): Telegram 用户ID
         Returns:
             MediaUser | None: 如果找到用户则返回用户对象，否则返回None
         """
-        return await self.session.get(MediaUser, user_id)
+        return await self.session.get(MediaUser, (id, server_id))
 
-    async def get_by_media_id(self, media_id: str) -> MediaUser | None:
+    async def get_all_by_id(self, user_id: int) -> Sequence[MediaUser]:
+        """获取指定 Telegram 用户的所有媒体账户
+        Args:
+            user_id (int): Telegram 用户ID
+        Returns:
+            Sequence[MediaUser]: 该用户的所有账户列表
+        """
+        stmt = select(MediaUser).where(MediaUser.id == user_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def get_by_media_id(self, media_id: str, server_id: int | None = None) -> MediaUser | None:
         """通过MediaUser ID获取 MediaUser 用户
          Args:
             media_id (str): Media 用户的Media ID
@@ -28,26 +39,32 @@ class MediaRepository:
             MediaUser | None: 如果找到用户则返回用户对象，否则返回None
         """
         stmt = select(MediaUser).where(MediaUser.media_id == media_id)
+        if server_id is not None:
+            stmt = stmt.where(MediaUser.server_id == server_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, user_id: int, media_id: str, media_name: str, expires_at: int) -> MediaUser:
+    async def create(self, user_id: int, server_id: int, media_id: str, media_name: str, expires_at: int) -> MediaUser:
         """创建新的 Media 用户
         Args:
             user_id (int): 关联的Telegram用户ID
+            server_id (int): 服务器 ID
             media_id (str): Media 用户的 Media ID
             media_name (str): Media 用户名
+            expires_days (int): 有效期天数
         Returns:
             MediaUser: 创建的 Media 用户对象
         """
         media_user = MediaUser(
             id=user_id,
+            server_id=server_id,
             media_id=media_id,
             media_name=media_name,
             expires_at=datetime.now() + timedelta(days=expires_at),
         )
         self.session.add(media_user)
         await self.session.commit()
+        await self.session.refresh(media_user)
         return media_user
 
     async def delete(self, media_user: MediaUser) -> None:

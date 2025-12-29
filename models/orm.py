@@ -2,14 +2,31 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from enum import StrEnum
 
 from loguru import logger
 from pydantic import BaseModel, ValidationError, field_validator
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, text
+from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Integer,
+                        String, UniqueConstraint, text)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.database import Base
 
+
+class ServerType(StrEnum):
+    """服务类型枚举"""
+    EMBY = "emby"
+    JELLYFIN = "jellyfin"
+    SONARR = "sonarr"
+    RADARR = "radarr"
+
+class RegistrationMode(StrEnum):
+    """注册模式枚举"""
+    DEFAULT = "default"  # 仅邀请/积分
+    OPEN = "open"        # 开放注册
+    COUNT = "count"      # 限制名额
+    TIME = "time"        # 限时开放
+    CLOSE = "close"      # 完全关闭 (仅管理员添加)
 
 class TelegramUser(Base):
     """Telegram用户模型"""
@@ -22,37 +39,64 @@ class TelegramUser(Base):
     warning_count: Mapped[int] = mapped_column(server_default=text('0'), nullable=False)
     last_checkin: Mapped[datetime] = mapped_column(default=datetime(1970, 1, 1), nullable=False)
 
-    media_user: Mapped[MediaUser | None] = relationship(
+    media_users: Mapped[list[MediaUser]] = relationship(
         back_populates='telegram_user',
-        uselist=False,
         cascade='all, delete-orphan',
         lazy='selectin'
     )
+
+class ServerInstance(Base):
+    """服务器实例配置模型"""
+    __tablename__ = 'server_instances'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    server_type: Mapped[str] = mapped_column(String(32), nullable=True)
+    url: Mapped[str] = mapped_column(String(255), nullable=True)
+    api_key: Mapped[str] = mapped_column(String(255), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text('true'), nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, server_default=text('0'), nullable=False) # 优先级
+
+    # Jellyfin/Emby 相关配置
+    registration_mode: Mapped[str] = mapped_column(String(32), default=RegistrationMode.DEFAULT, server_default=text("'default'"))
+    registration_count_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text('0'))
+    registration_time_limit: Mapped[str] = mapped_column(String(32), default="0", server_default=text("'0'"))
+    registration_expiry_days: Mapped[int] = mapped_column(Integer, default=30, server_default=text('30'))
+    code_expiry_days: Mapped[int] = mapped_column(Integer, default=30, server_default=text('30'))
+    nsfw_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('false'))
+    nsfw_library_ids: Mapped[str] = mapped_column(String(1024), default="", server_default=text("''"))
+    nsfw_sub_library_ids: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
 
 class MediaUser(Base):
     """Media 用户模型"""
     __tablename__ = 'media_user'
 
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey('telegram_users.id'), primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), primary_key=True)
     media_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     media_name: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
-    is_banned: Mapped[bool] = mapped_column(server_default=text('false'), nullable=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, server_default=text('false'), nullable=False)
     delete_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    telegram_user: Mapped[TelegramUser] = relationship(back_populates='media_user')
+    telegram_user: Mapped[TelegramUser] = relationship(back_populates='media_users')
+    __table_args__ = (
+        UniqueConstraint('server_id', 'media_id', name='uq_server_media_id'),
+    )
 
 class ActiveCode(Base):
     """激活码模型"""
     __tablename__ = 'active_codes'
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    server_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=True)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
 
+    server: Mapped[ServerInstance | None] = relationship()
 class PendingVerification(Base):
     """待验证用户模型"""
     __tablename__ = 'pending_verifications'
@@ -73,6 +117,7 @@ class BotConfiguration(Base):
 class LibraryBindingModel(BaseModel):
     """媒体库绑定模型"""
     library_name: str
+    server_id: int | None = None #server_instance id
     arr_type: str | None = None
     quality_profile_id: int | None = None
     root_folder: str | None = None

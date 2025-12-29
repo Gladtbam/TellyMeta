@@ -22,7 +22,7 @@ class CodeRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, code_type: str, expires: int | None) -> ActiveCode:
+    async def create(self, code_type: str, expires: int | None, server_id: int) -> ActiveCode:
         """创建激活码
         Args:
             code_type (str): 激活码类型，'signup' 或 'renew'
@@ -37,7 +37,12 @@ class CodeRepository:
         else:
             expires_at = datetime.now() + timedelta(days=expires)
 
-        new_code = ActiveCode(code=code, type=code_type, expires_at=expires_at)
+        new_code = ActiveCode(
+            code=code,
+            type=code_type,
+            expires_at=expires_at,
+            server_id=server_id
+        )
         self.session.add(new_code)
         await self.session.commit()
         await self.session.refresh(new_code)

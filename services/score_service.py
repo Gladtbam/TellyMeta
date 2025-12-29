@@ -97,7 +97,7 @@ class ScoreService:
             score_deltas[user_id] = score
 
         await self.telegram_repo.batch_update_scores(score_deltas)
-        
+
         self.state.message_counts.clear()
 
         return SettlementResult(

@@ -5,7 +5,7 @@ from random import choice, randint
 
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
-from telethon import errors
+from telethon import errors, events
 
 
 async def safe_respond(event, msg: str, delete_after: int = 10) -> None:
@@ -81,3 +81,60 @@ def generate_captcha():
     image_data.name = 'captcha.png'
 
     return answer, image_data
+
+async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | None:
+    """
+    通用 Conversation 辅助函数：等待用户输入文本，同时监听特定消息上的取消按钮。
+    
+    Args:
+        conv: Telethon conversation 对象
+        cancel_button_msg_id (int): 包含取消按钮的消息 ID
+    
+    Returns:
+        str: 用户输入的文本
+        None: 用户点击了取消，或超时，或输入了 '/' 开头的命令
+    """
+    # 定义过滤器：只监听点击了 cancel_button_msg_id 消息上按钮的事件
+    def filter_button(e):
+        return e.message_id == cancel_button_msg_id
+
+    # 创建两个并发任务
+    # 1. 等待用户发送文本消息
+    task_response = asyncio.create_task(conv.get_response())
+    # 2. 等待用户点击取消按钮
+    task_cancel = asyncio.create_task(
+        conv.wait_event(events.CallbackQuery(func=filter_button))
+    )
+
+    done, pending = await asyncio.wait(
+        [task_response, task_cancel],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+
+    # 清理未完成的任务
+    for task in pending:
+        task.cancel()
+
+    if task_cancel in done:
+        # 用户点击了取消按钮
+        try:
+            event = task_cancel.result()
+            await event.answer("已取消")
+            await event.delete() # 删除提示消息
+        except Exception:
+            pass
+        return None
+    
+    if task_response in done:
+        # 用户发送了消息
+        try:
+            msg = task_response.result()
+            # 检查是否是命令，如果是命令则视为中断
+            if msg.text and msg.text.startswith('/'):
+                await conv.send_message(f"检测到新命令 {msg.text.split()[0]}，当前会话已结束。")
+                return None
+            return msg.text.strip() if msg.text else None
+        except Exception:
+            return None
+    
+    return None

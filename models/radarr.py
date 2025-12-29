@@ -239,6 +239,19 @@ class RootFolderResource(BaseModel):
     path: str | None = None
     unmappedFolders: list[UnmappedFolder] = Field(default_factory=list)
 
+    @property
+    def free_space_human(self) -> str:
+        """自动将 freeSpace 转换为最合适的 1024 进制单位（B, KiB, MiB, GiB, TiB）"""
+        if self.freeSpace == 0 or not self.freeSpace:
+            return "0.00 B"
+        units = ["B", "KiB", "MiB", "GiB", "TiB"]
+        size = float(self.freeSpace)
+        i = 0
+        while size >= 1024.0 and i < len(units) - 1:
+            size /= 1024.0
+            i += 1
+        return f"{size:.2f} {units[i]}"
+
 class ProfileFormatItemResource(BaseModel):
     """Radarr 质量配置文件格式项模型"""
     format: int

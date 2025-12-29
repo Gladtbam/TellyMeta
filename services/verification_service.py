@@ -134,7 +134,7 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
 
     async with session_factory() as session:
         try:
-            user_service = UserService(session, app.state.media_client)
+            user_service = UserService(app, session)
             verification_repo = VerificationRepository(session)
             challenge = await verification_repo.get(user_id)
             if challenge:

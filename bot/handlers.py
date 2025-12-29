@@ -10,10 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
 
 from bot.decorators import provide_db_session, require_admin
-from bot.utils import safe_reply, safe_respond, safe_respond_keyboard
+from bot.utils import (get_user_input_or_cancel, safe_reply, safe_respond,
+                       safe_respond_keyboard)
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.request_service import RequestService
@@ -48,7 +51,7 @@ async def start_handler(app: FastAPI, event: events.NewMessage.Event, session: A
             buttons=keyboard
         )
     except errors.FloodWaitError as e:
-        logger.warning("Flood wait error: waiting for {} seconds", e.seconds)
+        logger.warning("等待错误：等待 {} 秒", e.seconds)
         await asyncio.sleep(e.seconds)
         await event.respond(
             "欢迎！请在 **5 分钟内**选择下方正确答案：",
@@ -89,7 +92,7 @@ async def me_handler(app: FastAPI, event: events.NewMessage.Event, session: Asyn
     """用户信息处理器
     发送用户信息和交互按钮，私聊仅发送用户信息
     """
-    user_service = UserService(session, app.state.media_client)
+    user_service = UserService(app, session)
 
     user_id = None
     if event.is_reply:
@@ -124,22 +127,6 @@ async def info_handler(app: FastAPI, event: events.NewMessage.Event, session: As
         await safe_reply(event, "请回复一个用户以查看其信息。")
     await me_handler(app, event, session)
 
-@TelethonClientWarper.handler(events.CallbackQuery(data=b'me_line'))
-async def line_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
-    """线路查询处理器
-    发送当前媒体服务器的访问线路
-    """
-    lines = settings.media_server_url.split(':')
-    if len(lines) == 2:
-        if lines[0].startswith('https'):
-            line = settings.media_server_url + ':443'
-        else:
-            line = settings.media_server_url + ':80'
-    else:
-        line = settings.media_server_url
-
-    await safe_respond(event, f"当前媒体服务器访问线路: `{line}`")
-
 @TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/chat_id({settings.telegram_bot_name})?$',
     incoming=True
@@ -169,15 +156,14 @@ async def checkin_handler(app: FastAPI, event: events.NewMessage.Event, session:
         return
 
     user_id = event.sender_id
-
-    user_service = UserService(session, app.state.media_client)
+    user_service = UserService(app, session)
     result = await user_service.perform_checkin(user_id)
 
     await safe_reply(event, result.message)
 
-    if result.private_message and isinstance(result.private_message, str):
+    if result.private_message:
         client: TelethonClientWarper = app.state.telethon_client
-        await client.send_message(user_id, result.private_message)
+        await client.send_message(user_id, str(result.private_message))
 
 @TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/warn({settings.telegram_bot_name})?$',
@@ -200,7 +186,7 @@ async def warn_handler(app: FastAPI, event: events.NewMessage.Event, session: As
 
     target_user_id = reply_msg.sender_id
 
-    user_service = UserService(session, app.state.media_client)
+    user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_warn_and_score(target_user_id)
 
     await safe_reply(event, f"✅ 用户 [{user.id}](tg://user?id={user.id}) 已被警告，当前警告次数: **{user.warning_count}**。")
@@ -233,7 +219,7 @@ async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     target_user_id = reply_msg.sender_id
 
-    user_service = UserService(session, app.state.media_client)
+    user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_score(target_user_id, score_change)
 
     await safe_reply(event, f"✅ 用户 [{user.id}](tg://user?id={user.id}) 的积分已修改，当前积分: **{user.score}**。")
@@ -291,7 +277,7 @@ async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 
     target_user_id = reply_msg.sender_id
 
-    user_service = UserService(session, app.state.media_client)
+    user_service = UserService(app, session)
     result = await user_service.delete_account(target_user_id, 'both')
 
     await safe_reply(event, result.message)
@@ -317,7 +303,7 @@ async def kick_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
             await safe_reply(event, "无法获取回复的用户信息。")
             return
 
-        user_service = UserService(session, app.state.media_client)
+        user_service = UserService(app, session)
         client: TelethonClientWarper = app.state.telethon_client
         target_user_id = reply_msg.sender_id
         await client.kick_and_ban_participant(target_user_id)
@@ -374,6 +360,8 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
     处理新成员加入群组的事件
     """
     user_id: Any = event.user_id
+    if not user_id:
+        return
     if user_id == (await app.state.telethon_client.client.get_me()).id or user_id in app.state.admin_ids or user_id is None:
         return
 
@@ -394,7 +382,7 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
 
     if event.user_left or event.user_kicked:
         logger.info("用户 {} 离开", user_id)
-        user_service = UserService(session, app.state.media_client)
+        user_service = UserService(app, session)
         await user_service.delete_account(user_id, 'both')
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'verify_(\\d+)'))
@@ -473,7 +461,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
         await event.delete()
 
 @TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/signup({settings.telegram_bot_name})?(\s.*)?$',
+    pattern=fr'^/signup({settings.telegram_bot_name})?$',
     incoming=True
     ))
 @provide_db_session
@@ -485,23 +473,31 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
         await safe_reply(event, "请私聊我以注册账户。")
         return
 
-    user_id = event.sender_id
-    try:
-        args_str = event.pattern_match.group(2).strip() # type: ignore
-    except (IndexError, AttributeError):
-        args_str = None
-
-    registration_service = AccountService(session, app.state.media_client)
-    client: TelethonClientWarper = app.state.telethon_client
-    if user_id in app.state.admin_ids and args_str:
-        message = await registration_service.set_registration_mode(args_str)
-        sent_msg = await client.send_message(settings.telegram_chat_id, message.message)
-        if message.success:
-            await client.client.pin_message(settings.telegram_chat_id, sent_msg, notify=True)
+    account_service = AccountService(app, session)
+    result = await account_service.get_register_servers_keyboard()
+    if not result.success:
+        await safe_respond(event, result.message)
     else:
-        user_name = await client.get_user_name(user_id, need_username=True)
-        result = await registration_service.register(user_id, user_name)
-        await event.respond(result.message, parse_mode='markdown')
+        await event.respond(result.message, result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'signup_srv_(\\d+)'))
+@provide_db_session
+async def signup_confirm_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """确认注册"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    user_id: Any = event.sender_id
+    client: TelethonClientWarper = app.state.telethon_client
+
+    user_name = await client.get_user_name(user_id, need_username=True)
+    if not user_name:
+        await event.answer("请先设置 Telegram 用户名", alert=True)
+        return
+
+    await event.answer("正在注册...", alert=False)
+
+    account_service = AccountService(app, session)
+    result = await account_service.register(user_id, user_name, server_id)
+    await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/code({settings.telegram_bot_name})?(\s.+)?$',
@@ -526,59 +522,90 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
     client: TelethonClientWarper = app.state.telethon_client
     user_name = await client.get_user_name(user_id, need_username=True)
 
-    registration_service = AccountService(session, app.state.media_client)
-    result = await registration_service.redeem_code(user_id, user_name, args_str)
+    account_service = AccountService(app, session)
+    result = await account_service.redeem_code(user_id, user_name, args_str)
     await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'me_create_code'))
 @provide_db_session
-async def create_code_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """生成码处理器
-    处理用户点击生成码按钮的事件
-    """
+async def create_code_start_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """开始生成码：选择服务器"""
+    service = AccountService(app, session)
+    result = await service.get_server_selection_for_code("create_code_srv")
+
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else:
+        await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'create_code_srv_(\\d+)'))
+@provide_db_session
+async def create_code_type_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """选择码类型"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
     telegram_repo = TelegramRepository(session)
     score = await telegram_repo.get_renew_score()
-    keyboard = [
-        [Button.inline("续期码 (30天)", b'create_renew')],
-        [Button.inline("注册码", b'create_signup')]
-    ]
 
-    await safe_respond_keyboard(event, textwrap.dedent(f"""\
+    keyboard = [
+        [Button.inline("注册码 (Signup)", data=f"create_code_fin_{server_id}_signup".encode())],
+        [Button.inline("续期码 (Renew)", data=f"create_code_fin_{server_id}_renew".encode())]
+    ]
+    msg = textwrap.dedent(f"""\
         生成码需要消耗 **{score}** 积分。
         请选择要生成的码类型：
-        - 续期码：用于续期现有账户，续期30天。
+        - 续期码：用于续期现有账户。
         - 注册码：用于注册新账户。
-        """), keyboard)
+        """)
+    await event.edit(msg, buttons=keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'create_(renew|signup)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'create_code_fin_(\\d+)_(signup|renew)'))
 @provide_db_session
-async def create_code_confirm_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """生成码处理器
-    处理用户点击生成码按钮的事件
-    """
+async def create_code_finish_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """执行生成"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    ctype = event.pattern_match.group(2).decode() # type: ignore
     user_id: Any = event.sender_id
-    code_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
 
-    registration_service = AccountService(session, app.state.media_client)
-    result = await registration_service.generate_code(user_id, code_type)
+    service = AccountService(app, session)
+    result = await service.generate_code(user_id, ctype, server_id)
 
-    await safe_respond(event, result.message)
+    await event.respond(result.message)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|nsfw|forget_password|query_renew)'))
 @provide_db_session
-async def nsfw_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+async def me_action_init_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """续期/NSFW/忘记密码处理器/查询续期积分
     处理用户点击续期/NSFW/忘记密码按钮的事件"""
     user_id: Any = event.sender_id
     action = event.pattern_match.group(1).decode('utf-8') # type: ignore
+    account_service = AccountService(app, session)
 
-    account_service = AccountService(session, app.state.media_client)
+    result = await account_service.get_user_accounts_keyboard(user_id, f"me_do_{action}")
+
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else:
+        await safe_respond_keyboard(event, result.message, result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_do_(renew|nsfw|forget_password|query_renew)_(\\d+)'))
+@provide_db_session
+async def me_action_exec_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """执行个人中心具体操作 (指定服务器)"""
+    action = event.pattern_match.group(1).decode() # type: ignore
+    server_id = int(event.pattern_match.group(2).decode()) # type: ignore
+    user_id: Any = event.sender_id
+    account_service = AccountService(app, session)
+
     if action == 'renew':
-        result = await account_service.renew(user_id, True)
+        result = await account_service.renew(user_id, server_id, use_score=True)
     elif action == 'nsfw':
-        result = await account_service.toggle_nsfw_policy(user_id)
+        result = await account_service.toggle_nsfw_policy(user_id, server_id)
     elif action == 'forget_password':
-        result = await account_service.forget_password(user_id)
+        result = await account_service.forget_password(user_id, server_id)
+        if result.success:
+            await event.respond(result.message, parse_mode='markdown') # 密码需要发送新消息以便复制
+            await event.answer("重置成功")
+            return
     elif action == 'query_renew':
         telegram_repo = TelegramRepository(session)
         renew_score = int(await telegram_repo.get_renew_score())
@@ -586,9 +613,6 @@ async def nsfw_handler(app: FastAPI, event: events.CallbackQuery.Event, session:
     else:
         result = Result(False, "未知操作。")
 
-    if action == 'forget_password':
-        await event.respond(result.message, parse_mode='markdown')
-        return
     await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
@@ -622,27 +646,24 @@ async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event,
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(
-    pattern=b'manage_(admins|notify|media|system|main|nsfw_library|registration_expiry)'))
+    pattern=b'manage_(admins|notify|media|system|main)'))
 @provide_db_session
 async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """管理面板处理器
     处理管理员点击管理面板按钮的事件
+    一级菜单
     """
     action = event.pattern_match.group(1).decode('utf-8') # type: ignore
     settings_service = SettingsServices(app, session)
 
     if action == 'admins':
-        result = await settings_service.get_admins_panel()
+        result: Result = await settings_service.get_admins_panel()
     elif action == 'notify':
         result = await settings_service.get_notification_panel()
     elif action == 'media':
         result = await settings_service.get_media_panel()
     elif action == 'system':
         result = await settings_service.get_system_panel()
-    elif action == 'nsfw_library':
-        result = await settings_service.get_nsfw_library_panel()
-    elif action == 'registration_expiry':
-        result = await settings_service.get_registration_expiry_panel()
     elif action == 'main':
         result = await settings_service.get_admin_management_keyboard()
     else:
@@ -650,19 +671,65 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
 
     await event.edit(result.message, buttons=result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_nsfw_lib_(.+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'view_server_(\\d+)'))
 @provide_db_session
-async def toggle_nsfw_lib_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """切换nsfw媒体库处理器"""
-    lib_id = event.pattern_match.group(1).decode('utf-8') # type: ignore
+async def view_server_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """查看服务器详情"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
     settings_service = SettingsServices(app, session)
+    result = await settings_service.get_server_detail_panel(server_id)
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else: await event.edit(result.message, buttons=result.keyboard)
 
-    result = await settings_service.toggle_nsfw_library(lib_id)
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'delete_server_confirm_(\\d+)'))
+@provide_db_session
+async def delete_server_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """删除服务器"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.delete_server(server_id)
+    await event.answer(result.message, alert=True)
+    # 返回列表
+    result = await settings_service.get_media_panel()
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_nsfw_toggle_(\\d+)'))
+@provide_db_session
+async def srv_nsfw_toggle_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """切换 NSFW 开关"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.toggle_server_nsfw(server_id)
     await event.answer(result.message)
+    # 刷新
+    result = await settings_service.get_server_detail_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
 
-    # 刷新面板
-    panel_result = await settings_service.get_nsfw_library_panel()
-    await event.edit(panel_result.message, buttons=panel_result.keyboard)
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_nsfw_libs_(\\d+)'))
+@provide_db_session
+async def srv_nsfw_libs_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """打开 NSFW 库选择面板"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.get_nsfw_library_panel(server_id)
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else: await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_nsfw_setlib_(\\d+)_(.+)'))
+@provide_db_session
+async def srv_nsfw_setlib_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """切换单个 NSFW 库状态"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    lib_b64 = event.pattern_match.group(2).decode() # type: ignore
+    lib_id = base64.b64decode(lib_b64).decode()
+
+    settings_service = SettingsServices(app, session)
+    await settings_service.toggle_nsfw_library(server_id, lib_id)
+    # 刷新
+    result = await settings_service.get_nsfw_library_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'toggle_admin_(\\d+)'))
 @provide_db_session
@@ -679,6 +746,28 @@ async def toggle_admin_handler(app: FastAPI, event: events.CallbackQuery.Event, 
     # 刷新管理员面板
     panel_result = await settings_service.get_admins_panel()
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_expiry_(\\d+)'))
+@provide_db_session
+async def srv_expiry_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """打开有效期设置"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.get_registration_expiry_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_set_exp_(\\d+)_(\\d+)'))
+@provide_db_session
+async def srv_set_exp_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置有效期"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    days = int(event.pattern_match.group(2).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+    await settings_service.set_registration_expiry(server_id, days)
+    await event.answer(f"已设为 {days} 天")
+    # 返回详情
+    result = await settings_service.get_server_detail_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^notify_(sonarr|radarr|media|requested)'))
 @provide_db_session
@@ -710,81 +799,172 @@ async def set_notify_topic_handler(app: FastAPI, event: events.CallbackQuery.Eve
     notify_result = await settings_service.get_notification_panel()
     await event.edit(notify_result.message, buttons=notify_result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^bind_library_(.+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_libs_(\\d+)'))
 @provide_db_session
-async def bind_library_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """绑定媒体库处理器
-    处理管理员点击绑定媒体库按钮的事件
-    """
-    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
-
+async def manage_libs_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """查看某服务器的库列表"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
     settings_service = SettingsServices(app, session)
-    result = await settings_service.get_library_binding_panel(library_name)
+    result = await settings_service.get_server_libraries_panel(server_id)
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else: await event.edit(result.message, buttons=result.keyboard)
 
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'bind_lib_menu_(.+)'))
+@provide_db_session
+async def bind_lib_menu_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """单个库的绑定菜单"""
+    lib_name = base64.b64decode(event.pattern_match.group(1)).decode() # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.get_library_binding_menu(lib_name)
     await event.edit(result.message, buttons=result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^select_(typed|quality|folder)_(.+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'bind_sel_server_(.+)'))
 @provide_db_session
-async def select_library_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """选择媒体库设置处理器
-    处理管理员点击选择媒体库设置按钮的事件
-    """
-    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    library_name_base64 = event.pattern_match.group(2).decode('utf-8') # type: ignore
-    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
-
+async def bind_sel_server_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """选择下载器实例列表"""
+    lib_name = base64.b64decode(event.pattern_match.group(1)).decode() # type: ignore
     settings_service = SettingsServices(app, session)
-    if setting_type == 'typed':
-        result = await settings_service.get_type_selection_keyboard(library_name)
-    elif setting_type == 'quality':
-        result = await settings_service.get_quality_selection_keyboard(library_name)
-    elif setting_type == 'folder':
-        result = await settings_service.get_root_folder_selection_keyboard(library_name)
+    result = await settings_service.get_arr_server_selection(lib_name)
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else: await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'bind_set_srv_(\\d+)_(.+)'))
+@provide_db_session
+async def bind_set_srv_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """执行绑定实例"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    lib_name = base64.b64decode(event.pattern_match.group(2)).decode() # type: ignore
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.bind_server_to_library(lib_name, server_id)
+    await event.answer(result.message)
+    # 返回绑定菜单
+    result = await settings_service.get_library_binding_menu(lib_name)
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'bind_sel_(quality|folder)_(.+)'))
+@provide_db_session
+async def bind_sel_conf_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """选择质量/文件夹"""
+    target = event.pattern_match.group(1).decode() # type: ignore
+    lib_name = base64.b64decode(event.pattern_match.group(2)).decode() # type: ignore
+    settings_service = SettingsServices(app, session)
+
+    if target == 'quality':
+        result = await settings_service.get_quality_selection(lib_name)
     else:
-        result = Result(False, "该功能尚未实现。")
+        result = await settings_service.get_folder_selection(lib_name)
 
+    if not result.success:
+        await event.answer(result.message, alert=True)
+    else: await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'bind_set_(quality|folder)_(.+)_(.+)'))
+@provide_db_session
+async def bind_set_conf_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """执行设置质量/文件夹"""
+    target = event.pattern_match.group(1).decode() # type: ignore
+    value_raw = event.pattern_match.group(2).decode() # type: ignore
+    lib_name = base64.b64decode(event.pattern_match.group(3)).decode() # type: ignore
+
+    settings_service = SettingsServices(app, session)
+
+    if target == 'folder':
+        try:
+            folder_id = int(value_raw)
+            result = await settings_service.set_library_root_folder_by_id(lib_name, folder_id)
+        except ValueError:
+             result = Result(False, "无效的文件夹 ID 数据")
+    else:
+        try:
+            value = int(value_raw)
+            result = await settings_service.set_library_binding(lib_name, 'quality_profile_id', value)
+        except ValueError:
+            result = Result(False, "无效的质量配置 ID")
+    await event.answer(result.message)
+    # 返回绑定菜单
+    result = await settings_service.get_library_binding_menu(lib_name)
     await event.edit(result.message, buttons=result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_(typed|quality|folder)_(.+)_(.+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_reg_mode_(\\d+)'))
 @provide_db_session
-async def set_library_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """设置媒体库设置处理器
-    处理管理员点击设置媒体库设置按钮的事件
-    """
-    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    value = event.pattern_match.group(2).decode('utf-8') # type: ignore
-    library_name_base64 = event.pattern_match.group(3).decode('utf-8') # type: ignore
-    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
-
-    if setting_type == 'quality':
-        setting_type = 'quality_profile_id'
-        value = int(value)
-    if setting_type == 'typed':
-        setting_type = 'arr_type'
-    if setting_type == 'folder':
-        setting_type = 'root_folder'
+async def srv_reg_mode_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """进入注册模式面板"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
     settings_service = SettingsServices(app, session)
-    result = await settings_service.set_library_binding(library_name, setting_type, value)
+    result = await settings_service.get_registration_mode_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_set_mode_(\\d+)_(default|open|close)'))
+@provide_db_session
+async def srv_set_mode_simple_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置简单模式 (默认/开放/关闭)"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    mode = event.pattern_match.group(2).decode() # type: ignore
+
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.set_server_registration_mode(server_id, mode)
 
     await event.answer(result.message)
+    # 刷新面板
+    result = await settings_service.get_registration_mode_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
 
-    # 刷新媒体库绑定面板
-    binding_result = await settings_service.get_library_binding_panel(library_name)
-    await event.edit(binding_result.message, buttons=binding_result.keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_registration_expiry_(\\d+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_input_mode_(\\d+)_(count|time)'))
 @provide_db_session
-async def set_registration_expiry_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """设置账户有效期处理器"""
-    days = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    settings_service = SettingsServices(app, session)
-    result = await settings_service.set_registration_expiry(days)
+async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """设置复杂模式 (名额/时间)，触发对话"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    target = event.pattern_match.group(2).decode() # type: ignore
 
-    await event.answer(result.message)
+    chat_id = event.chat_id
+    client = app.state.telethon_client.client
 
-    expiry_result = await settings_service.get_registration_expiry_panel()
-    await event.edit(expiry_result.message, buttons=expiry_result.keyboard)
+    prompt = ""
+    if target == "count":
+        prompt = "请输入开放注册的名额数量 (纯数字，例如 `50`)："
+    else:
+        prompt = "请输入开放时长 (格式如 `1h`, `30m`, `1h30m`)："
+
+    try:
+        async with client.conversation(chat_id, timeout=60) as conv:
+            cancel_btn = [Button.inline("取消", b"srv_mode_cancel")]
+            prompt_msg = await conv.send_message(prompt, buttons=cancel_btn)
+
+            input_val = await get_user_input_or_cancel(conv, prompt_msg.id)
+
+            if not input_val:
+                try:
+                    await prompt_msg.delete()
+                except:
+                    pass
+                return
+
+            try:
+                await prompt_msg.delete()
+            except:
+                pass
+
+            settings_service = SettingsServices(app, session)
+            result = await settings_service.set_server_registration_mode(server_id, input_val)
+
+            if result.success:
+                await event.answer("设置成功")
+                # 刷新原消息面板
+                panel = await settings_service.get_registration_mode_panel(server_id)
+                await event.edit(panel.message, buttons=panel.keyboard)
+                return
+            else:
+                await event.answer(f"设置失败: {result.message}，请重试！", alert=True)
+
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
+    except asyncio.TimeoutError:
+        await event.answer("操作超时", alert=True)
+    except Exception as e:
+        logger.error(f"Conversation error: {e}")
+        await event.answer("发生错误，请重试", alert=True)
 
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
 async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
@@ -844,11 +1024,10 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
 
     # Start Conversation
     try:
-        async with client.conversation(chat_id, timeout=300) as conv:
+        async with client.conversation(chat_id, timeout=120) as conv:
             lib_msg = await conv.send_message(result.message, buttons=result.keyboard)
 
             # 等待库选择
-            # 我们寻找此特定消息的回调
             press_event = await conv.wait_event(
                 events.CallbackQuery(func=lambda e: e.message_id == lib_msg.id)
             )
@@ -886,59 +1065,23 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
                 buttons=cancel_button
             )
 
-            # 等待文本输入或取消按钮
-            while True:
-                # Create tasks for both events
-                task_response = asyncio.create_task(conv.get_response())
-                task_cancel = asyncio.create_task(
-                    conv.wait_event(events.CallbackQuery(func=lambda e: e.message_id == query_prompt.id))
-                )
+            query = await get_user_input_or_cancel(conv, query_prompt.id)
+            if not query:
+                try:
+                    await query_prompt.delete()
+                except: 
+                    pass
+                return
 
-                done, pending = await asyncio.wait(
-                    [task_response, task_cancel],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-
-                # 检查哪一个完成了
-                if task_cancel in done:
-                    # 用户点击取消
-                    cancel_event = task_cancel.result()
-                    # 取消其他任务
-                    task_response.cancel()
-
-                    await cancel_event.answer("已取消")
-                    await cancel_event.delete()
-                    return
-                else:
-                    # 用户发送了一条消息
-                    response_msg = task_response.result()
-                    # 取消其他任务（虽然 wait_event 可能不需要取消）
-                    task_cancel.cancel()
-
-                    if response_msg.text and response_msg.text.startswith('/'):
-                        await conv.send_message("检测到命令，已取消求片。")
-                        return
-
-                    if not response_msg.text:
-                        await conv.send_message("无效输入，请发送关键词。")
-                        continue
-
-                    query = response_msg.text.strip()
-                    break
-
-            searching_msg = await conv.send_message(f"正在搜索: **{query}**...")
-
-            # 3. 执行搜索
+            searching_msg = await conv.send_message(f"🔍 正在搜索: **{query}**...")
             search_result = await request_service.search_media(library_name, query)
 
             if not search_result.success:
-                await searching_msg.edit(f"搜索失败: {search_result.message}")
+                await searching_msg.edit(f"❌ 搜索失败: {search_result.message}")
                 return
 
-            # 显示结果按钮
             results_msg = await searching_msg.edit(search_result.message, buttons=search_result.keyboard)
 
-            # 4.等待选择
             sel_event = await conv.wait_event(
                  events.CallbackQuery(func=lambda e: e.message_id == results_msg.id)
             )
@@ -949,21 +1092,48 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
                 await sel_event.delete()
                 return
 
-            # Expected: req_sel_{media_id}
+            # 解析选择: req_sel_{lib_b64}_{media_id}
             sel_parts = sel_data.split('_')
-            media_id = int(sel_parts[2])
+            media_id = int(sel_parts[3])
 
-            # 提交
-            # process_media_selection 处理通知发送并返回成功消息
-            final_result = await request_service.process_media_selection(user_id, library_name, media_id)
+            await sel_event.answer("获取详情中...", alert=False)
+            preview_result = await request_service.process_media_selection(user_id, library_name, media_id)
+            if not preview_result.success:
+                await sel_event.answer(preview_result.message, alert=True)
+                return
 
-            if final_result.success:
-                await sel_event.edit(final_result.message, buttons=None)
-            else:
-                await sel_event.answer(final_result.message, alert=True)
+            # 显示预览卡片
+            preview_msg = await sel_event.edit(
+                preview_result.message,
+                file=preview_result.extra_data,
+                buttons=preview_result.keyboard
+            )
 
+            # 9. 等待最终确认
+            confirm_event = await conv.wait_event(
+                events.CallbackQuery(func=lambda e: e.message_id == preview_msg.id)
+            )
+
+            confirm_data = confirm_event.data.decode('utf-8')
+            if confirm_data == 'req_cancel':
+                await confirm_event.answer("已取消")
+                await confirm_event.delete()
+                return
+
+            if confirm_data.startswith('req_submit_'):
+                await confirm_event.answer("正在提交...", alert=False)
+                final_result = await request_service.submit_final_request(user_id, library_name, media_id)
+
+                if final_result.success:
+                    await confirm_event.edit(final_result.message, buttons=None, file=None)
+                    return
+                else:
+                    await confirm_event.answer(final_result.message + "，请重试！", alert=True)
+
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
     except asyncio.TimeoutError:
-        await safe_respond(event, "操作超时，请重试。")
+        await safe_respond(event, "⏳ 操作超时，请重试。")
     except Exception as e:
         logger.error(f"Conversation error: {e}")
         await safe_respond(event, f"发生错误: {str(e)}")
@@ -977,6 +1147,10 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
     subtitle_service = SubtitleService(app, session)
     client = app.state.telethon_client.client
 
+    if not subtitle_service.sonarr_clients and not subtitle_service.radarr_clients:
+        await event.answer("系统未配置任何 Sonarr 或 Radarr 实例，无法使用此功能。", alert=True)
+        return
+
     # Start Conversation
     try:
         async with client.conversation(chat_id, timeout=300) as conv:
@@ -987,13 +1161,19 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
                 📤 **上传字幕**
                 请直接发送字幕压缩包 (Zip)。
                 
-                **命名规则**：
-                1. 剧集: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
-                2. 电影: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
+                **🗂 命名规则 (必须严格遵守)**：
+                • **剧集**: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
+                • **电影**: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
                 
-                **内容要求**：
-                - 剧集：S季E集.字幕语言.后缀
-                - 电影：电影名.字幕语言.后缀
+                **📄 压缩包内文件要求**：
+                • **剧集**: S季E集.字幕语言.后缀
+                • **电影**: 电影名.字幕语言.后缀
+
+                **建议**：
+                添加字幕所属字幕组或来源，命名规范：
+                S季E集或电影名.字幕语言.字幕或来源.后缀
+
+                发送 `/cancel` 或其它指令可退出上传模式。
                 """)
 
             # 使用新消息以避免编辑可能旧的菜单消息
@@ -1004,7 +1184,7 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
                 response_msg = await conv.get_response()
                 if response_msg.text and response_msg.text.startswith('/'):
                     # 用户可能正在尝试运行命令，取消对话
-                    await conv.send_message("检测到命令，已取消上传。")
+                    await conv.send_message("❌ 检测到命令，已取消上传。")
                     return
 
                 if not response_msg.file:
@@ -1012,28 +1192,149 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
                     continue
 
                 if not response_msg.file.name.lower().endswith('.zip'):
-                    await conv.send_message("格式错误，请上传 .zip 压缩包。")
+                    await conv.send_message("❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。")
                     continue
 
                 # Valid file found
                 break
 
-            processing_msg = await conv.send_message("正在接收并处理文件，请稍候...")
+            processing_msg = await conv.send_message("📥 正在接收并处理文件，请稍候...")
 
             # Download
             async with aiofiles.tempfile.NamedTemporaryFile(suffix=".zip") as tmp_file:
                 file_path = await response_msg.download_media(file=tmp_file.name)
 
                 if not file_path:
-                    await processing_msg.edit("文件下载失败，请重试。")
+                    await processing_msg.edit("❌ 文件下载失败，请重试。")
                     return
 
                 # Process
                 result = await subtitle_service.handle_file_upload(user_id, file_path, response_msg.file.name)
-                await processing_msg.edit(result.message)
+                if result.success:
+                    await processing_msg.edit(result.message)
+                    return
+                else:
+                    await processing_msg.edit(f"❌ **上传失败**\n\n{result.message}")
 
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
     except asyncio.TimeoutError:
-        await safe_respond(event, "操作超时，请重试。")
+        await safe_respond(event, "⏳ 操作超时，字幕上传会话已结束。")
     except Exception as e:
         logger.error(f"Conversation error: {e}")
-        await safe_respond(event, f"发生错误: {str(e)}")
+        await safe_respond(event, f"❌ 发生未知错误: {str(e)}")
+
+@TelethonClientWarper.handler(events.CallbackQuery(data=b'add_server_flow'))
+@provide_db_session
+@require_admin
+async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """添加服务器向导 (Conversation)"""
+    chat_id = event.chat_id
+    client = app.state.telethon_client.client
+    settings_service = SettingsServices(app, session)
+
+    try:
+        async with client.conversation(chat_id, timeout=120) as conv:
+            # 1. 选择服务器类型
+            keyboard = [
+                [
+                    Button.inline("Emby", b"add_srv_type_emby"),
+                    Button.inline("Jellyfin", b"add_srv_type_jellyfin")
+                ],
+                [
+                    Button.inline("Sonarr", b"add_srv_type_sonarr"),
+                    Button.inline("Radarr", b"add_srv_type_radarr")
+                ],
+                [Button.inline("取消", b"add_srv_cancel")]
+            ]
+            type_msg = await conv.send_message("🛠 **步骤 1/4**: 请选择服务器类型：", buttons=keyboard)
+
+            # 等待类型选择
+            press = await conv.wait_event(events.CallbackQuery())
+            data = press.data.decode()
+
+            if data == 'add_srv_cancel':
+                await press.answer("已取消")
+                await press.delete()
+                await type_msg.delete()
+                return
+
+            if not data.startswith('add_srv_type_'):
+                # 防止意外捕获其他按钮，简单处理退出
+                await press.answer("操作无效")
+                return
+
+            server_type = data.split('_')[-1] # emby, jellyfin, sonarr, radarr
+            await press.answer(f"已选择: {server_type}")
+            await type_msg.delete()
+
+            # 2. 输入名称
+            cancel_btn = [Button.inline("取消", b"add_srv_abort")]
+            prompt_name = await conv.send_message(f"🛠 **步骤 2/4**: 请输入 **{server_type}** 的名称 (唯一标识)：", buttons=cancel_btn)
+            name = await get_user_input_or_cancel(conv, prompt_name.id)
+            if not name:
+                try:
+                    await prompt_name.delete()
+                except:
+                    pass
+                return
+            try:
+                await prompt_name.delete()
+            except:
+                pass
+
+            # 3. 输入 URL
+            prompt_url = await conv.send_message(
+                "🛠 **步骤 3/4**: 请输入服务器地址 (URL)\n"
+                "例如: `http://192.168.1.5:8096` 或 `https://emby.domain.com`", 
+                buttons=cancel_btn
+            )
+            url = await get_user_input_or_cancel(conv, prompt_url.id)
+            if not url:
+                try:
+                    await prompt_url.delete()
+                except:
+                    pass
+                return
+            try:
+                await prompt_url.delete()
+            except:
+                pass
+
+            # 4. 输入 API Key
+            prompt_key = await conv.send_message("🛠 **步骤 4/4**: 请输入 API Key：", buttons=cancel_btn)
+            api_key = await get_user_input_or_cancel(conv, prompt_key.id)
+            if not api_key:
+                try:
+                    await prompt_key.delete()
+                except:
+                    pass
+                return
+            try:
+                await prompt_key.delete()
+            except:
+                pass
+
+            # 5. 执行添加
+            processing = await conv.send_message("⏳ 正在测试连接并保存配置...")
+            result = await settings_service.add_server(name, server_type, url, api_key)
+
+            if result.success:
+                await processing.edit(result.message)
+                try:
+                    panel = await settings_service.get_media_panel()
+                    if event.message: # type: ignore
+                        await event.edit(panel.message, buttons=panel.keyboard)
+                except Exception:
+                    pass
+            else:
+                await processing.edit(f"❌ 添加失败: {result.message}，请重试！")
+            return
+
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
+    except asyncio.TimeoutError:
+        await event.answer("⏳ 操作超时", alert=True)
+    except Exception as e:
+        logger.error(f"Add server error: {e}")
+        await safe_respond(event, f"发生系统错误: {str(e)}")

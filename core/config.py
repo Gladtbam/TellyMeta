@@ -66,9 +66,6 @@ class Settings(BaseSettings):
     port: int = 5080
     tmdb_api_key: str = ''
     tvdb_api_key: str = ''
-    media_server_url: str = ''
-    media_api_key: str = ''
-    media_server: str = 'emby'  # or 'jellyfin'
     ai_api_key: str = ''
     ai_base_url: str = 'https://api.openai.com/v1'
     ai_model: str = 'gpt-4o-mini'
@@ -81,10 +78,6 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ''
     telegram_bot_name: str = ''
     telegram_chat_id: int = 0
-    sonarr_url: str = ''
-    sonarr_api_key: str = ''
-    radarr_url: str = ''
-    radarr_api_key: str = ''
 
 @lru_cache
 def get_settings() -> Settings:

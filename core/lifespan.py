@@ -23,7 +23,9 @@ from core.initialization import check_sqlite_version, initialize_admin
 from core.scheduler_jobs import (ban_expired_users,
                                  delete_expired_banned_users, settle_scores)
 from core.telegram_manager import TelethonClientWarper
+from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
+from repositories.server_repo import ServerRepository
 from services.score_service import MessageTrackingState
 from workers.mkv_worker import mkv_merge_task
 
@@ -69,35 +71,6 @@ async def lifespan(app: FastAPI):
     else:
         app.state.tvdb_client = None
 
-    if settings.sonarr_api_key:
-        app.state.sonarr_client = SonarrClient(
-            client=httpx.AsyncClient(base_url=settings.sonarr_url),
-            api_key=settings.sonarr_api_key
-        )
-    else:
-        app.state.sonarr_client = None
-
-    if settings.radarr_api_key:
-        app.state.radarr_client = RadarrClient(
-            client=httpx.AsyncClient(base_url=settings.radarr_url),
-            api_key=settings.radarr_api_key
-        )
-    else:
-        app.state.radarr_client = None
-
-    if settings.media_server.lower() == 'emby':
-        app.state.media_client = EmbyClient(
-            client=httpx.AsyncClient(base_url=f'{settings.media_server_url}/emby'),
-            api_key=settings.media_api_key
-        )
-    elif settings.media_server.lower() == 'jellyfin':
-        app.state.media_client = JellyfinClient(
-            client=httpx.AsyncClient(base_url=f'{settings.media_server_url}'),
-            api_key=settings.media_api_key
-        )
-    else:
-        logger.error(f"不支持的媒体服务器类型: {settings.media_server}")
-
     app.state.db_engine = async_engine
     app.state.telethon_client = TelethonClientWarper(app)
 
@@ -111,12 +84,43 @@ async def lifespan(app: FastAPI):
     )
     app.state.telethon_worker = asyncio.create_task(app.state.telethon_client.run_until_disconnected())
 
+    app.state.sonarr_clients = {} # dict[int, SonarrClient]
+    app.state.radarr_clients = {} # dict[int, RadarrClient]
+    app.state.media_clients = {} # dict[int, MediaService]
+
     # 初始化管理员用户
     async with async_session() as session:
-        admin_ids = await initialize_admin(session, app.state.telethon_client)
-        app.state.admin_ids = set(admin_ids)
-        await ConfigRepository.load_all_to_cache(session)
-        await session.close()
+        try:
+            admin_ids = await initialize_admin(session, app.state.telethon_client)
+            app.state.admin_ids = set(admin_ids)
+            await ConfigRepository.load_all_to_cache(session)
+
+            servers = await ServerRepository(session).get_all_enabled()
+            for server in servers:
+                logger.info("正在加载服务器：[{}] {}", server.server_type, server.name)
+                match server.server_type:
+                    case ServerType.SONARR:
+                        app.state.sonarr_clients[server.id] = SonarrClient(
+                            client=httpx.AsyncClient(base_url=server.url),
+                            api_key=server.api_key
+                        )
+                    case ServerType.RADARR:
+                        app.state.radarr_clients[server.id] = RadarrClient(
+                            client=httpx.AsyncClient(base_url=server.url),
+                            api_key=server.api_key
+                        )
+                    case ServerType.JELLYFIN:
+                        app.state.media_clients[server.id] = JellyfinClient(
+                            client=httpx.AsyncClient(base_url=f'{server.url}'),
+                            api_key=server.api_key
+                        )
+                    case ServerType.EMBY:
+                        app.state.media_clients[server.id] = EmbyClient(
+                            client=httpx.AsyncClient(base_url=f'{server.url}/emby'),
+                            api_key=server.api_key
+                        )
+        finally:
+            await session.close()
 
     app.state.scheduler = AsyncIOScheduler(
         jobstores={'default': SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))},
@@ -166,8 +170,12 @@ async def lifespan(app: FastAPI):
     if app.state.tvdb_client:
         await app.state.tvdb_client.close()
 
-    if hasattr(app.state, 'media_client'):
-        await app.state.media_client.close()
+    for client in app.state.sonarr_clients.values():
+        await client.close()
+    for client in app.state.radarr_clients.values():
+        await client.close()
+    for client in app.state.media_clients.values():
+        await client.close()
 
     if await app.state.telethon_client.is_connected():
         await app.state.telethon_client.disconnect()

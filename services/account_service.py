@@ -1,17 +1,21 @@
 import re
 import textwrap
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
+from fastapi import FastAPI
 from httpx import HTTPError
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
+from telethon import Button
 
 from core.config import get_settings
+from models.orm import RegistrationMode, ServerInstance, ServerType
 from models.protocols import User
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
@@ -19,78 +23,52 @@ from services.user_service import Result
 settings = get_settings()
 
 class AccountService:
-    def __init__(self, session: AsyncSession, media_service: MediaService) -> None:
-        self.media_service = media_service
+    def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)
         self.code_repo = CodeRepository(session)
         self.media_repo = MediaRepository(session)
+        self.server_repo = ServerRepository(session)
+        self.media_clients: dict[int, MediaService] = app.state.media_clients
 
-    async def set_registration_mode(self, mode: str)  -> Result:
-        """设置注册模式
-        Args:
-            mode (str): 注册模式:
-            - 如果是纯数字，则按名额限制。
-            - 如果是时间格式 (e.g., "1h30m"), 则按时间限制。
-            - 如果是 'open' 或 'start', 则不限制注册
-            - 如果是 'close' 或 'stop', 则关闭开放注册，仅允许注册码和积分注册。
-        """
-        if re.fullmatch(r'\d+', mode):
-            return await self._set_by_count(int(mode))
-        elif re.fullmatch(r'(\d+h)?(\d+m)?(\d+s)?', mode):
-            return await self._set_by_time(mode)
-        elif mode in ('close', 'stop'):
-            return await self._set_closed()
-        else:
-            return Result(False, "无效的注册模式。请使用纯数字、时间格式 (e.g., '1h30m') 或 'close'/'stop'。")
+    async def get_register_servers_keyboard(self) -> Result:
+        """获取可注册的服务器列表键盘"""
+        servers = await self.server_repo.get_all_enabled()
+        # 筛选出允许注册的服务器 (非 CLOSE 模式 且 启用)
+        available_servers: list[ServerInstance] = []
+        for srv in servers:
+            if srv.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+                continue
+            if srv.registration_mode == RegistrationMode.CLOSE:
+                continue
+            available_servers.append(srv)
 
-    async def _set_by_count(self, count: int) -> Result:
-        """按名额限制设置注册模式
-        Args:
-            count (int): 名额限制
-        """
-        if count <= 0:
-            return Result(False, "名额限制必须是正整数。")
+        if not available_servers:
+            return Result(False, "当前没有任何服务器开放注册。")
 
-        await self.config_repo.set_settings('registration_mode', 'count')
-        await self.config_repo.set_settings('registration_count_limit', str(count))
-        await self.config_repo.set_settings('registration_time_limit', '0') # 清除时间限制
+        keyboard = []
+        for srv in available_servers:
+            # 检查名额
+            status = ""
+            if srv.registration_mode == RegistrationMode.COUNT:
+                status = f"(剩{srv.registration_count_limit}名额)"
+            elif srv.registration_mode == RegistrationMode.TIME:
+                # 简单检查是否过期
+                try:
+                    ts = float(srv.registration_time_limit)
+                    if datetime.now().timestamp() > ts:
+                        continue # 已过期不显示
+                    status = "(限时)"
+                except:
+                    pass
 
-        return Result(True, f"注册已开启，当前剩余名额: **{count}**。")
+            keyboard.append([
+                Button.inline(f"{srv.name} {status}", data=f"signup_srv_{srv.id}".encode('utf-8'))
+            ])
 
-    async def _set_by_time(self, time_str: str) -> Result:
-        """按时间限制设置注册模式
-        Args:
-            time_str (str): 时间限制字符串 (e.g., "1h30m")
-        """
-        hours = int((re.search(r'(\d+)h', time_str) or [0,0])[1])
-        minutes = int((re.search(r'(\d+)m', time_str) or [0,0])[1])
-        seconds = int((re.search(r'(\d+)s', time_str) or [0,0])[1])
-        time = datetime.now() + timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        return Result(True, "请选择要注册的服务器：", keyboard=keyboard)
 
-        await self.config_repo.set_settings('registration_mode', 'time')
-        await self.config_repo.set_settings('registration_time_limit', str(time.timestamp()))
-        await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
-
-        return Result(True, f"注册已开启，截止时间: **{time.strftime('%Y-%m-{} %H:%M:{}')}**。")
-
-    async def _set_open(self) -> Result:
-        """开启开放注册, 无限制"""
-        await self.config_repo.set_settings('registration_mode', 'unlimit')
-        await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
-        await self.config_repo.set_settings('registration_time_limit', '0') # 清除时间限制
-
-        return Result(False, "注册已开启，无限制注册。")
-
-    async def _set_closed(self) -> Result:
-        """关闭开放注册，仅允许注册码和积分注册"""
-        await self.config_repo.set_settings('registration_mode', 'default')
-        await self.config_repo.set_settings('registration_count_limit', '0') # 清除名额限制
-        await self.config_repo.set_settings('registration_time_limit', '0') # 清除时间限制
-
-        return Result(False, "注册已关闭，仅允许使用注册码和积分注册。")
-
-    async def register(self, user_id: int, username: str | None | Literal[False]):
+    async def register(self, user_id: int, username: str | None | Literal[False], server_id: int) -> Result:
         """注册新用户
         Args:
             user_id (int): 用户的 Telegram ID
@@ -99,99 +77,166 @@ class AccountService:
         if not username:
             return Result(False, "请先设置 Telegram 用户名，然后再尝试注册。")
 
-        if await self.media_repo.get_by_id(user_id):
-            return Result(False, "您已经注册过了，无需重复注册。")
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or not server.is_enabled:
+            return Result(False, "该服务器不存在或已停用。")
 
-        mode = await self.config_repo.get_settings('registration_mode', 'default')
+        if await self.media_repo.get_by_id(user_id, server_id):
+            return Result(False, f"您已经在 **{server.name}** 注册过了，无需重复注册。")
+
         can_register = False
+        mode = server.registration_mode
 
-        if mode == 'count':
-            count = int(await self.config_repo.get_settings('registration_count_limit', '0') or '0')
-            if count > 0:
+        if mode == RegistrationMode.COUNT:
+            if server.registration_count_limit > 0:
                 can_register = True
-                await self.config_repo.set_settings('registration_count_limit', str(count - 1))
+                await self.server_repo.update_policy_config(server.id, count=server.registration_count_limit - 1)
             else:
-                await self._set_closed()
-        elif mode == 'time':
-            timestamp = float(await self.config_repo.get_settings('registration_time_limit', '0') or '0')
-            if timestamp > datetime.now().timestamp():
+                await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.DEFAULT)
+                return Result(False, "该服务器注册名额已满。")
+        elif mode == RegistrationMode.TIME:
+            limit_time = float(server.registration_time_limit)
+            if limit_time > datetime.now().timestamp():
                 can_register = True
             else:
-                await self._set_closed()
-        elif mode == 'unlimit':
+                await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.DEFAULT)
+                return Result(False, "该服务器开放注册时间已截止。")
+        elif mode == RegistrationMode.OPEN:
             can_register = True
-        else:
+        elif mode == RegistrationMode.DEFAULT:
             user = await self.telegram_repo.get_or_create(user_id)
             register_score = int(await self.telegram_repo.get_renew_score())
             if user.score >= register_score:
                 can_register = True
                 await self.telegram_repo.update_score(user_id, -register_score)
+            else:
+                return Result(False, f"您的积分不足，注册该服务器需要 **{register_score}** 积分。")
+        else:
+            return Result(False, "该服务器当前未开放注册。")
 
         if not can_register:
             return Result(False, "注册失败，当前未开放注册或您不满足注册条件。")
 
+        media_service: MediaService | None = self.media_clients.get(server_id)
+        if not media_service:
+            # 回滚积分扣除（如果是积分注册）
+            if mode == RegistrationMode.DEFAULT:
+                await self.telegram_repo.update_score(user_id, int(await self.telegram_repo.get_renew_score()))
+            return Result(False, "服务器连接实例未找到，请联系管理员。")
         try:
-            media, pw = await self.media_service.create(username)
-            if media is None:
+            media_user_dto, pw = await media_service.create(username)
+            if not media_user_dto:
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-            expires_at = int(await self.config_repo.get_settings('registration_expiry_days', '0') or '0')
-            await self.media_repo.create(user_id, media.Id, username, expires_at)
+            expires_at = server.registration_expiry_days
+            media_user = await self.media_repo.create(
+                user_id=user_id,
+                server_id=server.id,
+                media_id=media_user_dto.Id,
+                media_name=username,
+                expires_at=expires_at
+            )
 
-            # 应用默认 NSFW 策略
-            # 如果默认禁用 NSFW (nsfw_enabled='false')，则限制对 NSFW 库的访问。
-            nsfw_enabled = await self.config_repo.get_settings('nsfw_enabled', 'true') == 'true'
-            nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
-            nsfw_sub_ids_str = await self.config_repo.get_settings('nsfw_sub_library', '')
-
-            if not nsfw_enabled and nsfw_ids_str:
-                nsfw_ids = nsfw_ids_str.split('|')
-                all_libs = await self.media_service.get_libraries() or []
-
-                safe_libs = [
-                    lib.ItemId for lib in all_libs
-                    if lib.ItemId and lib.ItemId not in nsfw_ids
-                ]
-
-                if settings.media_server.lower() == 'emby' and nsfw_sub_ids_str:
-                    nsfw_sub_ids = nsfw_sub_ids_str.split('|')
-                    await self.media_service.update_policy(media.Id, {
-                        'EnableAllFolders': False,
-                        'EnabledFolders': safe_libs,
-                        'ExcludedSubFolders': nsfw_sub_ids
-                    }, is_none=True)
-                else:
-                    await self.media_service.update_policy(media.Id, {
-                        'EnableAllFolders': False,
-                        'EnabledFolders': safe_libs
-                    }, is_none=True)
+            if not server.nsfw_enabled:
+                await self._apply_nsfw_policy(media_service, media_user_dto.Id, server, enable_nsfw=False)
             else:
-                await self.media_service.update_policy(media.Id, {
-                    'EnableAllFolders': True
-                }, is_none=True)
+                await media_service.update_policy(media_user_dto.Id, {'EnableAllFolders': True}, is_none=True)
 
             return Result(True, textwrap.dedent(f"""\
-                注册成功！您的账户信息如下：
-                - 服务器地址: `{settings.media_server_url}`
-                - 用户名: `{username}`
-                - 密码: `{pw}`
-
+                🎉 **注册成功！**
+                
+                服务器: `{server.name}`
+                地址: `{server.url}`
+                用户名: `{username}`
+                密码: `{pw}`
+                
+                有效期至: {media_user.expires_at.strftime('%Y-%m-%d')}
                 请尽快登录并修改密码，祝您观影愉快！
             """))
         except HTTPError:
             logger.error("{} 注册失败", user_id)
             return Result(False, "注册失败，请联系管理员")
 
-    async def renew(self, user_id: int, use_score: bool) -> Result:
+    async def _apply_nsfw_policy(
+        self,
+        client: MediaService,
+        media_user_id: str,
+        server: ServerInstance,
+        enable_nsfw: bool,
+        current_policy: Any | None = None) -> None:
+        """辅助方法：应用 NSFW 策略到媒体服务器
+        Args:
+            enable_nsfw: True 表示允许观看 NSFW (解锁)；False 表示禁止观看 (锁定)
+            current_policy: 可选，当前的用户策略对象。
+                            - 如果传入 (Toggle场景)，基于它修改，保留其他权限。
+                            - 如果不传 (Register场景)，使用空字典，底层模型会自动用默认值填充其他字段。
+        """
+        # 1. 准备基础策略字典
+        if current_policy:
+            policy_dict = current_policy.model_dump()
+        else:
+            policy_dict = {}
+
+        # 2. 修改 NSFW 相关字段
+        if enable_nsfw:
+            # 允许看 NSFW -> 开启 "EnableAllFolders"，清空排除列表
+            policy_dict['EnableAllFolders'] = True
+            policy_dict['EnabledFolders'] = []
+            if server.server_type == ServerType.EMBY:
+                policy_dict['ExcludedSubFolders'] = []
+
+            await client.update_policy(media_user_id, policy_dict, is_none=True)
+            return
+
+        # 禁止看 NSFW -> 计算允许的库列表 (白名单模式)
+        nsfw_ids = set(server.nsfw_library_ids.split('|')) if server.nsfw_library_ids else set()
+
+        try:
+            all_libs = await client.get_libraries() or []
+        except Exception as e:
+            logger.error("在策略应用期间无法获取服务器 {} 的库：{}", server.id, e)
+            return
+
+        safe_lib_ids = []
+        if server.server_type == ServerType.JELLYFIN:
+            safe_lib_ids = [
+                lib.ItemId for lib in all_libs
+                if lib.ItemId and lib.ItemId not in nsfw_ids
+            ]
+        else:
+            safe_lib_ids = [
+                lib.Guid for lib in all_libs
+                if lib.Guid and lib.Guid not in nsfw_ids
+            ]
+
+        policy_dict['EnableAllFolders'] = False
+        policy_dict['EnabledFolders'] = safe_lib_ids
+
+        if server.server_type == ServerType.EMBY:
+            # Emby 还需要处理子文件夹排除
+            nsfw_sub_ids = server.nsfw_sub_library_ids.split('|') if server.nsfw_sub_library_ids else []
+            policy_dict['ExcludedSubFolders'] = nsfw_sub_ids
+
+        await client.update_policy(media_user_id, policy_dict, is_none=True)
+
+    async def renew(self, user_id: int, server_id: int, use_score: bool) -> Result:
         """续期
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        media_user = await self.media_repo.get_by_id(user_id)
+        media_user = await self.media_repo.get_by_id(user_id, server_id)
         if media_user is None:
             return Result(False, "您尚未注册，请先注册后再续期。")
 
-        media_info = await self.media_service.get_user_info(media_user.media_id)
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            return Result(False, "服务器配置已失效。")
+
+        client = self.media_clients.get(server_id)
+        if not client:
+            return Result(False, f"客户端未运行: {server.name}")
+
+        media_info = await client.get_user_info(media_user.media_id)
         if not isinstance(media_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
@@ -205,12 +250,14 @@ class AccountService:
                 return Result(False, f"续期失败，您的积分不足，续期需要 **{renew_score}** 积分。")
             await self.telegram_repo.update_score(user_id, -renew_score)
 
-        days = int(await self.config_repo.get_settings('registration_expiry_days', '0') or '0')
-        media_user = await self.media_repo.extend_expiry(media_user, days)
+        media_user = await self.media_repo.extend_expiry(media_user, server.registration_expiry_days)
         if media_info.Policy.IsDisabled:
-            await self.media_service.ban_or_unban(media_user.media_id, is_ban=False)
+            await client.ban_or_unban(media_user.media_id, is_ban=False)
 
-        return Result(True, f"续期成功，您的账户已延长至 **{media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。")
+        return Result(
+            True,
+            f"续期成功，您的 **{server.name}** 账户已延长至 **{media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。"
+        )
 
     async def redeem_code(self, user_id: int, username: str | None | Literal[False], code_str: str) -> Result:
         """使用注册码或续期码注册或续期
@@ -222,10 +269,13 @@ class AccountService:
         if not code or code.used_at or code.expires_at < datetime.now():
             return Result(False, "无效的注册码或续期码，请检查后重试。")
 
+        if not code.server_id:
+            return Result(False, "该激活码数据异常 (未关联服务器)，无法使用。")
+
         if code.type == 'signup':
-            result = await self.register(user_id, username)
+            result = await self.register(user_id, username, code.server_id)
         elif code.type == 'renew':
-            result = await self.renew(user_id, use_score=False)
+            result = await self.renew(user_id, code.server_id, False)
         else:
             return Result(False, "无效的码类型，请联系管理员。")
 
@@ -233,134 +283,143 @@ class AccountService:
             await self.code_repo.mark_used(code)
         return result
 
-    async def generate_code(self, user_id: int, code_type: str) -> Result:
+    async def generate_code(self, user_id: int, code_type: str, server_id: int) -> Result:
         """生成注册码或续期码
         Args:
             user_id (int): 用户的 Telegram ID
             code_type (str): 码类型，'signup' 或 'renew'
         """
         if code_type not in ('signup', 'renew'):
-            return Result(False, "无效的码类型，请使用 'signup' 或 'renew'。")
+            return Result(False, "无效的码类型")
+
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            return Result(False, "服务器不存在。")
 
         user = await self.telegram_repo.get_or_create(user_id)
         if user.is_admin:
             expires = None
             score = 0
         else:
-            expires = int(await self.config_repo.get_settings('code_expiry_days', '30') or '30')
+            expires = server.code_expiry_days
             score = int(await self.telegram_repo.get_renew_score())
 
         if user.score < score:
             return Result(False, f"生成失败，您的积分不足，生成码需要 **{score}** 积分。")
 
-        code = await self.code_repo.create(code_type, expires)
+        code = await self.code_repo.create(code_type, expires, server_id)
         await self.telegram_repo.update_score(user_id, -score)
 
+        type_cn = "注册码" if code_type == 'signup' else "续期码"
         return Result(True, textwrap.dedent(f"""\
-            码生成成功！
-            - 类型: **{code.type}**
-            - 码: `{code.code}`
-            - 过期时间: **{code.expires_at}**
-
+            ✅ **{type_cn}生成成功**
+            
+            服务器: `{server.name}`
+            代码: `{code.code}`
+            过期时间: {code.expires_at.strftime('%Y-%m-%d')}
+            
             请妥善保管此码，祝您观影愉快！
         """))
 
-    async def toggle_nsfw_policy(self, user_id: int) -> Result:
+    async def toggle_nsfw_policy(self, user_id: int, server_id: int) -> Result:
         """切换用户的 NSFW 策略
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        media_user = await self.media_repo.get_by_id(user_id)
+        media_user = await self.media_repo.get_by_id(user_id, server_id)
         if media_user is None:
             return Result(False, "您尚未注册，请先注册后再设置。")
 
-        media_info = await self.media_service.get_user_info(media_user.media_id)
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or not server.is_enabled:
+            return Result(False, "该服务器不存在或已停用。")
+
+        client = self.media_clients.get(server_id)
+        if not client:
+            return Result(False, "服务器连接失败。")
+
+        media_info = await client.get_user_info(media_user.media_id)
         if not isinstance(media_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
-        is_emby = settings.media_server.lower() == 'emby'
-        nsfw_ids_str = await self.config_repo.get_settings('nsfw_library', '')
-        if not nsfw_ids_str:
-            return Result(False, "管理员尚未设置 NSFW 媒体库，无法切换 NSFW 策略。")
-        nsfw_ids = {i for i in nsfw_ids_str.split('|') if i}
+        policy = media_info.Policy
 
-        nsfw_sub_ids: set[str] = set()
-        if is_emby:
-            nsfw_sub_ids_str = await self.config_repo.get_settings('nsfw_sub_library', '')
-            nsfw_sub_ids = {i for i in nsfw_sub_ids_str.split('|') if i} if nsfw_sub_ids_str else set()
+        nsfw_ids = set(server.nsfw_library_ids.split('|')) if server.nsfw_library_ids else set()
 
-        all_libs = await self.media_service.get_libraries()
-        if not all_libs:
-            return Result(False, "获取媒体库列表失败，请稍后重试。")
+        is_unlocked = policy.EnableAllFolders or any(lid in policy.EnabledFolders for lid in nsfw_ids)
 
+        target_enable_nsfw = not is_unlocked
 
-        current_enabled_folders = media_info.Policy.EnabledFolders
-        enable_all_folders = media_info.Policy.EnableAllFolders
+        await self._apply_nsfw_policy(
+            client=client,
+            media_user_id=media_user.media_id,
+            server=server,
+            enable_nsfw=target_enable_nsfw,
+            current_policy=policy
+        )
 
-        is_nsfw_enabled = False
-        if not enable_all_folders:
-            is_nsfw_enabled = True
-        else:
-            if any(nid in current_enabled_folders for nid in nsfw_ids):
-                is_nsfw_enabled = True
+        action_text = "开启" if target_enable_nsfw else "关闭"
+        return Result(True, f"已 **{action_text}** 您的 NSFW 权限 (服务器: {server.name})。")
 
-        policy = media_info.Policy.model_dump()
-
-        if is_nsfw_enabled:
-            # Turn OFF
-            policy['EnableAllFolders'] = True
-            policy['EnabledFolders'] = []
-            if is_emby:
-                policy['ExcludedSubFolders'] = []
-            action = "关闭"
-
-        else:
-            # Turn ON
-            new_enabled = [
-                lib.ItemId
-                for lib in all_libs
-                if lib.ItemId and lib.ItemId not in nsfw_ids
-            ]
-            if is_emby:
-                new_enabled = [
-                    lib.Guid
-                    for lib in all_libs
-                    if lib.Guid and lib.Guid not in nsfw_ids
-                ]
-            policy['EnableAllFolders'] = False
-            policy['EnabledFolders'] = new_enabled
-            if is_emby:
-                policy['ExcludedSubFolders'] = nsfw_sub_ids
-            action = "开启"
-
-        try:
-            await self.media_service.update_policy(media_user.media_id, policy)
-
-            return Result(True, textwrap.dedent(f"""\
-                操作成功，已为您**{action}** NSFW 策略。
-                - 当前 NSFW 策略: {action}
-            """))
-        except HTTPError:
-            return Result(False, "请稍后重试")
-
-    async def forget_password(self, user_id: int):
+    async def forget_password(self, user_id: int, server_id: int):
         """重置密码
         Args:
             user_id (int): 用户的 Telegram ID
         """
-        media_user = await self.media_repo.get_by_id(user_id)
+        media_user = await self.media_repo.get_by_id(user_id, server_id)
         if media_user is None:
             return Result(False, "您尚未注册，请先注册后再重置密码。")
 
-        media_info = await self.media_service.get_user_info(media_user.media_id)
+        client = self.media_clients.get(server_id)
+        if not client:
+            return Result(False, "服务器连接失败。")
+
+        media_info = await client.get_user_info(media_user.media_id)
         if not isinstance(media_info, User):
             return Result(False, "操作失败，无法获取您的账户信息，请联系管理员。")
 
         try:
-            passwd = await self.media_service.post_password(media_user.media_id)
+            passwd = await client.post_password(media_user.media_id)
             return Result(True, textwrap.dedent(f"""\
                 密码重置成功！您的新密码是: `{passwd}`
                 请尽快登录并修改密码，祝您观影愉快！
             """))
         except HTTPError:
             return Result(False, "请稍后重试或寻求管理员帮助")
+
+    async def get_user_accounts_keyboard(self, user_id: int, callback_prefix: str) -> Result:
+        """获取用户绑定的所有账户按钮
+        Args:
+            callback_prefix: 按钮回调数据的前缀，例如 'me_do_renew'，生成的 data 将是 'me_do_renew_{server_id}'
+        """
+        accounts = await self.media_repo.get_all_by_id(user_id)
+        if not accounts:
+            return Result(False, "您没有任何绑定的媒体账户。")
+
+        keyboard = []
+        for acc in accounts:
+            srv = await self.server_repo.get_by_id(acc.server_id)
+            srv_name = srv.name if srv else f"Server-{acc.server_id}"
+            keyboard.append([
+                Button.inline(f"{srv_name} ({acc.media_name})", data=f"{callback_prefix}_{acc.server_id}".encode('utf-8'))
+            ])
+
+        return Result(True, "请选择要操作的账户：", keyboard=keyboard)
+
+    async def get_server_selection_for_code(self, callback_prefix: str) -> Result:
+        """获取用于生成邀请码的服务器选择按钮"""
+        # 仅媒体服务器
+        emby = await self.server_repo.get_by_type(ServerType.EMBY)
+        jellyfin = await self.server_repo.get_by_type(ServerType.JELLYFIN)
+        servers = list(emby) + list(jellyfin)
+
+        if not servers:
+            return Result(False, "没有可用的媒体服务器。")
+
+        keyboard = []
+        for srv in servers:
+            keyboard.append([
+                Button.inline(f"{srv.name}", data=f"{callback_prefix}_{srv.id}".encode('utf-8'))
+            ])
+
+        return Result(True, "请选择邀请码所属服务器：", keyboard=keyboard)
