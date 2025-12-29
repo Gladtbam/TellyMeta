@@ -250,6 +250,9 @@ class SettingsServices:
             🆔 ID: `{server.id}`
             类型: `{server.server_type}`
             地址: `{server.url}`
+                
+            🔗 **Webhook URL**:
+            `/webhook/{server.server_type}?server_id={server.id}`
         """)
 
         # 针对媒体服务器 (Emby/Jellyfin) 的特有配置
@@ -264,9 +267,6 @@ class SettingsServices:
                 • 注册模式: `{reg_mode}`
                 • 默认有效期: `{server.registration_expiry_days} 天`
                 • NSFW 限制: `{nsfw_status}`
-                
-                🔗 **Webhook URL**:
-                `/webhook/{server.server_type}?server_id={server.id}`
             """)
 
             # 功能按钮
