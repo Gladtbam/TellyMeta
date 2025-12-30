@@ -16,7 +16,7 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.emby import LibraryMediaFolder
-from models.orm import LibraryBindingModel, RegistrationMode, ServerType
+from models.orm import LibraryBindingModel, RegistrationMode, ServerInstance, ServerType
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -184,21 +184,17 @@ class SettingsServices:
         Returns:
             Result: 包含媒体设置和键盘布局的结果对象。
         """
-        media_servers = list(await self.server_repo.get_by_type(ServerType.EMBY))
-        media_servers.extend(await self.server_repo.get_by_type(ServerType.JELLYFIN))
+        all_servers = await self.server_repo.get_all()
 
-        sonarr_servers = await self.server_repo.get_by_type(ServerType.SONARR)
-        radarr_servers = await self.server_repo.get_by_type(ServerType.RADARR)
-        arr_servers = list(sonarr_servers) + list(radarr_servers)
+        media_servers = [s for s in all_servers if s.server_type in (ServerType.EMBY, ServerType.JELLYFIN)]
+        arr_servers = [s for s in all_servers if s.server_type in (ServerType.SONARR, ServerType.RADARR)]
 
         keyboard = []
 
-        # 1. 媒体服务器区域
         keyboard.append([Button.inline("—— 📺 媒体服务器 (点击管理) ——", data=b"ignore")])
         if media_servers:
             for server in media_servers:
                 status = "🟢" if server.is_enabled else "🔴"
-                # 点击进入服务器详情页
                 keyboard.append([
                     Button.inline(f"{status} {server.name} ({server.server_type})",
                                 data=f"view_server_{server.id}".encode('utf-8'))
@@ -206,7 +202,6 @@ class SettingsServices:
         else:
             keyboard.append([Button.inline("⚠️ 暂无，点击添加", data=b"add_server_flow")])
 
-        # 2. 下载服务器区域
         keyboard.append([Button.inline("—— 📥 媒体管理服务器 (点击管理) ——", data=b"ignore")])
         if arr_servers:
             for server in arr_servers:
@@ -234,6 +229,7 @@ class SettingsServices:
             
             • **媒体服务器**: 配置策略、有效期、NSFW 及媒体库绑定。
             • **媒体管理服务器**: 查看状态、修改信息。
+            🔴 代表已停用，🟢 代表运行中。
         """)
         return Result(success=True, message=msg, keyboard=keyboard)
 
@@ -243,18 +239,33 @@ class SettingsServices:
         if not server:
             return Result(False, "服务器不存在。")
 
-        keyboard = []
+        status_text = "运行中" if server.is_enabled else "已停用"
+        status_icon = "🟢" if server.is_enabled else "🔴"
+        toggle_action = "disable" if server.is_enabled else "enable"
+        toggle_label = "🔴 停用" if server.is_enabled else "🟢 启用"
         info = textwrap.dedent(f"""\
             **🖥️ 服务器详情 - {server.name}**
 
             🆔 ID: `{server.id}`
-            类型: `{server.server_type}`
+            状态: {status_icon} **{status_text}**
+            类型: `{server.server_type.capitalize()}`
             地址: `{server.url}`
-                
+
             🔗 **Webhook URL**:
+
             `/webhook/{server.server_type}?server_id={server.id}`
+
         """)
 
+        keyboard = []
+        keyboard.append([
+            Button.inline("✏️ 修改名称", data=f"srv_edit_name_{server.id}".encode('utf-8')),
+            Button.inline("✏️ 修改地址", data=f"srv_edit_url_{server.id}".encode('utf-8'))
+        ])
+        keyboard.append([
+            Button.inline("🔑 修改 API Key", data=f"srv_edit_key_{server.id}".encode('utf-8')),
+            Button.inline(toggle_label, data=f"srv_toggle_enable_{server.id}".encode('utf-8'))
+        ])
         # 针对媒体服务器 (Emby/Jellyfin) 的特有配置
         if server.server_type in (ServerType.EMBY, ServerType.JELLYFIN):
             nsfw_status = "✅ 开启" if server.nsfw_enabled else "❌ 关闭"
@@ -287,6 +298,74 @@ class SettingsServices:
         keyboard.append([Button.inline("« 返回列表", data=b"manage_media")])
 
         return Result(True, info, keyboard=keyboard)
+
+    async def update_server_field(self, server_id: int, field: str, value: str) -> Result:
+        """更新服务器字段并热重载客户端"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            return Result(False, "服务器不存在")
+
+        kwargs = {field: value}
+        await self.server_repo.update_basic_info(server_id, **kwargs)
+
+        if field in ['url', 'api_key'] and server.is_enabled:
+            await self._reload_server_client(server)
+
+        return Result(True, f"✅ 已更新服务器 {field}。")
+
+    async def toggle_server_status(self, server_id: int) -> Result:
+        """切换服务器启用状态并处理客户端连接"""
+        server = await self.server_repo.toggle_enabled(server_id)
+        if not server:
+            return Result(False, "服务器不存在")
+
+        if server.is_enabled:
+            try:
+                await self._init_and_add_client(server)
+                return Result(True, f"✅ 服务器 **{server.name}** 已启用并连接。")
+            except Exception as e:
+                await self.server_repo.toggle_enabled(server_id)
+                return Result(False, f"❌ 启用失败，无法连接到服务器: {str(e)}")
+        else:
+            await self._remove_and_close_client(server)
+            return Result(True, f"🔴 服务器 **{server.name}** 已停用并断开连接。")
+
+    async def _init_and_add_client(self, server: ServerInstance):
+        """(内部) 初始化单个客户端并添加到 app.state"""
+        client = None
+        if server.server_type == ServerType.EMBY:
+            client = EmbyClient(httpx.AsyncClient(base_url=f"{server.url}/emby"), server.api_key)
+            self.media_clients[server.id] = client
+        elif server.server_type == ServerType.JELLYFIN:
+            client = JellyfinClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            self.media_clients[server.id] = client
+        elif server.server_type == ServerType.SONARR:
+            client = SonarrClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            self.sonarr_clients[server.id] = client
+        elif server.server_type == ServerType.RADARR:
+            client = RadarrClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            self.radarr_clients[server.id] = client
+
+        if client:
+            await client.login()
+
+    async def _remove_and_close_client(self, server: ServerInstance):
+        """(内部) 移除并关闭单个客户端"""
+        client = None
+        if server.server_type in (ServerType.EMBY, ServerType.JELLYFIN):
+            client = self.media_clients.pop(server.id, None)
+        elif server.server_type == ServerType.SONARR:
+            client = self.sonarr_clients.pop(server.id, None)
+        elif server.server_type == ServerType.RADARR:
+            client = self.radarr_clients.pop(server.id, None)
+
+        if client:
+            await client.close() # type: ignore
+
+    async def _reload_server_client(self, server: ServerInstance):
+        """(内部) 重载客户端"""
+        await self._remove_and_close_client(server)
+        await self._init_and_add_client(server)
 
     async def get_server_libraries_panel(self, server_id: int) -> Result:
         """列出指定媒体服务器的所有库，进行绑定管理"""

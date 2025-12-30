@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import textwrap
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI
 from loguru import logger
@@ -627,7 +627,10 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
 
             # 2. 输入名称
             cancel_btn = [Button.inline("取消", b"add_srv_abort")]
-            prompt_name = await conv.send_message(f"🛠 **步骤 2/4**: 请输入 **{server_type}** 的名称 (唯一标识)：", buttons=cancel_btn)
+            prompt_name = await conv.send_message(
+                f"🛠 **步骤 2/4**: 请输入 **{server_type}** 的名称 (唯一标识)：",
+                buttons=cancel_btn
+            )
             name = await get_user_input_or_cancel(conv, prompt_name.id)
             if not name:
                 try:
@@ -695,3 +698,87 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
     except Exception as e:
         logger.error(f"Add server error: {e}")
         await safe_respond(event, f"发生系统错误: {str(e)}")
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_toggle_enable_(\\d+)'))
+@provide_db_session
+@require_admin
+async def srv_toggle_enable_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """切换服务器启用/禁用状态"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    settings_service = SettingsServices(app, session)
+
+    result = await settings_service.toggle_server_status(server_id)
+    await event.answer(result.message)
+
+    # 刷新详情面板
+    detail_result = await settings_service.get_server_detail_panel(server_id)
+    if detail_result.success:
+        await event.edit(detail_result.message, buttons=detail_result.keyboard)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_edit_(name|url|key)_(\\d+)'))
+@provide_db_session
+@require_admin
+async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """编辑服务器字段 (名称/URL/APIKey)"""
+    field_type = event.pattern_match.group(1).decode() # type: ignore
+    server_id = int(event.pattern_match.group(2).decode()) # type: ignore
+
+    chat_id = event.chat_id
+    client = app.state.telethon_client.client
+    settings_service = SettingsServices(app, session)
+
+    field_map = {
+        'name': '名称',
+        'url': '地址 (URL)',
+        'key': 'API Key'
+    }
+    db_field_map = {
+        'name': 'name',
+        'url': 'url',
+        'key': 'api_key'
+    }
+    field_name = field_map.get(field_type, field_type)
+    db_field = cast(str, db_field_map.get(field_type, field_type))
+
+    try:
+        async with client.conversation(chat_id, timeout=60) as conv:
+            cancel_btn = [Button.inline("取消", b"srv_edit_cancel")]
+            prompt_msg = await conv.send_message(f"✏️ 请输入新的 **{field_name}**：", buttons=cancel_btn)
+
+            new_value = await get_user_input_or_cancel(conv, prompt_msg.id)
+
+            if not new_value:
+                try:
+                    await prompt_msg.delete()
+                except:
+                    pass
+                return
+
+            try:
+                await prompt_msg.delete()
+            except:
+                pass
+
+            result = await settings_service.update_server_field(server_id, db_field, new_value)
+
+            if result.success:
+                await event.answer("更新成功")
+                # 刷新原详情面板
+                panel = await settings_service.get_server_detail_panel(server_id)
+                await event.edit(panel.message, buttons=panel.keyboard)
+            else:
+                await event.answer(f"更新失败: {result.message}", alert=True)
+
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。", alert=True)
+    except asyncio.TimeoutError:
+        await event.answer("操作超时", alert=True)
+    except Exception as e:
+        logger.error(f"Edit server error: {e}")
+        await event.answer("发生错误，请重试", alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(data=b'srv_edit_cancel'))
+async def srv_edit_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
+    """取消编辑"""
+    await event.answer("已取消编辑")
+    await event.delete()

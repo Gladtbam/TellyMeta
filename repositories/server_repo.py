@@ -54,6 +54,33 @@ class ServerRepository:
             await self.session.delete(server)
             await self.session.commit()
 
+    async def update_basic_info(self, server_id: int, **kwargs) -> ServerInstance | None:
+        """更新服务器基础信息 (name, url, api_key)
+        Args:
+            server_id (int): 服务器 ID
+            **kwargs: 要更新的字段，如 name='NewName', url='http://...'
+        """
+        server = await self.get_by_id(server_id)
+        if not server:
+            return None
+        
+        for key, value in kwargs.items():
+            if hasattr(server, key) and value is not None:
+                setattr(server, key, value)
+        
+        await self.session.commit()
+        await self.session.refresh(server)
+        return server
+
+    async def toggle_enabled(self, server_id: int) -> ServerInstance | None:
+        """切换启用/禁用状态"""
+        server = await self.get_by_id(server_id)
+        if server:
+            server.is_enabled = not server.is_enabled
+            await self.session.commit()
+            await self.session.refresh(server)
+        return server
+
     async def update_policy_config(
         self,
         server_id: int,
