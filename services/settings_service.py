@@ -241,7 +241,6 @@ class SettingsServices:
 
         status_text = "运行中" if server.is_enabled else "已停用"
         status_icon = "🟢" if server.is_enabled else "🔴"
-        toggle_action = "disable" if server.is_enabled else "enable"
         toggle_label = "🔴 停用" if server.is_enabled else "🟢 启用"
         info = textwrap.dedent(f"""\
             **🖥️ 服务器详情 - {server.name}**
@@ -281,6 +280,9 @@ class SettingsServices:
             """)
 
             # 功能按钮
+            keyboard.append([
+                Button.inline("📝 修改用户协议 (TOS)", data=f"srv_edit_tos_{server.id}".encode('utf-8'))
+            ])
             keyboard.append([
                 Button.inline(f"🔞 NSFW: {nsfw_status}", data=f"srv_nsfw_toggle_{server.id}".encode('utf-8')),
                 Button.inline("🔞 管理 NSFW 库", data=f"srv_nsfw_libs_{server.id}".encode('utf-8'))

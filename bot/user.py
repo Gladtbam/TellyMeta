@@ -10,6 +10,7 @@ from bot.utils import safe_reply, safe_respond, safe_respond_keyboard
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.user_service import Result, UserService
@@ -79,13 +80,45 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     if not result.success:
         await safe_respond(event, result.message)
     else:
-        await event.respond(result.message, result.keyboard)
+        await event.respond(result.message, buttons=result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'signup_srv_(\\d+)'))
 @provide_db_session
-async def signup_confirm_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """确认注册"""
+async def signup_check_tos_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """注册前检查 TOS"""
     server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+
+    # 检查服务器是否有 TOS
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+
+    if server and server.tos:
+        # 显示 TOS
+        tos_msg = textwrap.dedent(f"""\
+            📜 **{server.name} 用户协议 (TOS)**
+            
+            {server.tos}
+            
+            请阅读以上协议，点击下方按钮表示您同意并继续注册。
+        """)
+        keyboard = [
+            [Button.inline("✅ 我已阅读并同意", data=f"signup_agree_{server_id}".encode('utf-8'))],
+            [Button.inline("❌ 取消注册", data=b"req_cancel")] # 复用 req_cancel 或新建一个
+        ]
+        await event.edit(tos_msg, buttons=keyboard)
+    else:
+        # 无 TOS，直接进行注册逻辑
+        await _perform_registration(app, event, session, server_id)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'signup_agree_(\\d+)'))
+@provide_db_session
+async def signup_agree_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """同意 TOS 后继续注册"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    await _perform_registration(app, event, session, server_id)
+
+async def _perform_registration(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession, server_id: int) -> None:
+    """确认注册"""
     user_id: Any = event.sender_id
     client: TelethonClientWarper = app.state.telethon_client
 

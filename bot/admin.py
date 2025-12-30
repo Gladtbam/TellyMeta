@@ -715,7 +715,7 @@ async def srv_toggle_enable_handler(app: FastAPI, event: events.CallbackQuery.Ev
     if detail_result.success:
         await event.edit(detail_result.message, buttons=detail_result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_edit_(name|url|key)_(\\d+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_edit_(name|url|key|tos)_(\\d+)'))
 @provide_db_session
 @require_admin
 async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
@@ -730,20 +730,26 @@ async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event
     field_map = {
         'name': '名称',
         'url': '地址 (URL)',
-        'key': 'API Key'
+        'key': 'API Key',
+        'tos': '用户协议 (TOS)'
     }
     db_field_map = {
         'name': 'name',
         'url': 'url',
-        'key': 'api_key'
+        'key': 'api_key',
+        'tos': 'tos'
     }
     field_name = field_map.get(field_type, field_type)
     db_field = cast(str, db_field_map.get(field_type, field_type))
 
     try:
-        async with client.conversation(chat_id, timeout=60) as conv:
+        async with client.conversation(chat_id, timeout=300) as conv:
             cancel_btn = [Button.inline("取消", b"srv_edit_cancel")]
-            prompt_msg = await conv.send_message(f"✏️ 请输入新的 **{field_name}**：", buttons=cancel_btn)
+            prompt_text = f"✏️ 请输入新的 **{field_name}**："
+            if field_type == 'tos':
+                prompt_text += "\n\n(支持 Markdown 格式，发送 `/empty` 可清空协议)"
+                
+            prompt_msg = await conv.send_message(prompt_text, buttons=cancel_btn)
 
             new_value = await get_user_input_or_cancel(conv, prompt_msg.id)
 
@@ -759,11 +765,14 @@ async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event
             except:
                 pass
 
+            if new_value.strip() == "/empty" and field_type == 'tos':
+                new_value = ""
+
             result = await settings_service.update_server_field(server_id, db_field, new_value)
 
             if result.success:
                 await event.answer("更新成功")
-                # 刷新原详情面板
+
                 panel = await settings_service.get_server_detail_panel(server_id)
                 await event.edit(panel.message, buttons=panel.keyboard)
             else:
