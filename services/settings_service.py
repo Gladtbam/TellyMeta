@@ -1,4 +1,5 @@
 import base64
+import json
 import re
 import textwrap
 from datetime import datetime, timedelta
@@ -16,7 +17,8 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.emby import LibraryMediaFolder
-from models.orm import LibraryBindingModel, RegistrationMode, ServerInstance, ServerType
+from models.orm import (LibraryBindingModel, RegistrationMode, ServerInstance,
+                        ServerType)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -256,6 +258,16 @@ class SettingsServices:
 
         """)
 
+        if server.server_type in (ServerType.SONARR, ServerType.RADARR):
+            if server.path_mappings:
+                try:
+                    mappings = json.loads(server.path_mappings)
+                    info += "\n\n**📂 路径映射 (Remote -> Local)**:\n"
+                    for remote, local in mappings.items():
+                        info += f"`{remote}` ➡️ `{local}`\n"
+                except:
+                    info += "\n\n**📂 路径映射**: 解析错误"
+
         keyboard = []
         keyboard.append([
             Button.inline("✏️ 修改名称", data=f"srv_edit_name_{server.id}".encode('utf-8')),
@@ -292,6 +304,12 @@ class SettingsServices:
                 Button.inline("⏳ 有效期", data=f"srv_expiry_{server.id}".encode('utf-8'))
             ])
             keyboard.append([Button.inline("📂 媒体库绑定 (关联媒体管理服务器)", data=f"manage_libs_{server.id}".encode('utf-8'))])
+
+        elif server.server_type in (ServerType.SONARR, ServerType.RADARR):
+            keyboard.append([Button.inline("—— 高级设置 ——", data=b"ignore")])
+            keyboard.append([
+                Button.inline("📂 修改路径映射", data=f"srv_edit_mapping_{server.id}".encode('utf-8'))
+            ])
 
         # 通用按钮
         keyboard.append([
@@ -335,6 +353,13 @@ class SettingsServices:
     async def _init_and_add_client(self, server: ServerInstance):
         """(内部) 初始化单个客户端并添加到 app.state"""
         client = None
+        mappings = {}
+        if server.path_mappings:
+            try:
+                mappings = json.loads(server.path_mappings)
+            except:
+                pass
+
         if server.server_type == ServerType.EMBY:
             client = EmbyClient(httpx.AsyncClient(base_url=f"{server.url}/emby"), server.api_key)
             self.media_clients[server.id] = client
@@ -342,10 +367,10 @@ class SettingsServices:
             client = JellyfinClient(httpx.AsyncClient(base_url=server.url), server.api_key)
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.SONARR:
-            client = SonarrClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            client = SonarrClient(httpx.AsyncClient(base_url=server.url), server.api_key, path_mappings=mappings)
             self.sonarr_clients[server.id] = client
         elif server.server_type == ServerType.RADARR:
-            client = RadarrClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            client = RadarrClient(httpx.AsyncClient(base_url=server.url), server.api_key, path_mappings=mappings)
             self.radarr_clients[server.id] = client
 
         if client:
@@ -368,6 +393,20 @@ class SettingsServices:
         """(内部) 重载客户端"""
         await self._remove_and_close_client(server)
         await self._init_and_add_client(server)
+
+    async def update_server_mapping(self, server_id: int, mappings: dict[str, str]) -> Result:
+        """更新路径映射"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            return Result(False, "服务器不存在")
+
+        mapping_str = json.dumps(mappings)
+        await self.server_repo.update_basic_info(server_id, path_mappings=mapping_str)
+
+        if server.is_enabled:
+            await self._reload_server_client(server)
+
+        return Result(True, "✅ 路径映射已更新。")
 
     async def get_server_libraries_panel(self, server_id: int) -> Result:
         """列出指定媒体服务器的所有库，进行绑定管理"""

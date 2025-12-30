@@ -1,8 +1,7 @@
 from collections.abc import AsyncGenerator
 
 import httpx
-from loguru import logger
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
@@ -12,9 +11,10 @@ from models.radarr import (AddMovieOptions, MovieResource,
 setting = get_settings()
 
 class RadarrClient(AuthenticatedClient):
-    def __init__(self, client: httpx.AsyncClient, api_key: str):
+    def __init__(self, client: httpx.AsyncClient, api_key: str, path_mappings: dict[str, str] | None = None):
         super().__init__(client)
         self.api_key = api_key
+        self.path_mappings = path_mappings or {}
 
     async def _login(self) -> None:
         # Radarr 使用 API Key 进行认证，无需登录
@@ -27,6 +27,16 @@ class RadarrClient(AuthenticatedClient):
             "Content-Type": "application/json"
         }
 
+    def to_local_path(self, remote_path: str | None) -> str | None:
+        """路径映射，将远程路径转换为本地路径"""
+        if not remote_path:
+            return remote_path
+        
+        for remote, local in self.path_mappings.items():
+            if remote_path.startswith(remote):
+                return remote_path.replace(remote, local, 1)
+        return remote_path
+
     async def lookup_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
         """根据 TMDB ID 查找 The Movie Database 获取的电影信息。
         Args:
@@ -36,7 +46,10 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie/lookup/tmdb"
         params = {'tmdbId': tmdb_id}
-        return await self.get(url, params=params, response_model=MovieResource)
+        movie = await self.get(url, params=params, response_model=MovieResource)
+        if movie:
+            movie.path = self.to_local_path(movie.path)
+        return movie
 
     async def lookup(self, term: str) -> AsyncGenerator[MovieResource, None]:
         """根据电影名称查找 Radarr 中的电影信息。
@@ -53,6 +66,7 @@ class RadarrClient(AuthenticatedClient):
             return
 
         for movie in response:
+            movie.path = self.to_local_path(movie.path)
             yield movie
 
     async def get_movie_by_tmdb(self, tmdb_id: int) -> MovieResource | None:
@@ -67,7 +81,13 @@ class RadarrClient(AuthenticatedClient):
         response = await self.get(url, params=params,
             parser=lambda data: TypeAdapter(list[MovieResource]).validate_python(data))
 
-        return response[0] if response else None
+        if response and response[0]:
+            movie = response[0]
+            movie.path = self.to_local_path(movie.path)
+            if movie.movieFile:
+                movie.movieFile.path = self.to_local_path(movie.movieFile.path)
+            return movie
+        return None
 
     async def post_movie(self, movie_resource: MovieResource) -> MovieResource | None:
         """向 Radarr 添加电影。

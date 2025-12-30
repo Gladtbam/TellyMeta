@@ -6,11 +6,14 @@ from fastapi import APIRouter, Depends, Query, Response
 from loguru import logger
 
 from clients.qb_client import QbittorrentClient
+from clients.radarr_client import RadarrClient
+from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
-from core.dependencies import (get_qb_client, get_task_queue, get_tmdb_client,
-                               get_tvdb_client)
+from core.dependencies import (get_qb_client, get_radarr_clients,
+                               get_sonarr_clients, get_task_queue,
+                               get_tmdb_client, get_tvdb_client)
 from models.emby_webhook import (EmbyPayload, LibraryDeletedEvent,
                                  LibraryNewEvent)
 from models.jellyfin_webhook import JellyfinPayload, NotificationType
@@ -27,16 +30,28 @@ settings = get_settings()
 @router.post("/webhook/sonarr", status_code=202)
 async def sonarr_webhook(
     payload: SonarrPayload,
+    server_id: int | None = Query(None, description="TellyMeta Server ID"),
+    sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
     tmdb_client: TmdbClient = Depends(get_tmdb_client),
     tvdb_client: TvdbClient = Depends(get_tvdb_client),
     task_queue: asyncio.Queue = Depends(get_task_queue),
     qb_client: QbittorrentClient = Depends(get_qb_client)
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
+    if not server_id:
+        return Response(content="Webhook received (No Server ID)", status_code=200)
+    client = sonarr_clients.get(server_id)
+    if not client:
+        return Response(content="Webhook received (Client Not Found)", status_code=200)
+
     if isinstance(payload, SonarrWebhookSeriesAddPayload):
+        if mapped_path := client.to_local_path(payload.series.path):
+            payload.series.path = mapped_path
         asyncio.create_task(create_series_nfo(payload, tmdb_client))
     elif isinstance(payload, SonarrWebhookDownloadPayload):
         if payload.episodeFile and payload.episodeFile.path and 'VCB-Studio' not in payload.episodeFile.path:
+            if mapped_path := client.to_local_path(payload.episodeFile.path):
+                payload.episodeFile.path = mapped_path
             asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
             await task_queue.put(Path(payload.episodeFile.path))
 
@@ -51,12 +66,22 @@ async def sonarr_webhook(
 @router.post("/webhook/radarr", status_code=202)
 async def radarrarr_webhook(
     payload: RadarrPayload,
+    server_id: int | None = Query(None, description="TellyMeta Server ID"),
+    radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     task_queue: asyncio.Queue = Depends(get_task_queue),
     qb_client: QbittorrentClient = Depends(get_qb_client)
 ) -> Response:
     """处理来自 Radarr 的 Webhook"""
+    if not server_id:
+        return Response(content="Webhook received (No Server ID)", status_code=200)
+    client = radarr_clients.get(server_id)
+    if not client:
+        return Response(content="Webhook received (Client Not Found)", status_code=200)
+
     if isinstance(payload, RadarrWebhookDownloadPayload):
         if payload.movieFile and payload.movieFile.path and 'VCB-Studio' not in payload.movieFile.path:
+            if mapped_path := client.to_local_path(payload.movieFile.path):
+                payload.movieFile.path = mapped_path
             await task_queue.put(Path(payload.movieFile.path))
 
         if payload.downloadId:

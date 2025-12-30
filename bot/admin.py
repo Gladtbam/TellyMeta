@@ -748,7 +748,7 @@ async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event
             prompt_text = f"✏️ 请输入新的 **{field_name}**："
             if field_type == 'tos':
                 prompt_text += "\n\n(支持 Markdown 格式，发送 `/empty` 可清空协议)"
-                
+
             prompt_msg = await conv.send_message(prompt_text, buttons=cancel_btn)
 
             new_value = await get_user_input_or_cancel(conv, prompt_msg.id)
@@ -791,3 +791,80 @@ async def srv_edit_cancel_handler(app: FastAPI, event: events.CallbackQuery.Even
     """取消编辑"""
     await event.answer("已取消编辑")
     await event.delete()
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_edit_mapping_(\\d+)'))
+@provide_db_session
+@require_admin
+async def srv_edit_mapping_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    """编辑服务器路径映射"""
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    chat_id = event.chat_id
+    client = app.state.telethon_client.client
+    settings_service = SettingsServices(app, session)
+
+    msg_text = textwrap.dedent("""
+        **✏️ 编辑路径映射**
+        
+        请输入映射规则，格式为：`/远程路径:/本地路径`
+        一行一条规则。
+        
+        例如：
+        `/media/tv:/mnt/share/tv`
+        `/media/movies:/mnt/share/movies`
+        
+        发送 `/empty` 可清空所有映射。
+        发送 `/cancel` 取消。
+    """)
+
+    try:
+        async with client.conversation(chat_id, timeout=120) as conv:
+            cancel_btn = [Button.inline("取消", b"srv_edit_cancel")]
+            prompt_msg = await conv.send_message(msg_text, buttons=cancel_btn)
+
+            input_val = await get_user_input_or_cancel(conv, prompt_msg.id)
+
+            if not input_val:
+                try:
+                    await prompt_msg.delete()
+                except:
+                    pass
+                return
+
+            try:
+                await prompt_msg.delete()
+            except:
+                pass
+
+            if input_val.strip() == "/empty":
+                mappings = {}
+            else:
+                mappings = {}
+                lines = input_val.strip().split('\n')
+                for line in lines:
+                    if ':' in line:
+                        parts = line.split(':', 1) # 只分割第一个冒号
+                        remote = parts[0].strip()
+                        local = parts[1].strip()
+                        if remote and local:
+                            mappings[remote] = local
+
+                if not mappings and input_val.strip() != "/empty":
+                    await event.answer("格式错误，未识别到有效映射", alert=True)
+                    return
+
+            result = await settings_service.update_server_mapping(server_id, mappings)
+
+            if result.success:
+                await event.answer("更新成功")
+                panel = await settings_service.get_server_detail_panel(server_id)
+                await event.edit(panel.message, buttons=panel.keyboard)
+            else:
+                await event.answer(f"更新失败: {result.message}", alert=True)
+
+    except errors.AlreadyInConversationError:
+        await event.answer("⚠️ 错误：当前已有正在进行的会话。", alert=True)
+    except asyncio.TimeoutError:
+        await event.answer("操作超时", alert=True)
+    except Exception as e:
+        logger.error(f"Edit mapping error: {e}")
+        await event.answer("发生错误，请重试", alert=True)

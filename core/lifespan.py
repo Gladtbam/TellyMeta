@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -98,16 +99,24 @@ async def lifespan(app: FastAPI):
             servers = await ServerRepository(session).get_all_enabled()
             for server in servers:
                 logger.info("正在加载服务器：[{}] {}", server.server_type, server.name)
+                mappings = {}
+                if server.path_mappings:
+                    try:
+                        mappings = json.loads(server.path_mappings)
+                    except Exception as e:
+                        logger.error("解析服务器 {} 的路径映射失败: {}", server.name, e)
                 match server.server_type:
                     case ServerType.SONARR:
                         app.state.sonarr_clients[server.id] = SonarrClient(
                             client=httpx.AsyncClient(base_url=server.url),
-                            api_key=server.api_key
+                            api_key=server.api_key,
+                            path_mappings=mappings
                         )
                     case ServerType.RADARR:
                         app.state.radarr_clients[server.id] = RadarrClient(
                             client=httpx.AsyncClient(base_url=server.url),
-                            api_key=server.api_key
+                            api_key=server.api_key,
+                            path_mappings=mappings
                         )
                     case ServerType.JELLYFIN:
                         app.state.media_clients[server.id] = JellyfinClient(
