@@ -3,7 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-import bot.handlers
+import bot
 from core.config import get_settings, setup_logging
 from core.lifespan import lifespan
 from routes.webhooks import router as webhooks_router
