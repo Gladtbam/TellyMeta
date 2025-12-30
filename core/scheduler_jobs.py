@@ -21,7 +21,7 @@ async def ban_expired_users() -> None:
     async with async_session() as session:
         try:
             media_repo = MediaRepository(session)
-            media_service: MediaService = app.state.media_client
+            media_clients: dict[int, MediaService] = app.state.media_clients
 
             users = await media_repo.find_expired_for_ban()
             if not users:
@@ -29,8 +29,12 @@ async def ban_expired_users() -> None:
                 return
 
             for user in users:
-                logger.info("封禁用户: {} (ID: {})", user.id, user.media_id)
-                await media_service.ban_or_unban(
+                client = media_clients.get(user.server_id)
+                if not client:
+                    logger.warning("未找到服务器实例(ID: {})，跳过封禁用户: {} (ID: {})", user.server_id, user.id, user.media_id)
+                    continue
+                logger.info("封禁用户: {} (ID: {}) Server: {}", user.id, user.media_id, user.server_id)
+                await client.ban_or_unban(
                     user_id=user.media_id,
                     is_ban=True
                 )
@@ -48,7 +52,7 @@ async def delete_expired_banned_users() -> None:
     async with async_session() as session:
         try:
             media_repo = MediaRepository(session)
-            media_service: MediaService = app.state.media_client
+            media_clients: dict[int, MediaService] = app.state.media_clients
 
             users = await media_repo.find_ban()
             if not users:
@@ -56,10 +60,14 @@ async def delete_expired_banned_users() -> None:
                 return
 
             for user in users:
-                await media_service.delete_user(user.media_id)
-
-        except HTTPError:
-            logger.error("删除封禁用户: {} (ID: {})", user.id, user.media_id) # type: ignore
+                client = media_clients.get(user.server_id)
+                if not client:
+                    logger.warning("未找到服务器实例(ID: {})，仅清理数据库记录: {} (ID: {})", user.server_id, user.id, user.media_id)
+                    continue
+                try:
+                    await client.delete_user(user.media_id)
+                except HTTPError:
+                    logger.error("删除封禁用户失败: {} (ID: {})", user.id, user.media_id)
         except Exception as e:
             logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()
