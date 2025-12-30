@@ -1,10 +1,8 @@
 import httpx
 
 from clients.base_client import AuthenticatedClient
-from core.config import get_settings
 from models.tmdb import TmdbFindPayload, TmdbMovie, TmdbTv
 
-setting = get_settings()
 
 class TmdbClient(AuthenticatedClient):
     def __init__(self, client: httpx.AsyncClient, api_key: str):
