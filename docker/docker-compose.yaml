@@ -1,0 +1,21 @@
+services:
+  tellymeta:
+    image: ghcr.io/gladtbam/tellymeta:latest
+    container_name: tellymeta
+    restart: unless-stopped
+  
+    ports:
+      - "5080:5080"
+
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    
+    # 环境变量配置
+    # 建议使用 .env 文件，也可以直接在这里定义
+    env_file:
+      - .env
+    
+    environment:
+      - TZ=Asia/Shanghai
+      # 如果不使用 .env 文件，可以在这里覆盖默认配置
