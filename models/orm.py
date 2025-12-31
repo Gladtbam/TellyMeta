@@ -58,6 +58,7 @@ class ServerInstance(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text('true'), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, server_default=text('0'), nullable=False) # 优先级
     tos: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    notify_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Jellyfin/Emby 相关配置
     registration_mode: Mapped[str] = mapped_column(String(32), default=RegistrationMode.DEFAULT, server_default=text("'default'"))
@@ -72,6 +73,7 @@ class ServerInstance(Base):
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    request_notify_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class MediaUser(Base):
     """Media 用户模型"""

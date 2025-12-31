@@ -34,11 +34,6 @@ class ConfigRepository:
             cls.KEY_ENABLE_POINTS: "true",
             cls.KEY_ENABLE_VERIFICATION: "true",
             cls.KEY_ENABLE_REQUESTMEDIA: "true",
-            # 通知相关话题 ID (全局)
-            "sonarr_notify_topic": "未设置",
-            "radarr_notify_topic": "未设置",
-            "media_notify_topic": "未设置",
-            "requested_notify_topic": "未设置"
         }
 
         new_items = []

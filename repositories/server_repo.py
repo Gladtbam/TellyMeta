@@ -1,7 +1,12 @@
 from collections.abc import Sequence
+from typing import cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.orm import ServerInstance
+
+
+# 定义一个唯一的哨兵对象，用于区分 "未传参" 和 "传了 None"
+_UNSET = object()
 
 class ServerRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -137,6 +142,24 @@ class ServerRepository:
                 server.nsfw_library_ids = lib_ids
             if sub_lib_ids is not None:
                 server.nsfw_sub_library_ids = sub_lib_ids
+            await self.session.commit()
+            await self.session.refresh(server)
+        return server
+
+    async def update_notify_config(
+        self,
+        server_id: int,
+        notify_topic_id: int | None| object = _UNSET,
+        request_notify_topic_id: int | None| object = _UNSET
+    ) -> ServerInstance | None:
+        """更新通知话题配置"""
+        server = await self.get_by_id(server_id)
+        if server:
+            if notify_topic_id is not _UNSET:
+                server.notify_topic_id = cast(int | None, notify_topic_id)
+            if request_notify_topic_id is not _UNSET:
+                server.request_notify_topic_id = cast(int | None, request_notify_topic_id)
+
             await self.session.commit()
             await self.session.refresh(server)
         return server

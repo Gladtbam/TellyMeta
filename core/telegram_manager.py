@@ -195,6 +195,27 @@ class TelethonClientWarper:
             logger.error("请求频道 ID：{} 时超时，无法获取主题：{}", self.chat_id, e)
             return self.chat_id
 
+    async def get_topic_map(self) -> dict[int, str]:
+        """获取话题/频道 ID 到名称的映射
+        
+        逻辑：
+        1. 话题群组：返回 {topic_id: topic_title}
+        2. 超级群组(已绑定频道)：返回 {channel_id: "关联频道", chat_id: "当前群组"}
+        3. 普通/超级群组(未绑定)：返回 {chat_id: "当前群组"}
+        """
+        data = await self.get_group_topics()
+        mapping = {}
+
+        if isinstance(data, list):
+            for t in data:
+                if isinstance(t, ForumTopic):
+                    mapping[t.id] = t.title
+        elif isinstance(data, int):
+            if data != self.chat_id:
+                mapping[data] = "📢 关联频道"
+            mapping[self.chat_id] = "💬 当前群组"
+        return mapping
+
     async def send_message(self,
         chat_id: str | int,
         message: str,
@@ -210,7 +231,13 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            msg = await self.client.send_message(chat_id, message, file=file, buttons=buttons, reply_to=reply_to) # type: ignore
+            msg = await self.client.send_message(
+                chat_id,
+                message,
+                file=file,
+                buttons=buttons,
+                reply_to=reply_to # type: ignore
+            )
             return msg
         except errors.FloodWaitError as e:
             logger.error("Failed to send message: {}", e)

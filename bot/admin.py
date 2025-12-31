@@ -261,7 +261,7 @@ async def toggle_system_handler(app: FastAPI, event: events.CallbackQuery.Event,
     await event.edit(panel_result.message, buttons=panel_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(
-    pattern=b'manage_(admins|notify|media|system|main)'))
+    pattern=b'manage_(admins|media|system|main)'))
 @provide_db_session
 async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """管理面板处理器
@@ -273,8 +273,6 @@ async def manage_handler(app: FastAPI, event: events.CallbackQuery.Event, sessio
 
     if action == 'admins':
         result: Result = await settings_service.get_admins_panel()
-    elif action == 'notify':
-        result = await settings_service.get_notification_panel()
     elif action == 'media':
         result = await settings_service.get_media_panel()
     elif action == 'system':
@@ -383,36 +381,6 @@ async def srv_set_exp_handler(app: FastAPI, event: events.CallbackQuery.Event, s
     # 返回详情
     result = await settings_service.get_server_detail_panel(server_id)
     await event.edit(result.message, buttons=result.keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^notify_(sonarr|radarr|media|requested)'))
-@provide_db_session
-async def notify_setting_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """通知设置处理器
-    处理管理员点击通知设置按钮的事件
-    """
-    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
-
-    settings_service = SettingsServices(app, session)
-    result = await settings_service.get_notification_keyboard(setting_type)
-    await event.edit(result.message, buttons=result.keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^set_notify_(sonarr|radarr|media|requested)_(-?\\d+)'))
-@provide_db_session
-async def set_notify_topic_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """设置通知话题处理器
-    处理管理员点击设置通知话题按钮的事件
-    """
-    setting_type = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    topic_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
-
-    settings_service = SettingsServices(app, session)
-    result = await settings_service.set_notification_topic(setting_type, topic_id)
-
-    await event.answer(result.message)
-
-    # 刷新通知设置面板
-    notify_result = await settings_service.get_notification_panel()
-    await event.edit(notify_result.message, buttons=notify_result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'manage_libs_(\\d+)'))
 @provide_db_session
@@ -591,6 +559,36 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
     except Exception as e:
         logger.error(f"Conversation error: {e}")
         await event.answer("发生错误，请重试", alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_set_notify_(\\d+)_(normal|request)'))
+@provide_db_session
+async def srv_set_notify_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    notify_type = event.pattern_match.group(2).decode() # type: ignore
+
+    settings_service = SettingsServices(app, session)
+    result = await settings_service.get_server_notify_topic_selection(server_id, notify_type)
+
+    if result.success:
+        await event.edit(result.message, buttons=result.keyboard)
+    else:
+        await event.answer(result.message, alert=True)
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_save_topic_(\\d+)_(normal|request)_(-?\\d+)'))
+@provide_db_session
+async def srv_save_topic_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
+    notify_type = event.pattern_match.group(2).decode() # type: ignore
+    topic_id = int(event.pattern_match.group(3).decode()) # type: ignore
+
+    settings_service = SettingsServices(app, session)
+    await settings_service.set_server_notify_topic(server_id, notify_type, topic_id)
+
+    await event.answer("设置已保存")
+
+    # 返回详情
+    result = await settings_service.get_server_detail_panel(server_id)
+    await event.edit(result.message, buttons=result.keyboard)
 
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'add_server_flow'))
 @provide_db_session

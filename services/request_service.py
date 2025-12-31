@@ -243,16 +243,17 @@ class RequestService:
         if not selected_media:
             return Result(False, "获取媒体信息失败")
 
-        title, overview, poster = await self._get_media_content(selected_media, client)
-
-        topic_id_str = await self.config_repo.get_settings("requested_notify_topic")
-        if not topic_id_str or topic_id_str == "未设置":
-            return Result(False, "管理员未设置求片通知话题，无法提交请求。")
-        topic_id = int(topic_id_str)
-
         user_name = await self.client.get_user_name(user_id)
         server_info = await self.server_repo.get_by_id(server_id)
-        server_name = server_info.name if server_info else "Unknown"
+        if not server_info:
+            return Result(False, "关联的服务器实例不存在。")
+
+        topic_id = server_info.request_notify_topic_id
+        if not topic_id:
+            return Result(False, f"管理员未设置服务器 **{server_info.name}** 的通知，无法提交请求。")
+        server_name = server_info.name
+
+        title, overview, poster = await self._get_media_content(selected_media, client)
 
         lib_b64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
         buttons = [
@@ -275,9 +276,20 @@ class RequestService:
         """)
 
         try:
-            await self.client.send_message(topic_id, msg, file=poster, buttons=buttons)
+            target_chat = settings.telegram_chat_id
+            target_reply = None
+            if topic_id < 0:
+                target_chat = topic_id
+                target_reply = None
+            elif topic_id > 0:
+                target_chat = settings.telegram_chat_id
+                target_reply = topic_id
+            else:
+                target_chat = settings.telegram_chat_id
+                target_reply = None
+            await self.client.send_message(target_chat, msg, file=poster, buttons=buttons, reply_to=target_reply)
         except Exception as e:
-            logger.error(f"Send notify failed: {e}")
+            logger.error("发送通知失败：{}", e)
             return Result(False, f"发送通知失败: {e}")
 
         return Result(True, "✅ 请求已成功提交！请耐心等待管理员审核。")

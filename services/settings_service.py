@@ -50,6 +50,16 @@ class SettingsServices:
             raise RuntimeError("Radarr 客户端未配置")
         return self._radarr_clients
 
+    async def _get_topic_name(self, topic_id: int | None, topic_map: dict[int, str] | None = None) -> str:
+        """内部辅助：根据 ID 获取名称"""
+        if not topic_id:
+            return "未设置"
+
+        if topic_map is None:
+            topic_map = await self.client.get_topic_map()
+
+        return topic_map.get(topic_id, f"未知目标({topic_id})")
+
     async def get_admin_management_keyboard(self) -> Result:
         """获取管理员管理面板的键盘布局。
         
@@ -58,7 +68,6 @@ class SettingsServices:
         """
         keyboard = [
             [Button.inline("👥 管理员设置", b"manage_admins")],
-            [Button.inline("🔔 通知设置", b"manage_notify")],
             [Button.inline("🖥️ 服务器与媒体设置", b"manage_media")],
             [Button.inline("⚙️ 系统功能开关", b"manage_system")]
         ]
@@ -107,78 +116,6 @@ class SettingsServices:
                 return Result(success=True, message=f"已授予用户 {user_id} 管理员权限。")
         except (ValueError, KeyError) as e:
             return Result(success=False, message=str(e))
-
-    async def get_notification_panel(self) -> Result:
-        """获取通知设置面板。
-        
-        Returns:
-            Result: 包含通知设置和键盘布局的结果对象。
-        """
-        sonarr_notify_topic = await self.config_repo.get_settings(
-            "sonarr_notify_topic", "未设置"
-        )
-        radarr_notify_topic = await self.config_repo.get_settings(
-            "radarr_notify_topic", "未设置"
-        )
-        media_notify_topic = await self.config_repo.get_settings(
-            "media_notify_topic", "未设置"
-        )
-        requested_notify_topic = await self.config_repo.get_settings(
-            "requested_notify_topic", "未设置"
-        )
-
-        keyboard = [
-            [Button.inline("📺 设置 Sonarr 通知话题", b"notify_sonarr")],
-            [Button.inline("🎬 设置 Radarr 通知话题", b"notify_radarr")],
-            [Button.inline("▶️ 设置 媒体通知话题", b"notify_media")],
-            [Button.inline("🙋 设置 求片通知话题", b"notify_requested")],
-            [Button.inline("« 返回管理面板", b"manage_main")]
-        ]
-        msg = textwrap.dedent(f"""\
-            **🔔 通知设置面板**
-            Sonarr 通知话题: `{sonarr_notify_topic}`
-            Radarr 通知话题: `{radarr_notify_topic}`
-            媒体通知话题: `{media_notify_topic}`
-            求片通知话题: `{requested_notify_topic}`
-
-            点击按钮以更改相应的通知话题。
-        """)
-        return Result(success=True, message=msg, keyboard=keyboard)
-
-    async def get_notification_keyboard(self, setting_key: str):
-        """获取通知设置的键盘布局。
-        Args:
-            setting_key (str): 设置的通知键。
-        Returns:
-            list[list]: 返回键盘布局的二维列表。
-        """
-        topics = await self.client.get_group_topics()
-        keyboard = []
-        msg = textwrap.dedent(f"""\
-            **选择 {setting_key} 通知话题**
-            请选择一个话题以设置为 {setting_key} 通知的话题。
-        """)
-        if isinstance(topics, int):
-            keyboard.append([Button.inline(str(topics), f"set_notify_{setting_key}_{topics}".encode('utf-8'))])
-            return Result(success=False, message=msg, keyboard=keyboard)
-        for topic in topics:
-            if isinstance(topic, ForumTopicDeleted):
-                continue
-            button_text = topic.title
-            callback_data = f"set_notify_{setting_key}_{topic.id}"
-            keyboard.append([Button.inline(button_text, callback_data.encode('utf-8'))])
-        return Result(success=True, message=msg, keyboard=keyboard)
-
-    async def set_notification_topic(self, setting_key: str, topic: int) -> Result:
-        """设置通知话题。
-        Args:
-            setting_key (str): 设置的通知键。
-            topic (int): 要设置的话题。
-        Returns:
-            Result: 包含操作结果的对象。
-        """
-        await self.config_repo.set_settings(f'{setting_key}_notify_topic', str(topic))
-        return Result(success=True, message=f"已将 {setting_key} 通知设置为 `{topic}`。")
 
     async def get_media_panel(self):
         """获取媒体设置面板。
@@ -241,6 +178,10 @@ class SettingsServices:
         if not server:
             return Result(False, "服务器不存在。")
 
+        topic_map = await self.client.get_topic_map()
+        notify_name = await self._get_topic_name(server.notify_topic_id, topic_map)
+        req_notify_name = await self._get_topic_name(server.request_notify_topic_id, topic_map)
+
         status_text = "运行中" if server.is_enabled else "已停用"
         status_icon = "🟢" if server.is_enabled else "🔴"
         toggle_label = "🔴 停用" if server.is_enabled else "🟢 启用"
@@ -256,9 +197,11 @@ class SettingsServices:
 
             `/webhook/{server.server_type}?server_id={server.id}`
 
+            🔔 **常规通知**: `{notify_name}`
         """)
 
         if server.server_type in (ServerType.SONARR, ServerType.RADARR):
+            info += f"\n🙋 **求片通知**: `{req_notify_name}`\n"
             if server.path_mappings:
                 try:
                     mappings = json.loads(server.path_mappings)
@@ -277,6 +220,17 @@ class SettingsServices:
             Button.inline("🔑 修改 API Key", data=f"srv_edit_key_{server.id}".encode('utf-8')),
             Button.inline(toggle_label, data=f"srv_toggle_enable_{server.id}".encode('utf-8'))
         ])
+
+        keyboard.append([Button.inline("—— 🔔 通知频道 ——", data=b"ignore")])
+        short_notify = (notify_name[:12] + '..') if len(notify_name) > 12 else notify_name
+        keyboard.append([
+            Button.inline(f"常规: {short_notify}", data=f"srv_set_notify_{server.id}_normal".encode('utf-8'))
+        ])
+        if server.server_type in (ServerType.SONARR, ServerType.RADARR):
+            short_req = (req_notify_name[:12] + '..') if len(req_notify_name) > 12 else req_notify_name
+            keyboard.append([
+                Button.inline(f"求片: {short_req}", data=f"srv_set_notify_{server.id}_request".encode('utf-8'))
+            ])
         # 针对媒体服务器 (Emby/Jellyfin) 的特有配置
         if server.server_type in (ServerType.EMBY, ServerType.JELLYFIN):
             nsfw_status = "✅ 开启" if server.nsfw_enabled else "❌ 关闭"
@@ -481,9 +435,6 @@ class SettingsServices:
             keyboard.append([Button.inline(f"⚙️ 质量: {binding.quality_profile_id or '未设置'}", f"bind_sel_quality_{lib_b64}".encode('utf-8'))])
             keyboard.append([Button.inline(f"📂 路径: {binding.root_folder or '未设置'}", f"bind_sel_folder_{lib_b64}".encode('utf-8'))])
 
-        # 我们需要知道这个库属于哪个 Media Server 才能返回上一级
-        # 这里为了简化，直接返回 manage_media 或者需要前端传 server_id
-        # 暂时返回 manage_media 根目录
         keyboard.append([Button.inline("« 返回主面板", data="manage_media")])
 
         msg = textwrap.dedent(f"""\
@@ -893,6 +844,44 @@ class SettingsServices:
         """设置 账户有效期"""
         await self.server_repo.update_expiry_config(server_id, expiry_days=days)
         return Result(success=True, message=f"已设为 {days} 天")
+
+    async def get_server_notify_topic_selection(self, server_id: int, notify_type: str) -> Result:
+        """获取话题选择键盘"""
+        topic_map = await self.client.get_topic_map()
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            return Result(False, "服务器不存在")
+
+        type_cn = "常规通知" if notify_type == 'normal' else "求片通知"
+
+        keyboard = []
+        msg = textwrap.dedent(f"""\
+            **🔔 设置 {server.name} 的 {type_cn}**
+            
+            请选择消息发送的目标：
+        """)
+
+        # 遍历 map 生成按钮
+        for tid, title in topic_map.items():
+            keyboard.append([
+                Button.inline(title, f"srv_save_topic_{server_id}_{notify_type}_{tid}".encode('utf-8'))
+            ])
+
+        keyboard.append([Button.inline("🚫 清除设置", f"srv_save_topic_{server_id}_{notify_type}_0".encode('utf-8'))])
+        keyboard.append([Button.inline("« 返回", f"view_server_{server_id}".encode('utf-8'))])
+
+        return Result(True, msg, keyboard=keyboard)
+
+    async def set_server_notify_topic(self, server_id: int, notify_type: str, topic_id: int) -> Result:
+        """保存话题设置"""
+        target_id = topic_id if topic_id != 0 else None
+
+        if notify_type == 'normal':
+            await self.server_repo.update_notify_config(server_id, notify_topic_id=target_id)
+        elif notify_type == 'request':
+            await self.server_repo.update_notify_config(server_id, request_notify_topic_id=target_id)
+
+        return Result(True, "设置已保存")
 
     async def add_server(self, name: str, server_type: str, url: str, api_key: str) -> Result:
         """添加新服务器并初始化客户端"""
