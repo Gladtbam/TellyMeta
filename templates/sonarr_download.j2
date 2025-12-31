@@ -1,0 +1,22 @@
+📥 <b>剧集下载完成</b>
+
+剧集: <b>{{ series.title }}</b>
+{% for ep in episodes %}
+单集: S{{ ep.seasonNumber }}E{{ ep.episodeNumber }} - {{ ep.title }}
+{% endfor %}
+质量: {{ episodeFile.quality }}
+
+{# --- 自定义格式信息 (Sonarr) --- #}
+{% if customFormatInfo %}
+    {% if customFormatInfo.customFormatScore is not none and customFormatInfo.customFormatScore != 0 %}
+分数: <b>{{ customFormatInfo.customFormatScore }}</b>
+    {% endif %}
+    {% if customFormatInfo.customFormats %}
+格式: {% for cf in customFormatInfo.customFormats %}<code>{{ cf.name }}</code> {% endfor %}
+    {% endif %}
+{% endif %}
+
+{% if isUpgrade %}✨ <b>画质洗版升级</b>{% endif %}
+来源: <code>{{ server_name }}</code>
+
+#Sonarr #下载完成

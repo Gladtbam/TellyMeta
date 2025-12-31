@@ -10,6 +10,7 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.telegram_manager import TelethonClientWarper
+from services.notification_service import NotificationService
 from services.media_service import MediaService
 
 
@@ -26,8 +27,7 @@ def get_ai_client(request: Request) -> AIClientWarper:
     return request.app.state.ai_client
 
 def get_qb_client(request: Request) -> QbittorrentClient:
-    """获取 qBittorrent 客户端实例。    QbittorrentClient: 已初始化的 qBittorrent 客户端实例。
-    """
+    """获取 qBittorrent 客户端实例。"""
     return request.app.state.qb_client
 
 def get_tmdb_client(request: Request) -> TmdbClient:
@@ -54,12 +54,9 @@ def get_scheduler(request: Request) -> AsyncIOScheduler:
     """获取任务调度器实例。"""
     return request.app.state.scheduler
 
-def get_telethon_client(request: Request) -> TelethonClientWarper:
-    """获取 Telethon 客户端实例。
+def get_notification_service(request: Request) -> NotificationService:
+    return NotificationService(request.app)
 
-    Args:
-        request (Request): FastAPI 请求对象。
-    Returns:
-        TelethonClientWarper: 已初始化的 Telethon 客户端实例。
-    """
+def get_telethon_client(request: Request) -> TelethonClientWarper:
+    """获取 Telethon 客户端实例。"""
     return request.app.state.telethon_client

@@ -221,7 +221,8 @@ class TelethonClientWarper:
         message: str,
         file: Any = None,
         buttons: list[list[KeyboardButtonCallback]] | None = None,
-        reply_to: int | Message | None = None
+        reply_to: int | Message | None = None,
+        **kwargs
     ) -> Message:
         """发送消息到指定的聊天ID
         Args:
@@ -236,7 +237,8 @@ class TelethonClientWarper:
                 message,
                 file=file,
                 buttons=buttons,
-                reply_to=reply_to # type: ignore
+                reply_to=reply_to, # type: ignore
+                **kwargs
             )
             return msg
         except errors.FloodWaitError as e:

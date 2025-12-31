@@ -1,0 +1,13 @@
+🎬 <b>新增订阅电影</b>
+
+标题: <b>{{ movie.title }}</b> ({{ movie.year }})
+{% if movie.genres %}
+类型: {{ movie.genres | join(', ') }}
+{% endif %}
+{% if movie.overview %}
+简介: {{ movie.overview | truncate(100) }}
+{% endif %}
+TMDB ID: <code>{{ movie.tmdbId }}</code>
+来源: <code>{{ server_name }}</code>
+
+#Radarr #新增订阅

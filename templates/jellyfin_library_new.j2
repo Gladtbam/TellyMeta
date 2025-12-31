@@ -1,0 +1,16 @@
+🆕 <b>媒体库更新</b>
+
+{% if item.series_name %}
+剧集: <b>{{ item.series_name }}</b>
+{% endif %}
+标题: <b>{{ item.name }}</b> {% if item.year %}({{ item.year }}){% endif %}
+类型: {{ item.item_type }}
+
+{% if item.overview %}
+描述:
+{{ item.overview | truncate(120) }}
+{% endif %}
+
+来源: <code>{{ server_name }}</code>
+
+#入库

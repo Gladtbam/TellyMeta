@@ -10,6 +10,9 @@ from models.protocols import (BaseItem, BaseItemT_co, DeviceInfoT, LibraryT, Pub
 class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, PublicSystemInfoT]):
     """定义媒体服务的抽象基类"""
 
+    server_name: str = "Unknown"
+    notify_topic_id: int | None = None
+
     @abstractmethod
     async def create(self, name:str) -> tuple[UserT | None, str | None]:
         """创建用户"""

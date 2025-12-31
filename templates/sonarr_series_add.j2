@@ -1,0 +1,10 @@
+📺 <b>新增订阅剧集</b>
+
+标题: <b>{{ series.title }}</b> ({{ series.year }})
+{% if series.genres %}
+类型: {{ series.genres | join(', ') }}
+{% endif %}
+路径: <code>{{ series.path }}</code>
+来源: <code>{{ server_name }}</code>
+
+#Sonarr #新订阅

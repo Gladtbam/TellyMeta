@@ -13,12 +13,14 @@ from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from models.events import NotificationEvent
 from models.radarr import MovieResource
 from models.sonarr import SeriesResource
 from models.tvdb import TvdbData
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
+from services.notification_service import NotificationService
 from services.user_service import Result
 
 settings = get_settings()
@@ -28,6 +30,7 @@ class RequestService:
         self.config_repo = ConfigRepository(session)
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
+        self.notification_service = NotificationService(app)
         self._sonarr_clients: dict[int, SonarrClient] = app.state.sonarr_clients
         self._radarr_clients: dict[int, RadarrClient] = app.state.radarr_clients
         self.tmdb_client: TmdbClient = app.state.tmdb_client
@@ -260,7 +263,6 @@ class RequestService:
         topic_id = server_info.request_notify_topic_id
         if not topic_id:
             return Result(False, f"管理员未设置服务器 **{server_info.name}** 的通知，无法提交请求。")
-        server_name = server_info.name
 
         title, overview, poster = await self._get_media_content(selected_media, client)
 
@@ -272,34 +274,21 @@ class RequestService:
             ]
         ]
 
-        msg = textwrap.dedent(f"""\
-            **🆕 新的求片请求**
-
-            👤 **申请人**: [{user_name}](tg://user?id={user_id})
-            🎬 **标题**: {title} ({getattr(selected_media, 'year', '')})
-            📚 **媒体库**: {library_name}
-            🖥️ **服务器**: {server_name}
-            📝 **简介**: {textwrap.shorten(overview, width=100, placeholder="...")}
-
-            ID: {prefix.upper()} {media_id}
-        """)
-
-        try:
-            target_chat = settings.telegram_chat_id
-            target_reply = None
-            if topic_id < 0:
-                target_chat = topic_id
-                target_reply = None
-            elif topic_id > 0:
-                target_chat = settings.telegram_chat_id
-                target_reply = topic_id
-            else:
-                target_chat = settings.telegram_chat_id
-                target_reply = None
-            await self.client.send_message(target_chat, msg, file=poster, buttons=buttons, reply_to=target_reply)
-        except Exception as e:
-            logger.error("发送通知失败：{}", e)
-            return Result(False, f"发送通知失败: {e}")
+        await self.notification_service.send_to_topic(
+            topic_id=topic_id,
+            event_type=NotificationEvent.REQUEST_SUBMIT,
+            image=poster,
+            buttons=buttons,
+            # 模板变量
+            user_name=user_name,
+            user_id=user_id,
+            media_title=title,
+            media_year=getattr(selected_media, 'year', '未知'),
+            tmdb_id=media_id,
+            server_name=server_info.name,
+            overview=overview,
+            prefix=prefix.upper()
+        )
 
         return Result(True, "✅ 请求已成功提交！请耐心等待管理员审核。")
 
