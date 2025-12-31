@@ -151,7 +151,7 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
             await sel_event.answer("获取详情中...", alert=False)
             preview_result = await request_service.process_media_selection(user_id, library_name, media_id)
             if not preview_result.success:
-                await sel_event.answer(preview_result.message, alert=True)
+                await sel_event.edit(preview_result.message, alert=False)
                 return
 
             # 显示预览卡片

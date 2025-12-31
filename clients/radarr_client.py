@@ -31,7 +31,6 @@ class RadarrClient(AuthenticatedClient):
         """路径映射，将远程路径转换为本地路径"""
         if not remote_path:
             return remote_path
-        
         for remote, local in self.path_mappings.items():
             if remote_path.startswith(remote):
                 return remote_path.replace(remote, local, 1)

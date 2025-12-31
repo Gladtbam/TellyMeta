@@ -189,21 +189,30 @@ class RequestService:
         if not client or not server_id:
             return Result(False, "服务不可用")
 
+        existing_item = None
+        try:
+            if isinstance(client, SonarrClient):
+                existing_item = await client.get_series_by_tvdb(media_id)
+            elif isinstance(client, RadarrClient):
+                existing_item = await client.get_movie_by_tmdb(media_id)
+        except Exception as e:
+            logger.warning("查重请求失败: {}", e)
+
+        if existing_item:
+            return Result(False, f"✅ **{existing_item.title}** 已经在媒体库中了，无需重复请求。")
+
         prefix = "tvdb" if isinstance(client, SonarrClient) else "tmdb"
         selected_media = None
-        async for item in client.lookup(f"{prefix}:{media_id}"):
-            if item:
-                selected_media = item
-                break
+        try:
+            async for item in client.lookup(f"{prefix}:{media_id}"):
+                if item:
+                    selected_media = item
+                    break
+        except Exception as e:
+            return Result(False, f"获取媒体元数据失败: {e}")
 
         if not selected_media:
             return Result(False, "无法获取媒体详情。")
-
-        is_exists = (hasattr(selected_media, 'id') and selected_media.id) or \
-                    (hasattr(selected_media, 'added') and selected_media.added)
-
-        if is_exists:
-            return Result(False, f"✅ **{selected_media.title}** 已经在媒体库中了，无需重复请求。")
 
         title, overview, poster = await self._get_media_content(selected_media, client)
 
