@@ -26,7 +26,13 @@ class EmbyClient(
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
     """
 
-    def __init__(self, client: httpx.AsyncClient, api_key: str) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        api_key: str,
+        server_name: str = "Emby",
+        notify_topic_id: int | None = None
+    ) -> None:
         """初始化 EmbyClient 实例。
 
         Args:
@@ -35,6 +41,8 @@ class EmbyClient(
         """
         super().__init__(client)
         self._api_key = api_key
+        self.server_name = server_name
+        self.notify_topic_id = notify_topic_id
 
     async def _login(self) -> None:
         # Emby 使用 API Key 进行认证，无需登录

@@ -110,23 +110,33 @@ async def lifespan(app: FastAPI):
                         app.state.sonarr_clients[server.id] = SonarrClient(
                             client=httpx.AsyncClient(base_url=server.url),
                             api_key=server.api_key,
-                            path_mappings=mappings
+                            server_name = server.name,
+                            path_mappings=mappings,
+                            notify_topic_id=server.notify_topic_id,
+                            request_notify_topic_id=server.request_notify_topic_id
                         )
                     case ServerType.RADARR:
                         app.state.radarr_clients[server.id] = RadarrClient(
                             client=httpx.AsyncClient(base_url=server.url),
                             api_key=server.api_key,
-                            path_mappings=mappings
+                            server_name = server.name,
+                            path_mappings=mappings,
+                            notify_topic_id=server.notify_topic_id,
+                            request_notify_topic_id=server.request_notify_topic_id
                         )
                     case ServerType.JELLYFIN:
                         app.state.media_clients[server.id] = JellyfinClient(
                             client=httpx.AsyncClient(base_url=f'{server.url}'),
-                            api_key=server.api_key
+                            api_key=server.api_key,
+                            server_name = server.name,
+                            notify_topic_id=server.notify_topic_id
                         )
                     case ServerType.EMBY:
                         app.state.media_clients[server.id] = EmbyClient(
                             client=httpx.AsyncClient(base_url=f'{server.url}/emby'),
-                            api_key=server.api_key
+                            api_key=server.api_key,
+                            server_name = server.name,
+                            notify_topic_id=server.notify_topic_id
                         )
         finally:
             await session.close()

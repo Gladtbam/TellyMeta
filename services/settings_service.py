@@ -315,16 +315,40 @@ class SettingsServices:
                 pass
 
         if server.server_type == ServerType.EMBY:
-            client = EmbyClient(httpx.AsyncClient(base_url=f"{server.url}/emby"), server.api_key)
+            client = EmbyClient(
+                httpx.AsyncClient(base_url=f"{server.url}/emby"),
+                server.api_key,
+                server.name,
+                server.notify_topic_id
+            )
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.JELLYFIN:
-            client = JellyfinClient(httpx.AsyncClient(base_url=server.url), server.api_key)
+            client = JellyfinClient(
+                httpx.AsyncClient(base_url=server.url),
+                server.api_key,
+                server.name,
+                server.notify_topic_id
+            )
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.SONARR:
-            client = SonarrClient(httpx.AsyncClient(base_url=server.url), server.api_key, path_mappings=mappings)
+            client = SonarrClient(
+                httpx.AsyncClient(base_url=server.url),
+                server.api_key,
+                server.name,
+                mappings,
+                server.notify_topic_id,
+                server.request_notify_topic_id
+            )
             self.sonarr_clients[server.id] = client
         elif server.server_type == ServerType.RADARR:
-            client = RadarrClient(httpx.AsyncClient(base_url=server.url), server.api_key, path_mappings=mappings)
+            client = RadarrClient(
+                httpx.AsyncClient(base_url=server.url),
+                server.api_key,
+                server.name,
+                mappings,
+                server.notify_topic_id,
+                server.request_notify_topic_id
+            )
             self.radarr_clients[server.id] = client
 
         if client:

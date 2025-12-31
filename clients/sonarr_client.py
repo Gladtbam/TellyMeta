@@ -11,10 +11,21 @@ from models.sonarr import AddSeriesOptions, EpisodeResource, SeriesResource
 setting = get_settings()
 
 class SonarrClient(AuthenticatedClient):
-    def __init__(self, client: httpx.AsyncClient, api_key: str, path_mappings: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        api_key: str,
+        server_name: str = "Sonarr",
+        path_mappings: dict[str, str] | None = None,
+        notify_topic_id: int | None = None,
+        request_notify_topic_id: int | None = None
+    ) -> None:
         super().__init__(client)
         self.api_key = api_key
+        self.server_name = server_name
         self.path_mappings = path_mappings or {}
+        self.notify_topic_id = notify_topic_id
+        self.request_notify_topic_id = request_notify_topic_id
 
     async def _login(self) -> None:
         # Sonarr 使用 API Key 进行认证，无需登录
