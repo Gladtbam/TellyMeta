@@ -1,151 +1,196 @@
-# TellyMeta
+# 🌌 TellyMeta
 
-**TellyMeta** 是一个强大的个人媒体管理工具，旨在通过 Telegram Bot 简化媒体（电影和剧集）的搜索和请求流程。它深度集成了 Sonarr 和 Radarr，支持自动化的媒体库管理和审批工作流。
+**TellyMeta** 是一个集成了 Emby/Jellyfin、Sonarr 和 Radarr 的 **Telegram 媒体库管理机器人**。
 
-## ✨ 功能特性
+旨在简化媒体库的日常运营工作，提供自动求片、通知推送、账号管理以及积分社区等功能，帮助管理员更高效地维护媒体库与用户社区。
 
-*   **🤖 智能交互体验**：
-    *   **自动求片**：直接发送电影/剧集名称进行搜索，支持一键请求。
-    *   **入群验证**：集成 Captcha 验证码，防止广告账号骚扰。
-*   **🎥 媒体库深度集成**：
-    *   **无缝对接**：支持 Sonarr (剧集) 和 Radarr (电影)。
-    *   **中文优化**：优先获取中文元数据 (TMDB/TVDB)，智能匹配展示。
-    *   **查重机制**：请求时自动检测库中是否已存在，避免重复下载。
-*   **💎 用户与积分体系**：
-    *   **账号自动化**：Emby 账号自动开通、密码重置、到期续费。
-    *   **积分生态**：通过签到、群组活跃获取积分，用于兑换邀请码或账号续期。
-    *   **邀请机制**：支持生成注册码和续期码，通过积分流转实现社区自治。
-*   **� 实用工具箱**：
-    *   **字幕上传**：支持发送 Zip 包自动重命名并通过 Sonarr/Radarr 导入媒体目录。
-    *   **个性化设置**：用户可自助开关 NSFW 内容过滤。
-    *   **线路查询**：一键获取最新的媒体服务器访问地址。
-*   **👮 强大的管理后台**：
-    *   **审批流**：管理员可一键批准或拒绝求片请求。
-    *   **用户管理**：踢出、封禁、警告、删号等全套管理指令。
-    *   **系统配置**：完全通过 Telegram 界面配置机器人参数，无需重启。
+[功能特性](#-功能特性) • [部署指南](#-部署指南) • [命令列表](#-命令列表)
+
+---
+
+## ✨ 核心功能
+
+### 🤖 自动化处理
+* **多实例支持**：同时接管多个 Sonarr/Radarr 和 Emby/Jellyfin 服务端。支持将不同 Telegram 按钮（媒体库）绑定至特定实例，实现请求的精准路由。
+* **求片系统**：用户发送电影/剧集名称，Bot 自动搜索并展示详情，支持去重检测，一键发起下载请求。
+* **AI 翻译**：集成 OpenAI，自动将 TMDB/TVDB 的外文元数据（简介、标题等）翻译为中文。
+* **消息通知**：实时推送下载完成、入库通知，支持 HTML 模板自定义，可展示 HDR/Dolby 等媒体信息。
+* **字幕助手**：支持用户直接发送 Zip 压缩包，Bot 自动识别对应的剧集/电影并重命名导入。
+
+### 💎 用户与积分
+* **积分体系**：通过群组签到、活跃发言获取积分，用于兑换注册邀请码或账号续期。
+* **账号托管**：Emby/Jellyfin 账号的自动注册、密码重置、有效期管理以及到期自动封禁。
+* **邀请机制**：管理员可生成一次性注册码或续期码，便于分发。
+* **入群验证**：内置图形验证码，辅助拦截广告账号。
+
+### 🛡️ 管理后台
+* **审批流**：求片请求实时推送到管理群，管理员可直接在 Telegram 中批准或拒绝。
+* **可视化配置**：通过 `/settings` 命令即可在 Telegram 界面管理服务器连接、通知渠道、NSFW 策略等，无需修改配置文件。
+* **用户管控**：支持踢出、封禁、警告用户，并联动删除媒体库账号。
 
 ## 🛠️ 技术栈
 
-本项目基于 Python 3.11+ 开发，主要使用的库包括：
-*   **FastAPI**: 高性能 Web 框架。
-*   **Telethon**: 强大的 Telegram MTProto 客户端。
-*   **SQLAlchemy (Async)**: 异步数据库 ORM。
-*   **AioSQLite**: 异步 SQLite 数据库支持。
-*   **Loguru**: 优雅的日志记录。
+* **核心框架**: Python 3.11+, FastAPI, SQLAlchemy (Async), Telethon
+* **媒体服务**: Sonarr, Radarr, Emby, Jellyfin
+* **辅助工具**: qBittorrent, OpenAI, MKVToolNix (可选)
 
-## 🚀 安装指南
+---
 
-### 前置要求
+## 🚀 部署指南
 
-*   Python 3.11 或更高版本
-*   Telegram API ID 和 API Hash (可从 [my.telegram.org](https://my.telegram.org) 获取)
-*   Telegram Bot Token (通过 BotFather 获取)
+### 方式一：Docker 部署 (推荐)
 
-### 1. 克隆仓库
+最简单、最稳定的部署方式，适合大多数用户。
 
+1.  **创建目录与配置**
+    创建 `docker-compose.yaml` 文件：
+
+    ```yaml
+    services:
+      tellymeta:
+        image: ghcr.io/gladtbam/tellymeta:latest
+        container_name: tellymeta
+        restart: unless-stopped
+        ports:
+          - "5080:5080"
+        volumes:
+          - ./data:/app/data
+          - ./logs:/app/logs
+          - ./templates:/app/templates # 挂载自定义通知模板
+        environment:
+          - TZ=Asia/Shanghai
+        env_file:
+          - .env
+    ```
+
+2.  **环境变量配置**
+    创建 `.env` 文件并填入基础信息（参考下文配置说明）。
+
+3.  **启动服务**
+    ```bash
+    docker compose up -d
+    ```
+
+---
+
+### 方式二：Python 直接部署 (非 Docker)
+
+适合开发者或习惯使用宿主机环境的用户。
+
+**前置要求**：
+* Python 3.11 或更高版本
+* [uv](https://github.com/astral-sh/uv) (推荐) 或 pip
+
+#### 1. 克隆代码
 ```bash
-git clone https://github.com/your-username/TellyMeta.git
+git clone https://github.com/gladtbam/TellyMeta.git
 cd TellyMeta
 ```
 
-### 2. 安装依赖
+#### 2. 安装依赖
 
-推荐使用 `uv` 进行包管理，也可以使用 `pip`。
-
-使用 `uv` (推荐):
+**使用 uv (推荐，速度极快):**
 ```bash
+# 同步环境并安装依赖
 uv sync
 ```
 
-或者使用 `pip`:
+**使用 pip:**
 ```bash
 pip install .
 ```
 
-### 3. 配置环境
-
-复制示例配置文件并进行修改：
-
+#### 3. 配置环境
+复制示例配置文件：
 ```bash
 cp .env.example .env
 ```
+编辑 `.env` 文件，填入你的 Telegram API 信息等。
 
-编辑 `.env` 文件，填入必要的配置信息：
-
-```ini
-# Telegram 配置
-telegram_api_id=your_api_id
-telegram_api_hash=your_api_hash
-telegram_bot_token=your_bot_token
-telegram_bot_name=@your_bot_name
-
-# Sonarr 配置
-sonarr_url=http://localhost:8989
-sonarr_api_key=your_sonarr_api_key
-
-# Radarr 配置
-radarr_url=http://localhost:7878
-radarr_api_key=your_radarr_api_key
-
-# TMDB 配置 (用于获取元数据)
-tmdb_api_key=your_tmdb_api_key
-```
-
-## ▶️ 运行
-
-确保所有配置正确后，启动服务：
-
+#### 4. 运行
 ```bash
+# 如果使用 uv
+uv run main.py
+
+# 如果使用 pip (确保在虚拟环境中)
 python main.py
 ```
 
-## 📖 使用指南
+---
 
-### 🎬 求片流程
-1.  **搜索**: 私聊 Bot 发送 `/me` 点击“开始求片”，或直接发送 `/start` 开始流程。
-2.  **选择**: Bot 会列出搜索结果，点击按钮选择你想看的媒体。
-3.  **请求**: 确认请求后，消息将推送到管理群等待审核。
-4.  **观看**: 管理员批准后，媒体将自动加入下载队列。
+## ⚙️ 基础配置说明 (.env)
 
-### 🔑 账号注册与使用
-1.  **注册**: 发送 `/signup` (如开放) 或 使用 `/code <邀请码>` 进行注册。注册成功后将获得 Emby 账号密码。
-2.  **个人中心**: 发送 `/me` 查看积分、续期账号、修改密码或管理 NSFW 设置。
-3.  **积分**: 在群组内发送 `/checkin` 每日签到，或多多参与讨论获取活跃积分。
+无论哪种部署方式，都需要配置 `.env` 文件。
 
-### 📤 字幕上传
-直接向 Bot 发送 Zip 格式的字幕压缩包，文件名需符合规范：
-*   **剧集**: `tvdb-ID.zip` (如 `tvdb-12345.zip`) -> 自动匹配 SxxExx
-*   **电影**: `tmdb-ID.zip` (如 `tmdb-67890.zip`)
-Bot 会自动解压并将其分发到对应的媒体文件夹中。
+```ini
+# --- 基础配置 ---
+log_level=INFO
+# 你的时区
+timezone=Asia/Shanghai
+# 服务端口
+port=5080
 
-## 📝 指令列表
+# --- Telegram 配置 (必填) ---
+# 从 my.telegram.org 获取
+telegram_api_id=123456
+telegram_api_hash=your_api_hash
+# 从 @BotFather 获取
+telegram_bot_token=your_bot_token
+# 你的 Bot 用户名 (带@)
+telegram_bot_name=@YourBotName
+# 管理员群组 ID (Bot 需在群内)
+telegram_chat_id=-100xxxxxxxxxx 
+
+# --- 媒体服务 (可选) ---
+# 建议留空，Bot 启动后使用 /settings 指令在 Telegram 内可视化配置更方便。
+```
+
+---
+
+## 📝 指令手册
 
 ### 👤 用户指令
-
-| 指令 | 说明 | 备注 |
-| :--- | :--- | :--- |
-| `/start` | 启动机器人 | 如果开启验证，需进行验证码验证 |
-| `/help` | 获取帮助信息 | 查看所有可用指令 |
-| `/me` | 个人中心 | 查看 Emby 账户、积分、发起求片、上传字幕等 |
-| `/checkin` | 每日签到 | 仅在管理员绑定的群组内有效 |
-| `/code <激活码>` | 使用激活码 | 用于注册账户或续期 |
-| `/signup` | 注册账户 | 仅在开放注册时可用 |
-| `/chat_id` | 获取群组 ID | 需在群组中使用 |
+| 指令 | 描述 |
+| :--- | :--- |
+| `/start` | 启动机器人：如果开启验证，需进行验证码验证 |
+| `/me` | **个人中心**：查看积分、账号状态、求片、上传字幕 |
+| `/checkin` | **每日签到**：获取积分（仅限群组内） |
+| `/signup` | **注册账号**：仅在开放注册模式下可用 |
+| `/code <code>` | **兑换码**：使用注册码注册或续期码续期 |
+| `/help` | 获取帮助信息 |
+| `/chat_id` | 获取群组 ID：需在群组中使用 |
 
 ### 👮 管理员指令
+> 大部分管理指令支持**回复**某条消息来指定目标用户。
 
-> 部分管理指令需要 **回复** 目标用户的消息才能生效。
+| 指令 | 描述 |
+| :--- | :--- |
+| `/settings` | **打开系统控制面板** (核心入口) |
+| `/info` | 查看被回复用户的详细信息 (ID, 积分, 警告数) |
+| `/warn` | 警告用户 (扣除积分) |
+| `/kick` | 踢出用户并删除关联媒体账号 |
+| `/ban` | 封禁用户并删除关联媒体账号 |
+| `/del` | 仅删除用户的媒体账号 |
+| `/change <分>` | 手动修改用户积分 (+加分 / -减分) |
+| `/settle` | 手动触发活跃度积分结算 |
 
-| 指令 | 说明 | 备注 |
-| :--- | :--- | :--- |
-| `/settings` | **打开管理面板** | 核心配置入口 (管理管理员、通知、媒体库绑定等) |
-| `/info` | 查看用户信息 | 需回复用户消息 |
-| `/warn` | 警告用户 | 扣除积分并增加警告计数 (需回复) |
-| `/del` | 删除账户 | 删除用户的 Emby 账户 (需回复) |
-| `/kick` | 踢出用户 | 踢出群组并删除账户 (需回复) |
-| `/ban` | 封禁用户 | 封禁并删除账户 (需回复) |
-| `/change <数值>` | 修改积分 | 手动增减用户积分, 如 `/change 100` (需回复) |
-| `/settle` | 结算积分 | 手动触发活跃度积分结算 |
+---
+
+## 🔔 通知模板 (Webhooks)
+
+TellyMeta 采用纯文件驱动的 Jinja2 模板系统。你可以在 `templates/` 目录下自定义通知样式。
+
+支持的事件与模板文件对应关系：
+* `request_submit.j2`: 用户提交求片
+* `sonarr_download.j2`: 剧集下载完成
+* `radarr_download.j2`: 电影下载完成
+* `emby_library_new.j2`: 媒体入库通知
+* ...更多事件请查阅文档。
+
+配置 Sonarr/Radarr/Emby 的 Webhook 地址为：
+`http://your-tellymeta-ip:5080/webhook/[sonarr|radarr|emby]?server_id=[ID]`
+
+*(server_id 可在 `/settings` -> 服务器详情中查看)*
 
 ## 🤝 贡献
 
