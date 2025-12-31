@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import FastAPI
-from httpx import HTTPError
+from httpx import AsyncClient, HTTPError
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from telethon import Button
@@ -61,6 +61,8 @@ class AccountService:
                     status = "(限时)"
                 except:
                     pass
+            elif srv.registration_mode == RegistrationMode.EXTERNAL:
+                status = "(验证注册)"
 
             keyboard.append([
                 Button.inline(f"{srv.name} {status}", data=f"signup_srv_{srv.id}".encode('utf-8'))
@@ -68,7 +70,28 @@ class AccountService:
 
         return Result(True, "请选择要注册的服务器：", keyboard=keyboard)
 
-    async def register(self, user_id: int, username: str | None | Literal[False], server_id: int) -> Result:
+    async def verify_external_user(self, server_id: int, user_input: str) -> Result:
+        """执行外部验证"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or not server.registration_external_url:
+            return Result(False, "服务器配置错误：缺少外部验证链接。")
+
+        # 拼接 URL
+        target_url = f"{server.registration_external_url}{user_input}"
+        
+        try:
+            async with AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                response = await client.get(target_url)
+                
+                if response.is_success:
+                    return Result(True, "验证通过")
+                else:
+                    return Result(False, f"验证失败 (Status: {response.status_code})。")
+        except Exception as e:
+            logger.error("外部验证错误：{}", e)
+            return Result(False, f"验证请求发生错误: {str(e)}")
+
+    async def register(self, user_id: int, username: str | None | Literal[False], server_id: int, skip_checks: bool = False) -> Result:
         """注册新用户
         Args:
             user_id (int): 用户的 Telegram ID
@@ -87,7 +110,9 @@ class AccountService:
         can_register = False
         mode = server.registration_mode
 
-        if mode == RegistrationMode.COUNT:
+        if skip_checks:
+            can_register = True
+        elif mode == RegistrationMode.COUNT:
             if server.registration_count_limit > 0:
                 can_register = True
                 await self.server_repo.update_policy_config(server.id, count=server.registration_count_limit - 1)

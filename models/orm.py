@@ -27,6 +27,7 @@ class RegistrationMode(StrEnum):
     COUNT = "count"      # 限制名额
     TIME = "time"        # 限时开放
     CLOSE = "close"      # 完全关闭 (仅管理员添加)
+    EXTERNAL = "external" # 外部验证
 
 class TelegramUser(Base):
     """Telegram用户模型"""
@@ -63,6 +64,7 @@ class ServerInstance(Base):
     registration_count_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text('0'))
     registration_time_limit: Mapped[str] = mapped_column(String(32), default="0", server_default=text("'0'"))
     registration_expiry_days: Mapped[int] = mapped_column(Integer, default=30, server_default=text('30'))
+    registration_external_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     code_expiry_days: Mapped[int] = mapped_column(Integer, default=30, server_default=text('30'))
     nsfw_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('false'))
     nsfw_library_ids: Mapped[str] = mapped_column(String(1024), default="", server_default=text("''"))

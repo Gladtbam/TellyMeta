@@ -526,10 +526,10 @@ async def srv_set_mode_simple_handler(app: FastAPI, event: events.CallbackQuery.
     result = await settings_service.get_registration_mode_panel(server_id)
     await event.edit(result.message, buttons=result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_input_mode_(\\d+)_(count|time)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_input_mode_(\\d+)_(count|time|external)'))
 @provide_db_session
 async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """设置复杂模式 (名额/时间)，触发对话"""
+    """设置复杂模式 (名额/时间/外部)，触发对话"""
     server_id = int(event.pattern_match.group(1).decode()) # type: ignore
     target = event.pattern_match.group(2).decode() # type: ignore
 
@@ -539,8 +539,19 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
     prompt = ""
     if target == "count":
         prompt = "请输入开放注册的名额数量 (纯数字，例如 `50`)："
-    else:
+    elif target == "time":
         prompt = "请输入开放时长 (格式如 `1h`, `30m`, `1h30m`)："
+    elif target == "external":
+        prompt = textwrap.dedent("""\
+            请输入外部验证链接的前缀 (包含 http/https)。
+            
+            逻辑说明: 系统会将用户输入的验证码拼接到此链接后进行 GET 请求。
+            例如输入: `https://api.example.com/check?code=`
+            用户输入: `123`
+            实际请求: `https://api.example.com/check?code=123`
+            
+            如果返回状态码为 2xx 则通过。
+        """)
 
     try:
         async with client.conversation(chat_id, timeout=60) as conv:

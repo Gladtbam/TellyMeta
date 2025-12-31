@@ -773,20 +773,22 @@ class SettingsServices:
         # 当前状态描述
         mode = server.registration_mode
         desc = "未知"
-        if mode == 'default':
+        if mode == RegistrationMode.DEFAULT:
             desc = "默认为 **仅邀请码/积分兑换**，不开放直接注册。"
-        elif mode == 'open':
+        elif mode == RegistrationMode.OPEN:
             desc = "当前 **完全开放**，任何人均可注册。"
-        elif mode == 'close':
+        elif mode == RegistrationMode.CLOSE:
             desc = "当前 **完全关闭**，禁止任何形式注册。"
-        elif mode == 'count':
+        elif mode == RegistrationMode.COUNT:
             desc = f"当前为 **名额限制**，剩余名额: `{server.registration_count_limit}`。"
-        elif mode == 'time':
+        elif mode == RegistrationMode.TIME:
             try:
                 dt = datetime.fromtimestamp(float(server.registration_time_limit))
                 desc = f"当前为 **限时开放**，截止时间: `{dt.strftime('%Y-%m-%d %H:%M')}`。"
             except:
                 desc = "限时配置错误。"
+        elif mode == RegistrationMode.EXTERNAL:
+            desc = f"当前为 **外部验证**，验证链接前缀: `{server.registration_external_url}`。"
 
         keyboard = [
             [
@@ -796,6 +798,9 @@ class SettingsServices:
             [
                 Button.inline("🔢 设置名额限制", data=f"srv_input_mode_{server.id}_count".encode()),
                 Button.inline("⏰ 设置限时开放", data=f"srv_input_mode_{server.id}_time".encode())
+            ],
+            [
+                Button.inline("🌐 设置外部验证", data=f"srv_input_mode_{server.id}_external".encode())
             ],
             [
                 Button.inline("🚫 完全关闭", data=f"srv_set_mode_{server.id}_close".encode())
@@ -818,7 +823,7 @@ class SettingsServices:
         if not server:
             return Result(False, "服务器不存在")
 
-        # 1. 纯数字 -> 名额模式
+        # 纯数字 -> 名额模式
         if re.fullmatch(r'\d+', mode_input):
             count = int(mode_input)
             if count <= 0:
@@ -826,7 +831,7 @@ class SettingsServices:
             await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.COUNT, count=count)
             return Result(True, f"已设置为 **名额限制** 模式，剩余: {count}")
 
-        # 2. 时间格式 -> 限时模式 (1h30m)
+        # 时间格式 -> 限时模式 (1h30m)
         elif re.fullmatch(r'(\d+h)?(\d+m)?(\d+s)?', mode_input):
             hours = int((re.search(r'(\d+)h', mode_input) or [0,0])[1])
             minutes = int((re.search(r'(\d+)m', mode_input) or [0,0])[1])
@@ -841,16 +846,21 @@ class SettingsServices:
             await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.TIME, time=ts)
             return Result(True, f"已设置为 **限时开放**，截止: {end_time.strftime('%Y-%m-%d %H:%M')}")
 
-        # 3. 关键字模式
-        elif mode_input == 'default':
+        # http -> 外部验证模式
+        elif mode_input.startswith("http"):
+            await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.EXTERNAL, external_url=mode_input)
+            return Result(True, f"已设置为 **外部验证** 模式，链接: `{mode_input}`")
+
+        # 关键字模式
+        elif mode_input == RegistrationMode.DEFAULT:
             await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.DEFAULT)
             return Result(True, "已恢复 **默认模式** (仅限邀请码/积分)。")
 
-        elif mode_input in ('open', 'start'):
+        elif mode_input == RegistrationMode.OPEN:
             await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.OPEN)
             return Result(True, "已开启 **完全开放** 注册。")
 
-        elif mode_input in ('close', 'stop'):
+        elif mode_input == RegistrationMode.CLOSE:
             await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.CLOSE)
             return Result(True, "已 **完全关闭** 注册。")
 

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
-from sqlalchemy import select, delete, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models.orm import ServerInstance, ServerType
+from models.orm import ServerInstance
 
 class ServerRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -63,11 +63,11 @@ class ServerRepository:
         server = await self.get_by_id(server_id)
         if not server:
             return None
-        
+
         for key, value in kwargs.items():
             if hasattr(server, key) and value is not None:
                 setattr(server, key, value)
-        
+
         await self.session.commit()
         await self.session.refresh(server)
         return server
@@ -86,7 +86,8 @@ class ServerRepository:
         server_id: int,
         mode: str | None = None,
         count: int | None = None,
-        time: str | None = None
+        time: str | None = None,
+        external_url: str | None = None
     ) -> ServerInstance | None:
         """更新注册策略"""
         server = await self.get_by_id(server_id)
@@ -97,6 +98,8 @@ class ServerRepository:
                 server.registration_count_limit = count
             if time is not None:
                 server.registration_time_limit = time
+            if external_url is not None:
+                server.registration_external_url = external_url
             await self.session.commit()
             await self.session.refresh(server)
         return server
