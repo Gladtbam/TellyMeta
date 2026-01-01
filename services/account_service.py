@@ -1,3 +1,5 @@
+import base64
+import json
 import re
 import textwrap
 from datetime import datetime, timedelta
@@ -76,22 +78,67 @@ class AccountService:
         if not server or not server.registration_external_url:
             return Result(False, "服务器配置错误：缺少外部验证链接。")
 
-        # 拼接 URL
-        target_url = f"{server.registration_external_url}{user_input}"
-        
+        prefixes = [url.strip() for url in server.registration_external_url.split('|') if url.strip()]
+        target_url = None
+
+        user_input = user_input.strip()
+
+        if user_input.startswith("http://") or user_input.startswith("https://"):
+            for prefix in prefixes:
+                if user_input.startswith(prefix):
+                    target_url = user_input
+                    break
+            if not target_url:
+                pass
+
+        if not target_url:
+            if not prefixes:
+                return Result(False, "服务器未配置有效的验证前缀。")
+            target_url = f"{prefixes[0]}{user_input}"
+
         try:
             async with AsyncClient(timeout=10.0, follow_redirects=True) as client:
                 response = await client.get(target_url)
-                
-                if response.is_success:
-                    return Result(True, "验证通过")
+
+                if server.registration_external_parser:
+                    # 允许的上下文变量：response/r, 以及常用工具库 base64, json, re, str, int, len
+                    local_env = {
+                        "response": response, 
+                        "r": response,
+                        "base64": base64,
+                        "json": json,
+                        "re": re,
+                        "str": str,
+                        "int": int,
+                        "len": len,
+                        "bool": bool
+                    }
+                    try:
+                        # 执行自定义解析代码
+                        is_valid = eval(server.registration_external_parser, {"__builtins__": {}}, local_env)
+                        if is_valid:
+                            return Result(True, "验证通过")
+                        else:
+                            return Result(False, "验证失败 (解析未通过)。")
+                    except Exception as e:
+                        logger.error(f"外部验证解析代码执行错误: {e}")
+                        return Result(False, f"验证解析出错: {e}")
                 else:
-                    return Result(False, f"验证失败 (Status: {response.status_code})。")
+                    if response.is_success:
+                        return Result(True, "验证通过")
+                    else:
+                        return Result(False, f"验证失败 (Status: {response.status_code})。")
         except Exception as e:
             logger.error("外部验证错误：{}", e)
             return Result(False, f"验证请求发生错误: {str(e)}")
 
-    async def register(self, user_id: int, username: str | None | Literal[False], server_id: int, skip_checks: bool = False) -> Result:
+    async def register(
+        self,
+        user_id: int,
+        username: str | None | Literal[False],
+        server_id: int,
+        skip_checks: bool = False
+    ) -> Result:
         """注册新用户
         Args:
             user_id (int): 用户的 Telegram ID

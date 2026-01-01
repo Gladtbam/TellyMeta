@@ -792,7 +792,12 @@ class SettingsServices:
         """)
         return Result(True, msg, keyboard=keyboard)
 
-    async def set_server_registration_mode(self, server_id: int, mode_input: str) -> Result:
+    async def set_server_registration_mode(
+        self,
+        server_id: int,
+        mode_input: str,
+        external_parser: str | None = None
+    ) -> Result:
         """设置服务器的注册模式 (包含正则解析逻辑)"""
         server = await self.server_repo.get_by_id(server_id)
         if not server:
@@ -823,7 +828,12 @@ class SettingsServices:
 
         # http -> 外部验证模式
         elif mode_input.startswith("http"):
-            await self.server_repo.update_policy_config(server.id, mode=RegistrationMode.EXTERNAL, external_url=mode_input)
+            await self.server_repo.update_policy_config(
+                server.id,
+                mode=RegistrationMode.EXTERNAL,
+                external_url=mode_input,
+                external_parser=external_parser
+            )
             return Result(True, f"已设置为 **外部验证** 模式，链接: `{mode_input}`")
 
         # 关键字模式

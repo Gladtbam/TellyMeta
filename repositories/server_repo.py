@@ -92,7 +92,8 @@ class ServerRepository:
         mode: str | None = None,
         count: int | None = None,
         time: str | None = None,
-        external_url: str | None = None
+        external_url: str | None = None,
+        external_parser: str | None = None
     ) -> ServerInstance | None:
         """更新注册策略"""
         server = await self.get_by_id(server_id)
@@ -105,6 +106,8 @@ class ServerRepository:
                 server.registration_time_limit = time
             if external_url is not None:
                 server.registration_external_url = external_url
+            if external_parser is not None:
+                server.registration_external_parser = external_parser
             await self.session.commit()
             await self.session.refresh(server)
         return server
@@ -149,7 +152,7 @@ class ServerRepository:
     async def update_notify_config(
         self,
         server_id: int,
-        notify_topic_id: int | None| object = _UNSET,
+        notify_topic_id: int | None | object = _UNSET,
         request_notify_topic_id: int | None| object = _UNSET
     ) -> ServerInstance | None:
         """更新通知话题配置"""

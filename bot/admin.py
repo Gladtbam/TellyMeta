@@ -512,13 +512,11 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
     elif target == "external":
         prompt = textwrap.dedent("""\
             请输入外部验证链接的前缀 (包含 http/https)。
+            支持多个前缀，使用 `|` 分隔。
             
             逻辑说明: 系统会将用户输入的验证码拼接到此链接后进行 GET 请求。
-            例如输入: `https://api.example.com/check?code=`
-            用户输入: `123`
-            实际请求: `https://api.example.com/check?code=123`
-            
-            如果返回状态码为 2xx 则通过。
+            1. 如果用户输入的是完整 URL 且匹配前缀，直接使用。
+            2. 否则，将用户输入的 Key 拼接到第一个前缀后进行 GET 请求。
         """)
 
     try:
@@ -540,8 +538,42 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
             except:
                 pass
 
+            external_parser = None
+            if target == "external":
+                parser_prompt = textwrap.dedent("""\
+                    请输入 **验证解析代码** (Python 表达式)。
+                    
+                    可用变量: `response` (或 `r`), `json`, `base64`, `re`, `str`, `int` 等。
+                    要求: 返回布尔值 `True` (通过) 或 `False` (失败)。
+                    
+                    示例: `response.status_code == 200`
+                    或: `json.loads(r.text)['status'] == 'ok'`
+                    
+                    发送 `/empty` 可跳过 (使用默认 2xx 状态码判断)。
+                """)
+                parser_msg = await conv.send_message(parser_prompt, buttons=cancel_btn)
+                parser_input = await get_user_input_or_cancel(conv, parser_msg.id)
+
+                if parser_input is None:
+                    try:
+                        await parser_msg.delete()
+                    except:
+                        pass
+                    return
+
+                if parser_input.strip() != "/empty":
+                    external_parser = parser_input.strip()
+
+                try:
+                    await parser_msg.delete()
+                except:
+                    pass
+
             settings_service = SettingsServices(app, session)
-            result = await settings_service.set_server_registration_mode(server_id, input_val)
+            result = await settings_service.set_server_registration_mode(
+                server_id,
+                input_val,
+                external_parser)
 
             if result.success:
                 await event.answer("设置成功")
