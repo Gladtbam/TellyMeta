@@ -87,7 +87,7 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            self.client.run_until_disconnected()
+            await self.client.run_until_disconnected() # type: ignore
         except Exception as e:
             logger.error("运行 Telethon 客户端时出错：{}", e)
             raise
