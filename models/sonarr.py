@@ -240,7 +240,7 @@ class RenamedEpisodeFiles(BaseModel):
 class DownloadInfo(BaseModel):
     quality: str
     qualityVersion: int
-    title: str
+    title: str | None = None
     indexer: str
     size: int
 

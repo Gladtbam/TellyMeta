@@ -116,7 +116,7 @@ class JellyfinClient(
             "SpecialFeatureCount"]
         params = {
             'recursive': 'true',
-            'filters': ', '.join(fields),
+            'fields': ', '.join(fields),
             'enableImages': 'true',
             'enableUserData': 'true',
             'ids': item_id

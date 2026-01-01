@@ -113,7 +113,11 @@ class PluginInfoMixin(BaseModel):
 
 class ItemEvent(BasePayload, ItemInfoMixin):
     """项目添加/删除"""
-    notification_type: Literal[NotificationType.ITEM_ADDED, NotificationType.ITEM_DELETED] = Field(alias="NotificationType")
+    notification_type: Literal[
+        NotificationType.ITEM_ADDED,
+        NotificationType.ITEM_DELETED,
+        NotificationType.SUBTITLE_DOWNLOAD_FAILURE
+    ] = Field(alias="NotificationType")
 
 class PlaybackEvent(BasePayload, ItemInfoMixin, UserDataMixin, SessionInfoMixin, PlaybackInfoMixin):
     """播放相关"""
@@ -148,7 +152,8 @@ class AuthenticationEvent(BasePayload, UserDataMixin, SessionInfoMixin):
     """认证事件"""
     notification_type: Literal[
         NotificationType.AUTHENTICATION_SUCCESS,
-        NotificationType.AUTHENTICATION_FAILURE
+        NotificationType.AUTHENTICATION_FAILURE,
+        NotificationType.SESSION_START
     ] = Field(alias="NotificationType")
 
     # Auth Failure 特有
