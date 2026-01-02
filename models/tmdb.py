@@ -36,7 +36,7 @@ class TmdbEpisode(BaseModel):
     id: int
     name: str
     overview: str
-    air_date: str
+    air_date: str | None = None
     season_number: int
     episode_number: int
 

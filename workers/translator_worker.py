@@ -53,13 +53,13 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
 
     fields_to_translate_item = {
         'Name': item.Name,
-        'SortName': item.SortName,
+        # 'SortName': item.SortName,
         'Overview': item.Overview
         # 'Genres': item.get('Genres', [])
     }
 
     updates = {}
-    sync_sort_name: bool = fields_to_translate_item.get('Name') == fields_to_translate_item.get('SortName', None)
+    # sync_sort_name: bool = fields_to_translate_item.get('Name') == fields_to_translate_item.get('SortName', None)
 
     for field, text in fields_to_translate_item.items():
         # 检查文本是否为空或包含中文字符
@@ -81,8 +81,8 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
             updates[field] = text
             logger.warning("项目 {} 中的字段 {} 翻译失败：{}", field, item_id, text)
 
-    if sync_sort_name:
-        updates['SortName'] = updates['Name']
+    # if sync_sort_name:
+    #     updates['SortName'] = updates['Name']
 
     if item.Genres:
         updates['Genres'] = [genre_mapping.get(genre, genre) for genre in item.Genres]
