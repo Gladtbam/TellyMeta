@@ -1,8 +1,10 @@
+import asyncio
+
 import httpx
 from loguru import logger
 from pydantic import ValidationError
 
-from clients.base_client import AuthenticatedClient
+from clients.base_client import AuthenticatedClient, RateLimiter
 from models.tvdb import TvdbData, TvdbEpisodesData, TvdbPayload, TvdbSeriesData
 
 
@@ -11,6 +13,7 @@ class TvdbClient(AuthenticatedClient):
         super().__init__(client)
         self.api_key = api_key
         self._token: str | None = None
+        self._limiter = RateLimiter(rate=20, per=1.0)
 
     async def _login(self):
         payload = {'apikey': self.api_key}
@@ -31,6 +34,23 @@ class TvdbClient(AuthenticatedClient):
             self._token = None
             logger.error("登录 TVDB 失败。检查您的 API 密钥。")
 
+    async def _request(self, *args, **kwargs):
+        await self._limiter.acquire()
+
+        try:
+            return await super()._request(*args, **kwargs)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                logger.warning(f"TVDB 速率限制触发 (429)。URL: {e.request.url}")
+                retry_after = e.response.headers.get("Retry-After")
+                try:
+                    sleep_time = int(retry_after) + 1 if retry_after else 1
+                except (ValueError, TypeError):
+                    sleep_time = 1
+
+                await asyncio.sleep(sleep_time)
+                return await self._request(*args, **kwargs)
+            raise
 
     async def _apply_auth(self):
         if self._token:

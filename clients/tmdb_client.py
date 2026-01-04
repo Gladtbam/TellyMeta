@@ -1,6 +1,9 @@
-import httpx
+import asyncio
 
-from clients.base_client import AuthenticatedClient
+import httpx
+from loguru import logger
+
+from clients.base_client import AuthenticatedClient, RateLimiter
 from models.tmdb import TmdbFindPayload, TmdbMovie, TmdbTv
 
 
@@ -8,6 +11,7 @@ class TmdbClient(AuthenticatedClient):
     def __init__(self, client: httpx.AsyncClient, api_key: str):
         super().__init__(client)
         self.api_key = api_key
+        self._limiter = RateLimiter(rate=30, per=1.0)
 
     async def _login(self) -> None:
         # TMDB 使用 Bearer Token 进行认证，无需登录
@@ -18,6 +22,30 @@ class TmdbClient(AuthenticatedClient):
             "Authorization": f"Bearer {self.api_key}",
             "accept": "application/json"
         }
+
+    async def _request(self, *args, **kwargs):
+        """
+        重写 _request 方法以添加速率限制和 429 重试逻辑
+        """
+        await self._limiter.acquire()
+
+        try:
+            return await super()._request(*args, **kwargs)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                logger.warning(f"TMDB 速率限制已触发 (429)。正在等待重试... URL: {e.request.url}")
+
+                retry_after = e.response.headers.get("Retry-After")
+                try:
+                    sleep_time = int(retry_after) + 1 if retry_after else 1
+                except (ValueError, TypeError):
+                    sleep_time = 1
+
+                await asyncio.sleep(sleep_time)
+
+                return await self._request(*args, **kwargs)
+
+            raise
 
     async def find_info_by_external_id(
         self,

@@ -3,6 +3,8 @@ import textwrap
 from loguru import logger
 from openai import AsyncOpenAI
 
+from clients.base_client import RateLimiter
+
 
 class AIClientWarper:
     def __init__(self, base_url, api_key, model) -> None:
@@ -11,17 +13,19 @@ class AIClientWarper:
             base_url=base_url
         )
         self.model = model
+        self._limiter = RateLimiter(rate=60, per=60.0)
 
     async def translate(self, key: str, text: str):
         """使用AI翻译日本动画元数据的指定字段内容为中文。
         
         Args:
-            ai_client (AsyncOpenAI): 异步OpenAI客户端实例。
             key (str): 要翻译的字段名称。
             text (str): 要翻译的文本内容。
         Returns:
             str: 翻译后的文本，如果翻译失败则返回原文本。
         """
+        await self._limiter.acquire()
+
         prompt = textwrap.dedent("""
             你是一名专业影视元数据翻译器。
 

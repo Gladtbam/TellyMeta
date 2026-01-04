@@ -1,6 +1,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from time import monotonic
 from typing import Any, Literal, TypeVar, overload
 
 import httpx
@@ -9,6 +10,33 @@ from pydantic import BaseModel, ValidationError
 
 T = TypeVar('T', bound=BaseModel)
 T_parser = TypeVar('T_parser')
+
+class RateLimiter:
+    """速率限制器"""
+    def __init__(self, rate: int, per: float = 1.0):
+        self.rate = rate
+        self.per = per
+        self.allowance = rate
+        self.last_check = monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self._lock:
+            current = monotonic()
+            time_passed = current - self.last_check
+            self.last_check = current
+            self.allowance += time_passed * (self.rate / self.per)
+
+            if self.allowance > self.rate:
+                self.allowance = self.rate
+
+            if self.allowance < 1.0:
+                wait_time = (1.0 - self.allowance) * (self.per / self.rate)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+                self.allowance = 0.0
+            else:
+                self.allowance -= 1.0
 
 class AuthenticatedClientError(Exception):
     """自定义认证失败异常"""
