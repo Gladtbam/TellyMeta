@@ -9,6 +9,7 @@ class TvdbData(BaseModel):
     name: str | None = None
     overview: str | None = None
     language: str | None = None
+    aliases: list[str] = Field(default_factory=list)
 
 class TvdbSeasonType(BaseModel):
     id: int

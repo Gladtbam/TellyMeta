@@ -92,8 +92,8 @@ class UserDto(BaseModel):
     HasConfiguredPassword: bool
     HasConfiguredEasyPassword: bool
     EnableAutoLogin: bool | None = None
-    LastLoginDate: str | None = None # datetime
-    LastActivityDate: str | None = None # datetime
+    LastLoginDate: datetime | None = None
+    LastActivityDate: datetime | None = None
     Configuration: UserConfiguration
     Policy: UserPolicy
     PrimaryImageAspectRatio: float | None = None
@@ -257,7 +257,7 @@ class UserItemDataDto(BaseModel):
     PlayCount: int | None = None
     IsFavorite: bool
     Likes: bool | None = None
-    LastPlayedDate: str | None = None # datetime
+    LastPlayedDate: datetime | None = None
     Played: bool
     Key: str
     ItemId: str
@@ -267,7 +267,7 @@ class ChapterInfo(BaseModel):
     StartPositionTicks: int
     Name: str | None = None
     ImagePath: str | None = None
-    ImageDateModified: str | None = None # datetime
+    ImageDateModified: datetime | None = None
     ImageTag: str | None = None
 
 class TrickplayInfoDto(BaseModel):
@@ -289,8 +289,8 @@ class BaseItemDto(BaseModel):
     Etag: str | None = None
     SourceType: str | None = None
     PlaylistItemId: str | None = None
-    DateCreated: str | None = None # datetime
-    DateLastMediaAdded: str | None = None # datetime
+    DateCreated: datetime | None = None
+    DateLastMediaAdded: datetime | None = None
     ExtraType: str | None = None
     AirsBeforeSeasonNumber: int | None = None
     AirsAfterSeasonNumber: int | None = None
@@ -305,7 +305,7 @@ class BaseItemDto(BaseModel):
     SortName: str | None = None
     ForcedSortName: str | None = None
     Video3DFormat: str | None = None
-    PremiereDate: str | None = None # datetime
+    PremiereDate: datetime | None = None
     ExternalUrls: list[ExternalUrl] = Field(default_factory=list)
     MediaSources: list[MediaSourceInfo] = Field(default_factory=list)
     CriticRating: float | None = None
@@ -390,7 +390,7 @@ class BaseItemDto(BaseModel):
     LocationType: str | None = None
     IsoType: str | None = None
     MediaType: str = "Unknown"
-    EndDate: str | None = None # datetime
+    EndDate: datetime | None = None
     LockedFields: list[str] = Field(default_factory=list)
     TrailerCount: int | None = None
     MovieCount: int | None = None
@@ -419,7 +419,7 @@ class BaseItemDto(BaseModel):
     SeriesTimerId: str | None = None
     ProgramId: str | None = None
     ChannelPrimaryImageTag: str | None = None
-    StartDate: str | None = None # datetime
+    StartDate: datetime | None = None
     CompletionPercentage: float | None = None
     IsRepeat: bool | None = None
     EpisodeTitle: str | None = None

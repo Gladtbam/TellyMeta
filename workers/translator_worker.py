@@ -53,13 +53,10 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
 
     fields_to_translate_item = {
         'Name': item.Name,
-        # 'SortName': item.SortName,
         'Overview': item.Overview
-        # 'Genres': item.get('Genres', [])
     }
 
     updates = {}
-    # sync_sort_name: bool = fields_to_translate_item.get('Name') == fields_to_translate_item.get('SortName', None)
 
     for field, text in fields_to_translate_item.items():
         # 检查文本是否为空或包含中文字符
@@ -81,9 +78,6 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
             updates[field] = text
             logger.warning("项目 {} 中的字段 {} 翻译失败：{}", field, item_id, text)
 
-    # if sync_sort_name:
-    #     updates['SortName'] = updates['Name']
-
     if item.Genres:
         updates['Genres'] = [genre_mapping.get(genre, genre) for genre in item.Genres]
 
@@ -94,10 +88,10 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
         logger.info("[{}]正在翻译项目 {}：{}", server_id, item_id, item.Name)
         await media_client.post_item_info(item_id, item)
         scheduler.add_job(
-            translate_emby_item,
+            translate_media_item,
             'date',
             run_date=(datetime.now() + timedelta(days=8)),
-            id=f'translate_emby_item_{server_id}_{item_id}',
+            id=f'translate_media_item_{server_id}_{item_id}',
             replace_existing=True,
             args=[server_id, item_id]
         )
@@ -105,7 +99,7 @@ async def translate_emby_item(server_id: int, item_id: str) -> None:
     else:
         logger.info("[{}]无需翻译ID: {}", server_id, item_id)
 
-async def cancel_translate_emby_item(server_id: int, item_id: str) -> None:
+async def cancel_translate_media_item(server_id: int, item_id: str) -> None:
     """取消已计划的翻译任务。
     Args:
         scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
@@ -114,7 +108,7 @@ async def cancel_translate_emby_item(server_id: int, item_id: str) -> None:
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
 
-    job_id = f'translate_emby_item_{server_id}_{item_id}'
+    job_id = f'translate_media_item_{server_id}_{item_id}'
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)

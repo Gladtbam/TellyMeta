@@ -26,8 +26,8 @@ from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
 from services.media_service import MediaService
 from services.notification_service import NotificationService
 from workers.nfo_worker import create_episode_nfo, create_series_nfo
-from workers.translator_worker import (cancel_translate_emby_item,
-                                       translate_emby_item)
+from workers.translator_worker import (cancel_translate_media_item,
+                                       translate_media_item)
 
 router = APIRouter()
 settings = get_settings()
@@ -156,7 +156,7 @@ async def emby_webhook(
 
     if isinstance(payload, LibraryNewEvent):
         asyncio.create_task(
-            translate_emby_item(server_id, payload.item.id)
+            translate_media_item(server_id, payload.item.id)
         )
 
         if client.notify_topic_id:
@@ -168,7 +168,7 @@ async def emby_webhook(
             )
     elif isinstance(payload, LibraryDeletedEvent):
         asyncio.create_task(
-            cancel_translate_emby_item(server_id, payload.item.id)
+            cancel_translate_media_item(server_id, payload.item.id)
         )
 
     return Response(content="Webhook received", status_code=200)
@@ -189,7 +189,7 @@ async def jellyfin(
 
     if payload.notification_type == NotificationType.ITEM_ADDED:
         asyncio.create_task(
-            translate_emby_item(server_id, payload.item_id)
+            translate_media_item(server_id, payload.item_id)
         )
 
         if client.notify_topic_id:
@@ -201,7 +201,7 @@ async def jellyfin(
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED:
         asyncio.create_task(
-            cancel_translate_emby_item(server_id, payload.item_id)
+            cancel_translate_media_item(server_id, payload.item_id)
         )
     return Response(content="Webhook received", status_code=200)
 
