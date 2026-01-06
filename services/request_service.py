@@ -58,7 +58,7 @@ class RequestService:
             elif isinstance(client, RadarrClient):
                 title, overview = await self._fetch_movie_metadata(item, title, overview)
         except Exception as e:
-            logger.warning(f"元数据增强失败，降级使用原始数据: {e}")
+            logger.debug(f"元数据增强失败，降级使用原始数据: {e}")
 
         return title, overview, poster_url
 
@@ -199,7 +199,7 @@ class RequestService:
             elif isinstance(client, RadarrClient):
                 existing_item = await client.get_movie_by_tmdb(media_id)
         except Exception as e:
-            logger.warning("查重请求失败: {}", e)
+            logger.debug("查重请求失败: {}", e)
 
         if existing_item:
             return Result(False, f"✅ **{existing_item.title}** 已经在媒体库中了，无需重复请求。")

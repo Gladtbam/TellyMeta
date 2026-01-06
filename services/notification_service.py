@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from jinja2 import (Environment, FileSystemLoader, TemplateNotFound,
                     select_autoescape)
 from loguru import logger
+from telethon.errors import RPCError
 
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
@@ -99,6 +100,8 @@ class NotificationService:
                 link_preview=False
             )
             logger.info("已发送通知：{}（目标：{}）", event_type.value, topic_id)
+        except RPCError as e:
+            logger.error("Telegram API 错误: {}", e)
         except Exception as e:
             logger.error("无法发送通知 ({})：{}", event_type.value, e)
 

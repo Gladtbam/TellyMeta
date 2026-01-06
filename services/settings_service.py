@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 
 import httpx
 from fastapi import FastAPI
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button
-from telethon.tl.types import ForumTopicDeleted
 
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
@@ -208,7 +208,7 @@ class SettingsServices:
                     info += "\n\n**📂 路径映射 (Remote -> Local)**:\n"
                     for remote, local in mappings.items():
                         info += f"`{remote}` ➡️ `{local}`\n"
-                except:
+                except json.JSONDecodeError:
                     info += "\n\n**📂 路径映射**: 解析错误"
 
         keyboard = []
@@ -311,7 +311,7 @@ class SettingsServices:
         if server.path_mappings:
             try:
                 mappings = json.loads(server.path_mappings)
-            except:
+            except json.JSONDecodeError:
                 pass
 
         if server.server_type == ServerType.EMBY:
@@ -527,6 +527,10 @@ class SettingsServices:
 
         try:
             profiles = await client.get_quality_profiles() or []
+        except httpx.HTTPError as e:
+            return Result(False, f"连接失败: {e}")
+        except KeyError as e:
+            return Result(False, f"获取失败，响应格式错误: {e}")
         except Exception as e:
             return Result(False, f"获取失败: {e}")
 
@@ -559,6 +563,10 @@ class SettingsServices:
 
         try:
             folders = await client.get_root_folders() or []
+        except httpx.HTTPError as e:
+            return Result(False, f"连接失败: {e}")
+        except KeyError as e:
+            return Result(False, f"获取失败，响应格式错误: {e}")
         except Exception as e:
             return Result(False, f"获取失败: {e}")
 
@@ -760,7 +768,7 @@ class SettingsServices:
             try:
                 dt = datetime.fromtimestamp(float(server.registration_time_limit))
                 desc = f"当前为 **限时开放**，截止时间: `{dt.strftime('%Y-%m-%d %H:%M')}`。"
-            except:
+            except (ValueError, TypeError, OSError):
                 desc = "限时配置错误。"
         elif mode == RegistrationMode.EXTERNAL:
             desc = f"当前为 **外部验证**，验证链接前缀: `{server.registration_external_url}`。"
@@ -922,8 +930,10 @@ class SettingsServices:
         try:
             # 默认优先级设为 0
             instance = await self.server_repo.add(name, server_type, url, api_key, priority=0)
+        except IntegrityError:
+            return Result(False, "服务器名称已存在，请勿重复添加。")
         except Exception as e:
-            return Result(False, f"数据库添加失败 (可能名称重复): {str(e)}")
+            return Result(False, f"数据库添加失败: {str(e)}")
 
         try:
             new_client = None

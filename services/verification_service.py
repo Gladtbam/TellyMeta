@@ -3,6 +3,7 @@ import textwrap
 from datetime import datetime, timedelta
 from random import randint, sample
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from loguru import logger
@@ -104,6 +105,8 @@ class VerificationService:
         # 删除定时任务
         try:
             self.scheduler.remove_job(challenge.scheduler_job_id)
+        except JobLookupError:
+            pass
         except Exception as e:
             logger.warning("移除定时任务失败: {}", e)
 
@@ -122,6 +125,8 @@ class VerificationService:
         await kick_unverified_user(user_id, is_ban=is_ban)
         try:
             self.scheduler.remove_job(challenge.scheduler_job_id)
+        except JobLookupError:
+            pass
         except Exception as e:
             logger.warning("移除定时任务失败: {}", e)
 

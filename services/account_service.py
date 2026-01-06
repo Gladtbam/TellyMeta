@@ -61,7 +61,7 @@ class AccountService:
                     if datetime.now().timestamp() > ts:
                         continue # 已过期不显示
                     status = "(限时)"
-                except:
+                except (ValueError, TypeError):
                     pass
             elif srv.registration_mode == RegistrationMode.EXTERNAL:
                 status = "(验证注册)"
