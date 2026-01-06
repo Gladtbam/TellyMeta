@@ -13,15 +13,8 @@ from models.tmdb import TmdbFindPayload
 from services.media_service import MediaService
 
 
-async def translate_emby_item(server_id: int, item_id: str) -> None:
-    """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。
-    Args:
-        scheduler (AsyncIOScheduler): 任务调度器，用于安排重试任务。
-        tmdb_client (TmdbClient): TMDB 客户端，用于获取媒体信息。
-        media_client (MediaService): 媒体服务客户端，用于获取和更新媒体项信息。
-        ai_client (AIClientWarper): AI 客户端，用于执行翻译任务。
-        item_id (str): 媒体项的唯一标识符。
-    """
+async def translate_media_item(server_id: int, item_id: str) -> None:
+    """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。"""
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
     tmdb_client: TmdbClient = app.state.tmdb_client

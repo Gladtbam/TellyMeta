@@ -12,7 +12,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'tellymeta.db'}"
 
-async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+async_engine = create_async_engine(
+    url=DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_size=20,
+    max_overflow=40
+)
 
 async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=async_engine,
