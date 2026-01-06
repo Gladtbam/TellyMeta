@@ -1,3 +1,4 @@
+import asyncio
 import textwrap
 from datetime import datetime, timedelta
 from random import randint, sample
@@ -16,7 +17,7 @@ from repositories.verification_repo import VerificationRepository
 from services.user_service import Result, UserService
 
 settings = get_settings()
-
+KICK_TASK_SEMAPHORE = asyncio.Semaphore(3)  # 限制同时踢人任务的数量
 
 class VerificationService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
@@ -132,25 +133,30 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
     session_factory: async_sessionmaker[AsyncSession] = async_session
     client: TelethonClientWarper = app.state.telethon_client
 
-    async with session_factory() as session:
+    async with KICK_TASK_SEMAPHORE:
         try:
-            user_service = UserService(app, session)
-            verification_repo = VerificationRepository(session)
-            challenge = await verification_repo.get(user_id)
-            if challenge:
-                await verification_repo.delete(user_id)
-
             if is_ban:
                 await client.ban_user(user_id)
             else:
                 await client.kick_participant(user_id)
-            await user_service.delete_account(user_id, 'tg')
-            logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
-
-            # 删除验证记录
-            await verification_repo.delete(user_id)
         except Exception as e:
-            await session.rollback()
             logger.exception("移出未验证用户 {} 失败: {}", user_id, e)
-        finally:
-            await session.close()   # 关闭会话
+
+        async with session_factory() as session:
+            try:
+                user_service = UserService(app, session)
+                verification_repo = VerificationRepository(session)
+                challenge = await verification_repo.get(user_id)
+                if challenge:
+                    await verification_repo.delete(user_id)
+
+                await user_service.delete_account(user_id, 'tg')
+                logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
+
+                # 删除验证记录
+                await verification_repo.delete(user_id)
+            except Exception as e:
+                await session.rollback()
+                logger.exception("移出未验证用户 {} 失败: {}", user_id, e)
+            finally:
+                await session.close()   # 关闭会话
