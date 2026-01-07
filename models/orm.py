@@ -55,6 +55,7 @@ class ServerInstance(Base):
     server_type: Mapped[str] = mapped_column(String(32), nullable=True)
     url: Mapped[str] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str] = mapped_column(String(255), nullable=True)
+    webhook_token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text('true'), nullable=False)
     priority: Mapped[int] = mapped_column(Integer, server_default=text('0'), nullable=False) # 优先级
     tos: Mapped[str | None] = mapped_column(String(4096), nullable=True)

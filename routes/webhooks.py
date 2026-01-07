@@ -13,12 +13,14 @@ from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.dependencies import (get_media_clients, get_notification_service,
                                get_qb_client, get_radarr_clients,
-                               get_sonarr_clients, get_task_queue,
-                               get_tmdb_client, get_tvdb_client)
+                               get_server_by_token, get_sonarr_clients,
+                               get_task_queue, get_tmdb_client,
+                               get_tvdb_client)
 from models.emby_webhook import (EmbyPayload, LibraryDeletedEvent,
                                  LibraryNewEvent)
 from models.events import NotificationEvent
 from models.jellyfin_webhook import JellyfinPayload, NotificationType
+from models.orm import ServerInstance
 from models.radarr import (RadarrPayload, RadarrWebhookAddedPayload,
                            RadarrWebhookDownloadPayload)
 from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
@@ -35,7 +37,7 @@ settings = get_settings()
 @router.post("/webhook/sonarr", status_code=202)
 async def sonarr_webhook(
     payload: SonarrPayload,
-    server_id: int | None = Query(None, description="TellyMeta Server ID"),
+    server_instance: ServerInstance = Depends(get_server_by_token),
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
     tmdb_client: TmdbClient = Depends(get_tmdb_client),
     tvdb_client: TvdbClient = Depends(get_tvdb_client),
@@ -44,9 +46,7 @@ async def sonarr_webhook(
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
-    if not server_id:
-        return Response(content="Webhook received (No Server ID)", status_code=200)
-    client = sonarr_clients.get(server_id)
+    client = sonarr_clients.get(server_instance.id)
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
@@ -93,16 +93,14 @@ async def sonarr_webhook(
 @router.post("/webhook/radarr", status_code=202)
 async def radarrarr_webhook(
     payload: RadarrPayload,
-    server_id: int | None = Query(None, description="TellyMeta Server ID"),
+    server_instance: ServerInstance = Depends(get_server_by_token),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     task_queue: asyncio.Queue = Depends(get_task_queue),
     qb_client: QbittorrentClient = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Radarr 的 Webhook"""
-    if not server_id:
-        return Response(content="Webhook received (No Server ID)", status_code=200)
-    client = radarr_clients.get(server_id)
+    client = radarr_clients.get(server_instance.id)
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
@@ -143,20 +141,18 @@ async def radarrarr_webhook(
 @router.post("/webhook/emby", status_code=202)
 async def emby_webhook(
     payload: EmbyPayload,
-    server_id: int = Query(..., description="TellyMeta Server ID"),
+    server_instance: ServerInstance = Depends(get_server_by_token),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Emby 的 Webhook"""
-    if not server_id:
-        return Response(content="Webhook received (No Server ID)", status_code=200)
-    client = media_clients.get(server_id)
+    client = media_clients.get(server_instance.id)
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
     if isinstance(payload, LibraryNewEvent):
         asyncio.create_task(
-            translate_media_item(server_id, payload.item.id)
+            translate_media_item(server_instance.id, payload.item.id)
         )
 
         if client.notify_topic_id:
@@ -168,7 +164,7 @@ async def emby_webhook(
             )
     elif isinstance(payload, LibraryDeletedEvent):
         asyncio.create_task(
-            cancel_translate_media_item(server_id, payload.item.id)
+            cancel_translate_media_item(server_instance.id, payload.item.id)
         )
 
     return Response(content="Webhook received", status_code=200)
@@ -176,20 +172,18 @@ async def emby_webhook(
 @router.post("/webhook/jellyfin", status_code=202)
 async def jellyfin(
     payload: JellyfinPayload,
-    server_id: int = Query(..., description="TellyMeta Server ID"),
+    server_instance: ServerInstance = Depends(get_server_by_token),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Jellyfin 的 Webhook"""
-    if not server_id:
-        return Response(content="Webhook received (No Server ID)", status_code=200)
-    client = media_clients.get(server_id)
+    client = media_clients.get(server_instance.id)
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
     if payload.notification_type == NotificationType.ITEM_ADDED:
         asyncio.create_task(
-            translate_media_item(server_id, payload.item_id)
+            translate_media_item(server_instance.id, payload.item_id)
         )
 
         if client.notify_topic_id:
@@ -201,7 +195,7 @@ async def jellyfin(
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED:
         asyncio.create_task(
-            cancel_translate_media_item(server_id, payload.item_id)
+            cancel_translate_media_item(server_instance.id, payload.item_id)
         )
     return Response(content="Webhook received", status_code=200)
 

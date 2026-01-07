@@ -1,7 +1,8 @@
 import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Request
+from fastapi import Depends, HTTPException, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
@@ -9,9 +10,12 @@ from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
+from core.database import get_db
 from core.telegram_manager import TelethonClientWarper
-from services.notification_service import NotificationService
+from models.orm import ServerInstance
+from repositories.server_repo import ServerRepository
 from services.media_service import MediaService
+from services.notification_service import NotificationService
 
 
 def get_task_queue(request: Request) -> asyncio.Queue:
@@ -60,3 +64,15 @@ def get_notification_service(request: Request) -> NotificationService:
 def get_telethon_client(request: Request) -> TelethonClientWarper:
     """获取 Telethon 客户端实例。"""
     return request.app.state.telethon_client
+
+async def get_server_by_token(
+    token: str = Query(..., description="Webhook Security Token"),
+    session: AsyncSession = Depends(get_db)
+) -> ServerInstance:
+    """通过 Token 验证并获取服务器实例"""
+    repo = ServerRepository(session)
+    server = await repo.get_by_token(token)
+    if not server:
+        await asyncio.sleep(0.1)
+        raise HTTPException(status_code=403, detail="无效的 Webhook Token")
+    return server

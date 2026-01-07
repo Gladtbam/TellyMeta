@@ -253,6 +253,9 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
             processing_msg = await conv.send_message("📥 正在接收并处理文件，请稍候...")
 
             # Download
+            if response_msg.file.size and response_msg.file.size > 20 * 1024 * 1024:
+                await processing_msg.edit("❌ 文件过大！最大支持 20 MiB，请重新发送。")
+                return
             async with aiofiles.tempfile.NamedTemporaryFile(suffix=".zip") as tmp_file:
                 file_path = await response_msg.download_media(file=tmp_file.name)
 

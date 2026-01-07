@@ -1,9 +1,11 @@
+import secrets
 from collections.abc import Sequence
 from typing import cast
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from models.orm import ServerInstance
 
+from models.orm import ServerInstance
 
 # 定义一个唯一的哨兵对象，用于区分 "未传参" 和 "传了 None"
 _UNSET = object()
@@ -14,12 +16,14 @@ class ServerRepository:
 
     async def add(self, name: str, server_type: str, url: str, api_key: str, priority: int = 0) -> ServerInstance:
         """添加服务器"""
+        token = secrets.token_urlsafe(32)
         instance = ServerInstance(
             name=name,
             server_type=server_type,
             url=url,
             api_key=api_key,
-            priority=priority
+            priority=priority,
+            webhook_token=token
         )
         self.session.add(instance)
         await self.session.commit()
@@ -51,6 +55,12 @@ class ServerRepository:
     async def get_by_id(self, server_id: int) -> ServerInstance | None:
         """通过 ID 获取服务器"""
         return await self.session.get(ServerInstance, server_id)
+
+    async def get_by_token(self, token: str) -> ServerInstance | None:
+        """通过 Webhook Token 获取服务器"""
+        stmt = select(ServerInstance).where(ServerInstance.webhook_token == token)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def delete(self, server_id: int) -> None:
         """删除服务器"""
