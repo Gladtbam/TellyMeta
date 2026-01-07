@@ -116,15 +116,12 @@ class SubtitleService:
         # 获取媒体文件的基础名称 (无后缀)，例如 "Show.S01E01"
         media_basename = os.path.splitext(os.path.basename(media_path))[0]
 
-        # 智能提取后缀
         # 截取 SxxExx 之后的部分，例如 ".zh.comment.ass" 或 " - Title.zh.ass"
         remainder = sub_filename[ep_match.end():]
-
-        # 使用 pathlib 提取所有后缀，自动忽略非后缀字符（如 " - Title"）
-        # ".zh.comment.ass" -> ['.zh', '.comment', '.ass']
-        suffixes = "".join(pathlib.Path(remainder).suffixes)
-
-        if not suffixes:
+        suffix_match = re.search(r'(?:\.[^.]+)+$', remainder)
+        if suffix_match:
+            suffixes = suffix_match.group()
+        else:
             # 兜底：如果没提取到后缀，直接取原文件后缀
             suffixes = "".join(pathlib.Path(sub_filename).suffixes)
 
