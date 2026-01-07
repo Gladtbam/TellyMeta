@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI
 from httpx import AsyncClient, HTTPError
+from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from telethon import Button
@@ -101,21 +102,29 @@ class AccountService:
                 response = await client.get(target_url)
 
                 if server.registration_external_parser:
-                    # 允许的上下文变量：response/r, 以及常用工具库 base64, json, re, str, int, len
-                    local_env = {
+                    env = SandboxedEnvironment()
+                    context = {
+                        # 响应对象
                         "response": response, 
                         "r": response,
-                        "base64": base64,
+
+                        # 工具库 (满足您的复杂需求)
                         "json": json,
+                        "base64": base64,
                         "re": re,
-                        "str": str,
-                        "int": int,
+
+                        # 基础类型转换函数
                         "len": len,
-                        "bool": bool
+                        "int": int,
+                        "str": str,
+                        "bool": bool,
+                        "list": list,
+                        "dict": dict,
                     }
                     try:
                         # 执行自定义解析代码
-                        is_valid = eval(server.registration_external_parser, {"__builtins__": {}}, local_env)
+                        expr = env.compile_expression(server.registration_external_parser)
+                        is_valid = expr(**context)
                         if is_valid:
                             return Result(True, "验证通过")
                         else:
