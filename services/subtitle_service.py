@@ -18,6 +18,10 @@ from services.user_service import Result
 
 settings = get_settings()
 
+ALLOWED_EXTENSIONS = {'.srt', '.ass', '.ssa', '.vtt', '.sub', '.idx', '.sup'}
+MAX_SINGLE_FILE_SIZE = 20 * 1024 * 1024
+MAX_TOTAL_EXTRACT_SIZE = 50 * 1024 * 1024
+
 class SubtitleService:
     def __init__(self, app: FastAPI, session: AsyncSession):
         self.config_repo = ConfigRepository(session)
@@ -58,7 +62,6 @@ class SubtitleService:
 
     async def _handle_series(self, user_id: int, tvdb_id: int, zip_path: str) -> Result:
         """处理剧集字幕 (Sonarr)"""
-        # 1. 在所有 Sonarr 实例中查找
         target_client = None
         series = None
 
@@ -75,20 +78,17 @@ class SubtitleService:
         if not target_client or not series or not series.id:
             return Result(False, f"未在任何已启用的 Sonarr 实例中找到 TVDB ID 为 {tvdb_id} 的剧集。")
 
-        # 2. 获取剧集文件信息以便匹配
         episodes = await target_client.get_episode_by_series_id(series.id)
         if not episodes:
             return Result(False, "未找到该剧集的集数信息。")
 
-        # 3. 建立映射: S{season}E{episode} -> EpisodeFile Path
+        # 建立映射: S{season}E{episode} -> EpisodeFile Path
         episode_map = {}
         for ep in episodes:
             if ep.hasFile and ep.episodeFile and ep.episodeFile.path:
-                # 兼容 S01E01 和 S1E1 格式
                 key = f"S{ep.seasonNumber}E{ep.episodeNumber}"
                 episode_map[key] = ep.episodeFile.path
 
-        # 4. 解压并处理
         return await self._extract_and_process(
             zip_path,
             series.title,
@@ -125,12 +125,13 @@ class SubtitleService:
             # 兜底：如果没提取到后缀，直接取原文件后缀
             suffixes = "".join(pathlib.Path(sub_filename).suffixes)
 
+        if not self._is_allowed_extension(suffixes):
+            return f"跳过 {sub_filename}: 不支持的字幕格式"
+
         new_sub_name = f"{media_basename}{suffixes}"
         new_sub_path = os.path.join(media_dir, new_sub_name)
 
-        shutil.move(sub_file_path, new_sub_path)
-        os.chmod(new_sub_path, 0o644)
-        return None
+        return self._safe_move(sub_file_path, new_sub_path)
 
     async def _handle_movie(self, user_id: int, tmdb_id: int, zip_path: str) -> Result:
         """处理电影字幕 (Radarr)"""
@@ -173,12 +174,32 @@ class SubtitleService:
         if not suffixes:
             suffixes = ".srt"
 
+        if not self._is_allowed_extension(suffixes):
+            return f"跳过 {sub_filename}: 不支持的字幕格式"
+
         new_sub_name = f"{media_basename}{suffixes}"
         new_sub_path = os.path.join(media_dir, new_sub_name)
 
-        shutil.move(sub_file_path, new_sub_path)
-        os.chmod(new_sub_path, 0o644)
-        return None
+        return self._safe_move(sub_file_path, new_sub_path)
+
+    def _is_allowed_extension(self, suffix_str: str) -> bool:
+        """检查后缀是否在白名单中 (检查最后一个点后的部分)"""
+        if not suffix_str:
+            return False
+        ext = pathlib.Path(suffix_str).suffix.lower()
+        return ext in ALLOWED_EXTENSIONS
+
+    def _safe_move(self, src: str, dst: str) -> str | None:
+        """安全移动文件：检查存在性、防止覆盖、设置权限"""
+        if os.path.exists(dst):
+            return f"跳过: 目标位置已存在文件 {os.path.basename(dst)}"
+
+        try:
+            shutil.move(src, dst)
+            os.chmod(dst, 0o644)
+            return None
+        except OSError as e:
+            return f"文件移动失败: {e}"
 
     async def _extract_and_process(
         self,
@@ -189,6 +210,19 @@ class SubtitleService:
         async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
             try:
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    total_size = 0
+                    for zinfo in zip_ref.infolist():
+                        if zinfo.filename.startswith('/') or '..' in zinfo.filename:
+                            return Result(False, f"发现不安全的文件路径: {zinfo.filename}")
+
+                        if zinfo.file_size > MAX_SINGLE_FILE_SIZE:
+                            return Result(False, f"文件 {zinfo.filename} 过大 (超过 {MAX_SINGLE_FILE_SIZE//1024//1024}MB)")
+
+                        total_size += zinfo.file_size
+
+                    if total_size > MAX_TOTAL_EXTRACT_SIZE:
+                        return Result(False, f"压缩包解压后总大小过大 (超过 {MAX_TOTAL_EXTRACT_SIZE//1024//1024}MB)")
+
                     zip_ref.extractall(temp_dir)
             except zipfile.BadZipFile:
                 return Result(False, "无效的 Zip 文件。")
