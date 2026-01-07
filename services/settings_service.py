@@ -195,7 +195,7 @@ class SettingsServices:
 
             🔗 **Webhook URL**:
 
-            `/webhook/{server.server_type}?server_id={server.webhook_token}`
+            `/webhook/{server.server_type}?token={server.webhook_token}`
 
             🔔 **常规通知**: `{notify_name}`
         """)
