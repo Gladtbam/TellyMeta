@@ -75,8 +75,21 @@ async def signup_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     """注册处理器
     处理用户注册请求，仅在开放注册时允许
     """
+    user_id = event.sender_id
+    client = app.state.telethon_client.client
+
     if not event.is_private:
         await safe_reply(event, "请私聊我以注册账户。")
+        return
+
+    try:
+        await client.get_participant(settings.telegram_chat_id, user_id)
+    except errors.UserNotParticipantError:
+        await safe_respond(event, "⚠️ **未加入群组**\n\n抱歉，您必须先加入我们的群组才能注册账户。")
+        return
+    except Exception as e:
+        logger.error(f"验证用户 {user_id} 群组身份失败: {e}")
+        await safe_respond(event, "❌ **系统错误**\n\n验证群组身份时发生错误，请联系管理员。")
         return
 
     account_service = AccountService(app, session)
