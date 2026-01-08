@@ -235,7 +235,7 @@ class AccountService:
                 请尽快登录并修改密码，祝您观影愉快！
             """))
         except HTTPError:
-            logger.error("{} 注册失败", user_id)
+            logger.error("{}: {} 注册失败", username, user_id)
             return Result(False, "注册失败，请联系管理员")
 
     async def _apply_nsfw_policy(
