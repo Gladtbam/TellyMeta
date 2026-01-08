@@ -216,6 +216,26 @@ class TelethonClientWarper:
             mapping[self.chat_id] = "💬 当前群组"
         return mapping
 
+    async def get_participant(self, user_id: int) -> User | None:
+        """获取指定用户在频道/群组中的参与者信息
+        Args:
+            user_id (int): 用户ID
+        Returns:
+            User | None: 返回参与者信息，如果不存在则返回None
+        """
+        if not self.client.is_connected():
+            await self.connect()
+        try:
+            participant = await self.client(
+                    functions.channels.GetParticipantRequest(
+                    channel=self.chat_id, # type: ignore
+                    participant=await self.client.get_input_entity(user_id)
+                ))
+            return participant
+        except UserNotParticipantError:
+            logger.warning("用户 {} 不是频道/群组 {} 的成员。", user_id, self.chat_id)
+            return None
+
     async def send_message(self,
         chat_id: str | int,
         message: str,
