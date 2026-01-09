@@ -241,7 +241,7 @@ class DownloadInfo(BaseModel):
     quality: str
     qualityVersion: int
     title: str | None = None
-    indexer: str
+    indexer: str | None = None
     size: int
 
 class SonarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
@@ -270,7 +270,7 @@ class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
     downloadClientType: str | None = None
     downloadId: str | None = None
     customFormatInfo: customFormatInfoDto | None = None
-    deletedFiles: FileInfoDto | None = None
+    deletedFiles: list[FileInfoDto] = Field(default_factory=list)
 
     sourcePath: str | None = None
     destinationPath: str | None = None
