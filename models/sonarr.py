@@ -212,7 +212,7 @@ class FileInfoDto(BaseModel):
     quality: str
     qualityVersion: int
     releaseGroup: str
-    sceneName: str
+    sceneName: str | None = None
     size: int
     dateAdded: datetime
     languages: list[Languages] = Field(default_factory=list)
