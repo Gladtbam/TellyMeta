@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<episodedetails>
+    {% if title %}
+    <title>{{ title }}</title>
+    {% endif %}
+
+    {% if original_title %}
+    <originaltitle>{{ original_title }}</originaltitle>
+    {% endif %}
+
+    <season>{{ season_number }}</season>
+    <episode>{{ episode_number }}</episode>
+
+    {% if plot %}
+    <plot>{{ plot }}</plot>
+    {% endif %}
+
+    {% if aired_date %}
+    <aired>{{ aired_date }}</aired>
+    {% endif %}
+
+    {% if tvdb_id %}
+    <uniqueid type="tvdb">{{ tvdb_id }}</uniqueid>
+    {% endif %}
+
+    {% if tmdb_id %}
+    <uniqueid type="tmdb">{{ tmdb_id }}</uniqueid>
+    {% endif %}
+</episodedetails>

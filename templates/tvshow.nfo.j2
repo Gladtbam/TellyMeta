@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<tvshow>
+    <title>{{ title }}</title>
+    <originaltitle>{{ original_title }}</originaltitle>
+    <sorttitle>{{ sort_title }}</sorttitle>
+    <rating>{{ rating }}</rating>
+    <plot>{{ plot }}</plot>
+    <mpaa>{{ mpaa }}</mpaa>
+    <premiered>{{ premiered }}</premiered>
+    <studio>{{ studio }}</studio>
+    {% for genre in genres %}
+    <genre>{{ genre }}</genre>
+    {% endfor %}
+    {% if tmdbid %}
+    <uniqueid type="tmdb" default="true">{{ tmdbid }}</uniqueid>
+    {% endif %}
+    {% if tvdbid %}
+    <uniqueid type="tvdb">{{ tvdbid }}</uniqueid>
+    {% endif %}
+    {% if imdbid %}
+    <uniqueid type="imdb">{{ imdbid }}</uniqueid>
+    {% endif %}
+</tvshow>
