@@ -1,14 +1,12 @@
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from jinja2 import (Environment, FileSystemLoader, TemplateNotFound,
-                    select_autoescape)
 from loguru import logger
 from telethon.errors import RPCError
 
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from core.template_manager import template_manager
 from models.events import NotificationEvent
 
 settings = get_settings()
@@ -19,35 +17,12 @@ class NotificationService:
         self.app = app
         self.client: TelethonClientWarper = app.state.telethon_client
 
-        self.template_dir = Path.cwd() / "templates"
-        if not self.template_dir.exists():
-            self.template_dir = Path(__file__).parent.parent / "templates"
-        if not self.template_dir.exists():
-            logger.warning("未在以下位置找到通知模板目录：{}", self.template_dir)
-
-        self.jinja_env = Environment(
-            loader=FileSystemLoader(self.template_dir),
-            autoescape=select_autoescape(['html', 'xml']),
-            enable_async=True,  # 启用异步渲染
-            trim_blocks=True,   # 自动去除块后的换行
-            lstrip_blocks=True, # 自动去除块前的空白
-        )
-
     async def _render(self, event_type: NotificationEvent, context: dict[str, Any]) -> str | None:
         """内部方法：根据事件类型渲染对应的 .j2 模板"""
         # 映射规则: NotificationEvent.SONARR_DOWNLOAD -> "sonarr_download.j2"
         template_name = f"{event_type.value}.j2"
 
-        try:
-            template = self.jinja_env.get_template(template_name)
-
-            return await template.render_async(context)
-        except TemplateNotFound:
-            logger.info("缺少通知模板文件：{}", template_name)
-            return None
-        except Exception as e:
-            logger.error("渲染模板 {} 时出错：{}", template_name, e)
-            return None
+        return await template_manager.render(template_name, context)
 
     async def send_to_topic(
         self,
