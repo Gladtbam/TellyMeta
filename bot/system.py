@@ -102,8 +102,8 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
         return
 
     if event.user_joined or event.user_added:
-        if event.user_added and event.added_by in app.state.admin_ids:
-            logger.info("用户 {} 由管理员 {} 邀请，已跳过验证流程。", user_id, event.added_by)
+        if event.user_added and event.added_by and event.added_by.id in app.state.admin_ids:
+            logger.info("用户 {} 由管理员 {} 邀请，已跳过验证流程。", user_id, event.added_by.id)
             return
         logger.info("用户 {} 加入", user_id)
         verification_service = VerificationService(app, session)
