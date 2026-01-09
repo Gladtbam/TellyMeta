@@ -7,9 +7,11 @@ from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+
+LOGS_DIR = Path(__file__).parent.parent / 'logs'
+
 def setup_logging():
     settings = get_settings()
-    LOGS_DIR = Path(__file__).parent.parent / 'logs'
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
@@ -47,12 +49,15 @@ def setup_logging():
                 depth += 1
             logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-    logging.getLogger("uvicorn.access").handlers = [InterceptHandler()]
-    logging.getLogger("uvicorn").handlers = [InterceptHandler()]
-    logging.getLogger("fastapi").handlers = [InterceptHandler()]
-    logging.getLogger("httpx").handlers = [InterceptHandler()]
-    logging.getLogger("httpx").propagate = False
+    loggers_to_silence = ["uvicorn", "uvicorn.access", "uvicorn.error", "fastapi", "httpx"]
+    for log_name in loggers_to_silence:
+        _logger = logging.getLogger(log_name)
+        _logger.handlers = [InterceptHandler()]
+        _logger.propagate = False
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
