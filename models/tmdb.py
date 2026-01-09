@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from core.config import genre_mapping
 
 
-class TmdbTv(BaseModel):
+class TmdbTvSeries(BaseModel):
     id: int
     name: str
     original_name: str
@@ -32,25 +32,53 @@ class TmdbTv(BaseModel):
         else:
             raise ValueError("类型格式、预期列表或字符串无效")
 
-class TmdbEpisode(BaseModel):
+class TmdbEpisodeSearch(BaseModel):
     id: int
     name: str
     overview: str
     air_date: str | None = None
-    season_number: int
+
+class TmdbEpisode(BaseModel):
+    id: int
+    name: str
+    overview: str
+    air_date: str
     episode_number: int
+    episode_type: str
+    runtime: int = 0
+    season_number: int
+    show_id: int = 0
+    vote_average: float = 0
+    vote_count: int = 0
+
+class TmdbSeason(BaseModel):
+    _id: str
+    air_date: str
+    name: str
+    overview: str
+    id: int
+    season_number: int
+    vote_average: float = 0
+    episodes: list[TmdbEpisode] = Field(default_factory=list)
+
+    @field_validator('episodes', mode='before')
+    @classmethod
+    def validate_episodes(cls, value):
+        if isinstance(value, list):
+            return [TmdbEpisode.model_validate(episode) for episode in value]
+        return []
 
 class TmdbFindPayload(BaseModel):
-    tv_results: list[TmdbTv] = Field(default_factory=list)
-    tv_episode_results: list[TmdbEpisode] = Field(default_factory=list)
-    
+    tv_results: list[TmdbTvSeries] = Field(default_factory=list)
+    tv_episode_results: list[TmdbEpisodeSearch] = Field(default_factory=list)
+
     @field_validator('tv_results', mode='before')
     @classmethod
     def validate_tv_results(cls, value):
         if isinstance(value, list):
-            return [TmdbTv.model_validate(tv) for tv in value]
+            return [TmdbTvSeries.model_validate(tv) for tv in value]
         elif isinstance(value, dict):
-            return [TmdbTv.model_validate(value)]
+            return [TmdbTvSeries.model_validate(value)]
         else:
             raise ValueError("Invalid tv_results format, expected list or dict")
     @field_validator('tv_episode_results', mode='before')

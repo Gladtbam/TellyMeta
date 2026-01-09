@@ -95,7 +95,7 @@ class RequestService:
 
         if not overview and tmdb_id and self.tmdb_client:
             try:
-                tmdb_info = await self.tmdb_client.get_tv_details(tmdb_id)
+                tmdb_info = await self.tmdb_client.get_tv_series_details(tmdb_id)
                 if tmdb_info and tmdb_info.overview:
                     overview = tmdb_info.overview
             except Exception as e:

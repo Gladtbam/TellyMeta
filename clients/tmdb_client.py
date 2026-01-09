@@ -4,7 +4,7 @@ import httpx
 from loguru import logger
 
 from clients.base_client import AuthenticatedClient, RateLimiter
-from models.tmdb import TmdbFindPayload, TmdbMovie, TmdbTv
+from models.tmdb import TmdbFindPayload, TmdbMovie, TmdbSeason, TmdbTvSeries
 
 
 class TmdbClient(AuthenticatedClient):
@@ -67,16 +67,28 @@ class TmdbClient(AuthenticatedClient):
 
         return await self.get(url, params=params, response_model=TmdbFindPayload)
 
-    async def get_tv_details(self, tmdb_id: int) -> TmdbTv | None:
+    async def get_tv_series_details(self, tmdb_id: int) -> TmdbTvSeries | None:
         """根据 TMDB ID 获取 TMDB 电视剧详情。
         Args:
             tmdb_id (int): TMDB 电视剧 ID。
         Returns:
-            TmdbTv | None: TmdbTv 对象，如果查询失败则返回 None。
+            TmdbTvSeries | None: TmdbTvSeries 对象，如果查询失败则返回 None。
         """
         url = f"/tv/{tmdb_id}"
         params = {"language": "zh-CN"}
-        return await self.get(url, params=params, response_model=TmdbTv)
+        return await self.get(url, params=params, response_model=TmdbTvSeries)
+
+    async def get_tv_seasons_details(self, tmdb_id: int, season_number: int) -> TmdbSeason | None:
+        """根据 TMDB ID 和季节号获取 TMDB 电视剧季节详情。
+        Args:
+            tmdb_id (int): TMDB 电视剧 ID。
+            season_number (int): 季节号。
+        Returns:
+            TmdbSeason | None: 电视剧季节详情的字典，如果查询失败则返回 None。
+        """
+        url = f"/tv/{tmdb_id}/season/{season_number}"
+        params = {"language": "zh-CN"}
+        return await self.get(url, params=params, response_model=TmdbSeason)
 
     async def get_movie_details(self, tmdb_id: int) -> TmdbMovie | None:
         """根据 TMDB ID 获取 TMDB 电影详情。
