@@ -40,6 +40,10 @@ class TvdbClient(AuthenticatedClient):
         try:
             return await super()._request(*args, **kwargs)
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.debug(f"TVDB 资源未找到 (404): {e.request.url}")
+                return None
+
             if e.response.status_code == 429:
                 logger.warning(f"TVDB 速率限制触发 (429)。URL: {e.request.url}")
                 retry_after = e.response.headers.get("Retry-After")
