@@ -316,7 +316,10 @@ class SettingsServices:
 
         if server.server_type == ServerType.EMBY:
             client = EmbyClient(
-                httpx.AsyncClient(base_url=f"{server.url}/emby"),
+                httpx.AsyncClient(
+                    base_url=f"{server.url}/emby",
+                    timeout=httpx.Timeout(10.0, read=30.0)
+                    ),
                 server.api_key,
                 server.name,
                 server.notify_topic_id
@@ -324,7 +327,10 @@ class SettingsServices:
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.JELLYFIN:
             client = JellyfinClient(
-                httpx.AsyncClient(base_url=server.url),
+                httpx.AsyncClient(
+                    base_url=server.url,
+                    timeout=httpx.Timeout(10.0, read=30.0)
+                    ),
                 server.api_key,
                 server.name,
                 server.notify_topic_id

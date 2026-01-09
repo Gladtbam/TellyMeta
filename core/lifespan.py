@@ -126,14 +126,20 @@ async def lifespan(app: FastAPI):
                         )
                     case ServerType.JELLYFIN:
                         app.state.media_clients[server.id] = JellyfinClient(
-                            client=httpx.AsyncClient(base_url=f'{server.url}'),
+                            client=httpx.AsyncClient(
+                                base_url=f'{server.url}',
+                                timeout=httpx.Timeout(10.0, read=30.0)
+                                ),
                             api_key=server.api_key,
                             server_name = server.name,
                             notify_topic_id=server.notify_topic_id
                         )
                     case ServerType.EMBY:
                         app.state.media_clients[server.id] = EmbyClient(
-                            client=httpx.AsyncClient(base_url=f'{server.url}/emby'),
+                            client=httpx.AsyncClient(
+                                base_url=f'{server.url}/emby',
+                                timeout=httpx.Timeout(10.0, read=30.0)
+                                ),
                             api_key=server.api_key,
                             server_name = server.name,
                             notify_topic_id=server.notify_topic_id
