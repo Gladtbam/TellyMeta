@@ -1,6 +1,5 @@
 import textwrap
 from dataclasses import dataclass, field
-from typing import Literal
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
@@ -62,39 +61,31 @@ class ScoreService:
             else:
                 return Result(success=False, message=f"用户 {user_id} 刷屏警告失败，请管理员关注。")
 
-    def _calculate_distribution(self) -> tuple[dict[int, float], int | Literal[0]]:
-        """积分计算逻辑"""
-        total_score = sum(self.state.message_counts.values())
-        if total_score == 0:
-            return {}, 0
+    def _calculate_distribution(self) -> tuple[dict[int, int], int]:
+        """积分计算逻辑: 简单线性模型
+        每条消息 = 1 积分
+        单次结算每人上限 = 20 积分
+        """
+        user_deltas = {}
+        total_deltas = 0
 
-        user_ratio = {}
-        for user_id, score in self.state.message_counts.items():
-            temp_score = score
-            for _ in range(2):
-                n = temp_score // 100
-                if n == 0:
-                    break
-                result_score = (temp_score -n * 100) / (n + 1)
-                sigma_sum = sum(100 / i for i in range(1, n + 1))
-                temp_score = int(result_score + sigma_sum)
-            ratio = temp_score / total_score if total_score else 0.0
-            user_ratio[user_id] = ratio
-        return user_ratio, total_score
+        for user_id, count in self.state.message_counts.items():
+            # 简单限流: 超过20条也只算20分
+            score = min(count, 20)
+            if score > 0:
+                user_deltas[user_id] = score
+                total_deltas += score
+
+        return user_deltas, total_deltas
 
     async def settle_and_clear_scores(self):
         """结算积分并清理状态"""
         if not self.state.message_counts:
             return
 
-        user_ratio, total_score = self._calculate_distribution()
-        if not user_ratio:
+        score_deltas, total_score = self._calculate_distribution()
+        if not score_deltas:
             return
-        score_deltas = {}
-        for user_id, ratio in user_ratio.items():
-            score = int(ratio * total_score * 0.5)
-            score = max(score, 1)  # 最低奖励1分
-            score_deltas[user_id] = score
 
         await self.telegram_repo.batch_update_scores(score_deltas)
 
