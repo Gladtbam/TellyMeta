@@ -1,7 +1,8 @@
 from collections.abc import Sequence
 from datetime import datetime
+from statistics import median
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import TelegramUser
@@ -129,6 +130,12 @@ class TelegramRepository:
         await self.session.refresh(user)
         return user
 
+    async def get_top_users(self, limit: int = 10) -> Sequence[TelegramUser]:
+        """获取积分排行榜"""
+        stmt = select(TelegramUser).order_by(TelegramUser.score.desc()).limit(limit)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def batch_update_scores(self, score_deltas: dict[int, int]):
         """批量更新用户积分
         Args:
@@ -159,16 +166,25 @@ class TelegramRepository:
         await self.session.commit()
 
     async def get_renew_score(self) -> int:
-        """获取续费所需积分
+        """获取续费所需积分 (动态中位数模式)
+        逻辑：
+        1. 获取所有积分 > 10 的有效用户积分
+        2. 计算中位数 (Median)
+        3. 限制范围在 [100, 1000] 之间，防止过高或过低
+
         Returns:
-            int: 续费所需积分，如果未设置则返回None
-         """
-        stmt = select(func.avg(TelegramUser.score)).where(TelegramUser.score > 10)
+            int: 动态计算的积分门槛
+        """
+        stmt = select(TelegramUser.score).where(TelegramUser.score > 10)
         result = await self.session.execute(stmt)
-        score = result.scalar()
-        if score is None or score < 100:
-            score = 100
-        return score
+        scores = result.scalars().all()
+
+        if not scores:
+            return 100
+
+        final_score = int(median(scores))
+
+        return max(100, min(final_score, 1000))
 
     # async def update_user_score(self, user_id: int, score: int):
     #     await self.session.execute(
