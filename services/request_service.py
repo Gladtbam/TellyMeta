@@ -20,6 +20,7 @@ from models.tvdb import TvdbData
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
+from repositories.telegram_repo import TelegramRepository
 from services.notification_service import NotificationService
 from services.user_service import Result
 
@@ -30,6 +31,7 @@ class RequestService:
         self.config_repo = ConfigRepository(session)
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
+        self.telegram_repo = TelegramRepository(session)
         self.notification_service = NotificationService(app)
         self._sonarr_clients: dict[int, SonarrClient] = app.state.sonarr_clients
         self._radarr_clients: dict[int, RadarrClient] = app.state.radarr_clients
@@ -124,7 +126,11 @@ class RequestService:
 
         return title, overview
 
-    async def start_request_flow(self, user_id: int) -> Result:
+    async def start_request_flow(self, user_id: int, request_cost: int) -> Result:
+        user = await self.telegram_repo.get_or_create(user_id)
+        if user.score < request_cost:
+            return Result(False, f"您的积分不足，求片需要消耗 **{request_cost}** 积分，您当前仅有 **{user.score}** 积分。")
+
         bindings = await self.config_repo.get_all_library_bindings()
         valid_bindings = []
 
@@ -144,7 +150,17 @@ class RequestService:
                 Button.inline(f"🔍 {name}", data=f"req_lib_{name_b64}_{user_id}".encode('utf-8'))
             ])
 
-        return Result(True, "请选择要求片的分类：", keyboard=keyboard)
+        msg = textwrap.dedent(f"""\
+            📚 求片流程：
+            1. 选择媒体库
+            2. 搜索媒体
+            3. 选择媒体
+            4. 确认提交请求
+            
+            您当前积分：**{user.score}**
+            求片消耗积分：**{request_cost}**
+        """)
+        return Result(True, msg, keyboard=keyboard)
 
     async def search_media(self, library_name: str, query: str) -> Result:
         if not query:
@@ -240,7 +256,7 @@ class RequestService:
 
         return Result(True, msg, keyboard=keyboard, extra_data=poster)
 
-    async def submit_final_request(self, user_id: int, library_name: str, media_id: int) -> Result:
+    async def submit_final_request(self, user_id: int, library_name: str, media_id: int, request_cost: int) -> Result:
         client, server_id = await self._get_client_by_library(library_name)
         if not client or not server_id:
             return Result(False, "服务不可用")
@@ -290,7 +306,10 @@ class RequestService:
             prefix=prefix.upper()
         )
 
-        return Result(True, "✅ 请求已成功提交！请耐心等待管理员审核。")
+        # 扣除积分
+        await self.telegram_repo.update_score(user_id, -request_cost)
+
+        return Result(True, f"✅ 请求已成功提交！(已扣除 **{request_cost}** 积分)\n请耐心等待管理员审核。")
 
     async def handle_approval(self, library_name: str, media_id: int, approver_name: str = "管理员") -> Result:
         client, _ = await self._get_client_by_library(library_name)

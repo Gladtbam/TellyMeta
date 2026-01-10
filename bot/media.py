@@ -12,6 +12,7 @@ from bot.decorators import provide_db_session, require_admin
 from bot.utils import get_user_input_or_cancel, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from repositories.telegram_repo import TelegramRepository
 from services.request_service import RequestService
 from services.subtitle_service import SubtitleService
 
@@ -59,16 +60,22 @@ async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) 
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_request_(\\d+)'))
 @provide_db_session
-async def start_request_conversation_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+async def start_request_conversation_handler(
+    app: FastAPI,
+    event: events.CallbackQuery.Event,
+    session: AsyncSession
+) -> None:
     """开始求片处理器 (Conversation Mode)"""
     user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
     chat_id = event.chat_id
     request_service = RequestService(app, session)
+    telegram_repo = TelegramRepository(session)
     client = app.state.telethon_client.client
 
+    request_cost = int(await telegram_repo.get_renew_score() * 0.1)
     # 检查权限
     # start_request_flow 将检查权限并返回库按钮
-    result = await request_service.start_request_flow(user_id)
+    result = await request_service.start_request_flow(user_id, request_cost)
 
     if not result.success:
         await event.answer(result.message, alert=True)
@@ -174,7 +181,7 @@ async def start_request_conversation_handler(app: FastAPI, event: events.Callbac
 
             if confirm_data.startswith('req_submit_'):
                 await confirm_event.answer("正在提交...", alert=False)
-                final_result = await request_service.submit_final_request(user_id, library_name, media_id)
+                final_result = await request_service.submit_final_request(user_id, library_name, media_id, request_cost)
 
                 if final_result.success:
                     await confirm_event.edit(final_result.message, buttons=None, file=None)
