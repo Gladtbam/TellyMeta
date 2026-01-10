@@ -46,15 +46,15 @@ class TmdbEpisode(BaseModel):
     id: int
     name: str
     overview: str
-    media_type: str
+    media_type: str | None = None
     air_date: str | None = None
     episode_number: int
     episode_type: str
-    runtime: int = 0
+    runtime: int | None = None
     season_number: int
-    show_id: int = 0
-    vote_average: float = 0
-    vote_count: int = 0
+    show_id: int | None = None
+    vote_average: float | None = None
+    vote_count: int | None = None
 
 class TmdbSeason(BaseModel):
     _id: str
@@ -63,7 +63,7 @@ class TmdbSeason(BaseModel):
     overview: str
     id: int
     season_number: int
-    vote_average: float = 0
+    vote_average: float | None = None
     episodes: list[TmdbEpisode] = Field(default_factory=list)
 
     @field_validator('episodes', mode='before')
@@ -103,11 +103,11 @@ class TmdbMovie(BaseModel):
     original_language: str
     original_title: str
     overview: str
-    popularity: float = 0
+    popularity: float | None = None
     poster_path: str
     release_date: str
-    runtime: int = 0
+    runtime: int | None = None
     status: str
     title: str
-    vote_average: float = 0
-    vote_count: int = 0
+    vote_average: float | None = None
+    vote_count: int | None = None
