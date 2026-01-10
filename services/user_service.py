@@ -1,6 +1,6 @@
 import textwrap
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from random import choice, choices, randint
 from typing import Any, Literal
 
@@ -41,14 +41,25 @@ class UserService:
         """用户签到"""
         user = await self.telegram_repo.get_or_create(user_id)
 
-        if user.last_checkin.date() == date.today():
+        today = date.today()
+        last_date = user.last_checkin.date()
+
+        if last_date == today:
             return Result(success=False, message="您今天已经签到过了，请明天再来！")
 
+        is_consecutive = last_date == (today - timedelta(days=1))
+        bonus = 2 if is_consecutive else 0
+
         if (user.checkin_count + 1) % 7 != 0:
-            score = randint(1, 5)
-            update_user = await self.telegram_repo.update_checkin(user_id, score)
+            base_score = randint(1, 3)
+            final_score = base_score + bonus
+
+            update_user = await self.telegram_repo.update_checkin(user_id, final_score)
             if update_user:
-                return Result(success=True, message=f"✅ 签到成功！您获得了 **{score}** 积分。")
+                msg = f"✅ 签到成功！您获得了 **{final_score}** 积分。"
+                if is_consecutive:
+                    msg += f"\n(基础 {base_score} + 连签 {bonus})"
+                return Result(success=True, message=msg)
             else:
                 return Result(success=False, message="签到失败，请稍后再试。")
         else:
@@ -121,13 +132,28 @@ class UserService:
                 message=f"🎉 **恭喜中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！"
             )
 
-        if result == 'double':
-            score = abs(randint(2, 5)) * 2
-            await self.telegram_repo.update_checkin(user.id, score)
-            return Result(success=True, message=f"🎉 **恭喜！** 签到积分翻倍，您获得了 **{score}** 积分。")
+        # 检查连签 (lucky 同样享受连签加成，但如果是 flip/code 类奖励则不加积分)
+        today = date.today()
+        last_date = user.last_checkin.date()
+        is_consecutive = last_date == (today - timedelta(days=1))
+        bonus = 2 if is_consecutive else 0
 
-        await self.telegram_repo.update_checkin(user.id, 1)
-        return Result(success=True, message="签到成功！您获得了保底 **1** 积分。")
+        if result == 'double':
+            base = abs(randint(2, 4)) * 2
+            total = base + bonus
+            await self.telegram_repo.update_checkin(user.id, total)
+            msg = f"🎉 **恭喜！** 签到积分翻倍，您获得了 **{total}** 积分。"
+            if is_consecutive:
+                msg += f"\n(基础 {base} + 连签 {bonus})"
+            return Result(success=True, message=msg)
+
+        # 保底逻辑
+        total = 1 + bonus
+        await self.telegram_repo.update_checkin(user.id, total)
+        msg = f"签到成功！您获得了保底 **{total}** 积分。"
+        if is_consecutive:
+            msg += f"\n(基础 1 + 连签 {bonus})"
+        return Result(success=True, message=msg)
 
     async def get_user_info(self, user_id: int) -> Result:
         """获取用户信息"""
@@ -171,6 +197,14 @@ class UserService:
         ]
 
         return Result(success=True, message=message, keyboard=keyboard if user.media_users else None)
+
+    async def get_rank_list(self) -> Result:
+        """获取排行榜"""
+        users = await self.telegram_repo.get_top_users(10)
+        if not users:
+            return Result(True, "暂无排名数据。")
+
+        return Result(True, "排行榜获取成功", extra_data=users)
 
     async def delete_account(self, user_id: int, account_type: Literal['media', 'tg', 'both']) -> Result:
         """删除账户"""
