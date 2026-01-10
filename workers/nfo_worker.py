@@ -1,6 +1,4 @@
 from pathlib import Path
-from xml.dom import minidom
-from xml.etree.ElementTree import Element, SubElement, tostring
 
 import aiofiles
 from loguru import logger
@@ -10,8 +8,7 @@ from clients.tvdb_client import TvdbClient
 from core.template_manager import template_manager
 from models.sonarr import (SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
-from models.tmdb import (TmdbEpisodeSearch, TmdbFindPayload, TmdbSeason,
-                         TmdbTvSeries, TmdbEpisode)
+from models.tmdb import TmdbEpisode, TmdbTvSeries
 from models.tvdb import TvdbData, TvdbEpisodesData, TvdbPayload
 
 
@@ -92,7 +89,7 @@ async def create_episode_nfo(
                 pass
 
     # TMDB
-    tmdb_ep: TmdbEpisode | TmdbEpisodeSearch | None = None
+    tmdb_ep: TmdbEpisode | None = None
 
     tmdb_find = await tmdb.find_info_by_external_id('tvdb_id', str(tvdb_id))
     if tmdb_find and tmdb_find.tv_episode_results:

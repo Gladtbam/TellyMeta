@@ -26,23 +26,28 @@ class TmdbTvSeries(BaseModel):
     @classmethod
     def validate_genres(cls, value):
         if isinstance(value, list):
-            return [genre_mapping.get(genre.get('id') or genre.get('name') if isinstance(genre, dict) else genre) for genre in value]
+            results = []
+            for genre in value:
+                key = None
+                if isinstance(genre, dict):
+                    key = genre.get('id') or genre.get('name')
+                else:
+                    key = genre
+
+                if key is not None:
+                    results.append(genre_mapping.get(key, key))
+            return results
         elif isinstance(value, str):
             return [genre_mapping.get(value, value)]
         else:
             raise ValueError("类型格式、预期列表或字符串无效")
 
-class TmdbEpisodeSearch(BaseModel):
-    id: int
-    name: str
-    overview: str
-    air_date: str | None = None
-
 class TmdbEpisode(BaseModel):
     id: int
     name: str
     overview: str
-    air_date: str
+    media_type: str
+    air_date: str | None = None
     episode_number: int
     episode_type: str
     runtime: int = 0
@@ -70,7 +75,7 @@ class TmdbSeason(BaseModel):
 
 class TmdbFindPayload(BaseModel):
     tv_results: list[TmdbTvSeries] = Field(default_factory=list)
-    tv_episode_results: list[TmdbEpisodeSearch] = Field(default_factory=list)
+    tv_episode_results: list[TmdbEpisode] = Field(default_factory=list)
 
     @field_validator('tv_results', mode='before')
     @classmethod
@@ -80,7 +85,7 @@ class TmdbFindPayload(BaseModel):
         elif isinstance(value, dict):
             return [TmdbTvSeries.model_validate(value)]
         else:
-            raise ValueError("Invalid tv_results format, expected list or dict")
+            raise ValueError("tv_results 格式无效，需要列表或字典")
     @field_validator('tv_episode_results', mode='before')
     @classmethod
     def validate_tv_episode_results(cls, value):
@@ -89,7 +94,7 @@ class TmdbFindPayload(BaseModel):
         elif isinstance(value, dict):
             return [TmdbEpisode.model_validate(value)]
         else:
-            raise ValueError("Invalid tv_episode_results format, expected list or dict")
+            raise ValueError("tv_episode_results 格式、预期列表或字典无效")
 
 class TmdbMovie(BaseModel):
     id: int
