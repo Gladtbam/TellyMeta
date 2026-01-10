@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
     app.state.scheduler.add_job(
         settle_scores,
         'cron',
-        hour='8, 20',
+        hour=23, minute=0,
         id='settle_scores',
         replace_existing=True
     )
