@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
 
 from bot.decorators import provide_db_session, require_admin
-from bot.utils import get_user_input_or_cancel, safe_respond
+from bot.utils import get_user_input_or_cancel, safe_delete, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
@@ -22,7 +22,7 @@ settings = get_settings()
 @TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
 async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
     """求片-取消处理器"""
-    await event.delete()
+    await safe_delete(event)
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_ap_([^_]+)_(\\d+)'))
 @provide_db_session
@@ -94,7 +94,7 @@ async def start_request_conversation_handler(
             data = press_event.data.decode('utf-8')
             if data == 'req_cancel':
                 await press_event.answer("已取消")
-                await press_event.delete()
+                await safe_delete(press_event)
                 return
 
             # 解析库选择
@@ -126,10 +126,7 @@ async def start_request_conversation_handler(
 
             query = await get_user_input_or_cancel(conv, query_prompt.id)
             if not query:
-                try:
-                    await query_prompt.delete()
-                except: 
-                    pass
+                await safe_delete(query_prompt)
                 return
 
             searching_msg = await conv.send_message(f"🔍 正在搜索: **{query}**...")
@@ -148,7 +145,7 @@ async def start_request_conversation_handler(
             sel_data = sel_event.data.decode('utf-8')
             if sel_data == 'req_cancel':
                 await sel_event.answer("已取消")
-                await sel_event.delete()
+                await safe_delete(sel_event)
                 return
 
             # 解析选择: req_sel_{lib_b64}_{media_id}
@@ -176,7 +173,7 @@ async def start_request_conversation_handler(
             confirm_data = confirm_event.data.decode('utf-8')
             if confirm_data == 'req_cancel':
                 await confirm_event.answer("已取消")
-                await confirm_event.delete()
+                await safe_delete(confirm_event)
                 return
 
             if confirm_data.startswith('req_submit_'):

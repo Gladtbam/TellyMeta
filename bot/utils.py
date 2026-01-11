@@ -45,6 +45,19 @@ async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 6
     except errors.FloodWaitError as e:
         logger.error("发送消息失败: {}", e)
 
+async def safe_delete(message) -> None:
+    """安全删除消息，忽略由于消息不存在或无权限导致的错误"""
+    if not message:
+        return
+    try:
+        await message.delete()
+    except (errors.MessageDeleteForbiddenError, errors.MessageNotModifiedError, ValueError):
+        # 忽略无法删除或未修改的错误
+        pass
+    except errors.RPCError as e:
+        # 记录其他 RPC 错误但不要崩溃
+        logger.warning(f"删除消息失败 (RPCError): {e}")
+
 def generate_captcha():
     """生成一个简单的数学验证码图片，返回答案和图片数据"""
     num1, num2 = randint(1, 50), randint(1, 50)
@@ -120,11 +133,11 @@ async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | Non
         try:
             event = task_cancel.result()
             await event.answer("已取消")
-            await event.delete() # 删除提示消息
+            await safe_delete(event) # 删除提示消息
         except Exception:
             pass
         return None
-    
+
     if task_response in done:
         # 用户发送了消息
         try:
@@ -136,5 +149,5 @@ async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | Non
             return msg.text.strip() if msg.text else None
         except Exception:
             return None
-    
+
     return None

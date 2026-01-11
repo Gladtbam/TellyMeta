@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
 
 from bot.decorators import provide_db_session, require_admin
-from bot.utils import (get_user_input_or_cancel, safe_reply, safe_respond,
-                       safe_respond_keyboard)
+from bot.utils import (get_user_input_or_cancel, safe_delete, safe_reply,
+                       safe_respond, safe_respond_keyboard)
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from services.score_service import ScoreService
@@ -527,16 +527,10 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
             input_val = await get_user_input_or_cancel(conv, prompt_msg.id)
 
             if not input_val:
-                try:
-                    await prompt_msg.delete()
-                except:
-                    pass
+                await safe_delete(prompt_msg)
                 return
 
-            try:
-                await prompt_msg.delete()
-            except:
-                pass
+            await safe_delete(prompt_msg)
 
             external_parser = None
             if target == "external":
@@ -555,19 +549,13 @@ async def srv_input_mode_handler(app: FastAPI, event: events.CallbackQuery.Event
                 parser_input = await get_user_input_or_cancel(conv, parser_msg.id)
 
                 if parser_input is None:
-                    try:
-                        await parser_msg.delete()
-                    except:
-                        pass
+                    await safe_delete(parser_msg)
                     return
 
                 if parser_input.strip() != "/empty":
                     external_parser = parser_input.strip()
 
-                try:
-                    await parser_msg.delete()
-                except:
-                    pass
+                await safe_delete(parser_msg)
 
             settings_service = SettingsServices(app, session)
             result = await settings_service.set_server_registration_mode(
@@ -674,15 +662,9 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
             )
             name = await get_user_input_or_cancel(conv, prompt_name.id)
             if not name:
-                try:
-                    await prompt_name.delete()
-                except:
-                    pass
+                await safe_delete(prompt_name)
                 return
-            try:
-                await prompt_name.delete()
-            except:
-                pass
+            await safe_delete(prompt_name)
 
             # 3. 输入 URL
             prompt_url = await conv.send_message(
@@ -692,29 +674,17 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
             )
             url = await get_user_input_or_cancel(conv, prompt_url.id)
             if not url:
-                try:
-                    await prompt_url.delete()
-                except:
-                    pass
+                await safe_delete(prompt_url)
                 return
-            try:
-                await prompt_url.delete()
-            except:
-                pass
+            await safe_delete(prompt_url)
 
             # 4. 输入 API Key
             prompt_key = await conv.send_message("🛠 **步骤 4/4**: 请输入 API Key：", buttons=cancel_btn)
             api_key = await get_user_input_or_cancel(conv, prompt_key.id)
             if not api_key:
-                try:
-                    await prompt_key.delete()
-                except:
-                    pass
+                await safe_delete(prompt_key)
                 return
-            try:
-                await prompt_key.delete()
-            except:
-                pass
+            await safe_delete(prompt_key)
 
             # 5. 执行添加
             processing = await conv.send_message("⏳ 正在测试连接并保存配置...")
@@ -722,12 +692,14 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
 
             if result.success:
                 await processing.edit(result.message)
-                try:
-                    panel = await settings_service.get_media_panel()
-                    if event.message: # type: ignore
-                        await event.edit(panel.message, buttons=panel.keyboard)
-                except Exception:
-                    pass
+            try:
+                panel = await settings_service.get_media_panel()
+                if event.message: # type: ignore
+                    await event.edit(panel.message, buttons=panel.keyboard)
+            except (errors.MessageNotModifiedError, errors.MessageIdInvalidError):
+                pass
+            except Exception as e:
+                logger.warning("刷新面板失败: {}", e)
             else:
                 await processing.edit(f"❌ 添加失败: {result.message}，请重试！")
             return
@@ -737,8 +709,8 @@ async def add_server_handler(app: FastAPI, event: events.CallbackQuery.Event, se
     except asyncio.TimeoutError:
         await event.answer("⏳ 操作超时", alert=True)
     except Exception as e:
-        logger.error(f"Add server error: {e}")
-        await safe_respond(event, f"发生系统错误: {str(e)}")
+        logger.error("添加服务器失败: {}", e)
+        await safe_respond(event, "发生系统错误，请重试")
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'srv_toggle_enable_(\\d+)'))
 @provide_db_session
@@ -795,16 +767,10 @@ async def srv_edit_field_handler(app: FastAPI, event: events.CallbackQuery.Event
             new_value = await get_user_input_or_cancel(conv, prompt_msg.id)
 
             if not new_value:
-                try:
-                    await prompt_msg.delete()
-                except:
-                    pass
+                await safe_delete(prompt_msg)
                 return
 
-            try:
-                await prompt_msg.delete()
-            except:
-                pass
+            await safe_delete(prompt_msg)
 
             if new_value.strip() == "/empty" and field_type == 'tos':
                 new_value = ""
@@ -865,16 +831,10 @@ async def srv_edit_mapping_handler(app: FastAPI, event: events.CallbackQuery.Eve
             input_val = await get_user_input_or_cancel(conv, prompt_msg.id)
 
             if not input_val:
-                try:
-                    await prompt_msg.delete()
-                except:
-                    pass
+                await safe_delete(prompt_msg)
                 return
 
-            try:
-                await prompt_msg.delete()
-            except:
-                pass
+            await safe_delete(prompt_msg)
 
             if input_val.strip() == "/empty":
                 mappings = {}

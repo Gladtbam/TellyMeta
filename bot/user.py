@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
 
 from bot.decorators import provide_db_session
-from bot.utils import (get_user_input_or_cancel, safe_reply, safe_respond,
-                       safe_respond_keyboard)
+from bot.utils import (get_user_input_or_cancel, safe_delete, safe_reply,
+                       safe_respond, safe_respond_keyboard)
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.orm import RegistrationMode, ServerInstance
@@ -161,16 +161,10 @@ async def _perform_external_verification_flow(
 
             user_input = await get_user_input_or_cancel(conv, msg.id)
             if not user_input:
-                try:
-                    await msg.delete()
-                except:
-                    pass
+                await safe_delete(msg)
                 return
 
-            try:
-                await msg.delete()
-            except:
-                pass
+            await safe_delete(msg)
 
             # 正在验证
             verifying_msg = await conv.send_message("⏳ 正在与外部服务器验证，请稍候...")
@@ -193,7 +187,7 @@ async def _perform_external_verification_flow(
             # 发送最终结果
             await conv.send_message(reg_result.message)
             # 删除临时消息
-            await verifying_msg.delete()
+            await safe_delete(verifying_msg)
 
     except errors.AlreadyInConversationError:
         await event.answer("⚠️ 错误：当前已有正在进行的会话。", alert=True)
