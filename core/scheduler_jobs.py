@@ -8,8 +8,10 @@ from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
+from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.score_service import ScoreService
+from services.user_service import UserService
 
 settings = get_settings()
 
@@ -125,6 +127,40 @@ async def settle_scores() -> None:
 
         except Exception as e:
             logger.exception("结算用户积分时出错: {}", e)
+            await session.rollback()
+            await session.close()
+
+
+async def cleanup_inactive_users() -> None:
+    """清理不在群组内的成员账户和数据"""
+    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false") != "true":
+        return
+
+    from main import app  # 避免循环导入
+
+    async with async_session() as session:
+        try:
+            telegram_repo = TelegramRepository(session)
+            user_service = UserService(app, session)
+            client: TelethonClientWarper = app.state.telethon_client
+
+            users = await telegram_repo.get_all_users()
+            logger.info("开始检查非群组成员清理任务，当前总用户数: {}", len(users))
+
+            for user in users:
+                if user.is_admin:
+                    continue
+
+                participant = await client.get_participant(user.id)
+                if not participant:
+                    logger.info("用户 {} 不在群组中，开始清理...", user.id)
+                    result = await user_service.delete_account(user.id, 'both')
+                    if result.success:
+                        logger.info("用户 {} 清理成功: {}", user.id, result.message)
+                    else:
+                        logger.error("用户 {} 清理失败: {}", user.id, result.message)
+        except Exception as e:
+            logger.exception("清理非群组成员任务出错: {}", e)
             await session.rollback()
         finally:
             await session.close()

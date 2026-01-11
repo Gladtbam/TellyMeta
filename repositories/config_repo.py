@@ -11,6 +11,7 @@ class ConfigRepository:
     KEY_ENABLE_POINTS = "system:enable_points"
     KEY_ENABLE_VERIFICATION = "system:enable_verification"
     KEY_ENABLE_REQUESTMEDIA = "system:enable_requestmedia"
+    KEY_ENABLE_CLEANUP_INACTIVE_USERS = "system:enable_cleanup_inactive_users"
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -34,6 +35,7 @@ class ConfigRepository:
             cls.KEY_ENABLE_POINTS: "true",
             cls.KEY_ENABLE_VERIFICATION: "true",
             cls.KEY_ENABLE_REQUESTMEDIA: "true",
+            cls.KEY_ENABLE_CLEANUP_INACTIVE_USERS: "false",
         }
 
         new_items = []

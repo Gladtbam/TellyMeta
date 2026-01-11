@@ -643,11 +643,13 @@ class SettingsServices:
         points = "✅" if self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_POINTS) == "true" else "❌"
         verify = "✅" if self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_VERIFICATION) == "true" else "❌"
         request = "✅" if self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_REQUESTMEDIA) == "true" else "❌"
+        cleanup = "✅" if self.config_repo.cache.get(ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS) == "true" else "❌"
 
         keyboard = [
             [Button.inline(f"积分/签到功能: {points}", f"toggle_system_{ConfigRepository.KEY_ENABLE_POINTS}".encode('utf-8'))],
             [Button.inline(f"入群验证: {verify}", f"toggle_system_{ConfigRepository.KEY_ENABLE_VERIFICATION}".encode('utf-8'))],
             [Button.inline(f"求片: {request}", f"toggle_system_{ConfigRepository.KEY_ENABLE_REQUESTMEDIA}".encode('utf-8'))],
+            [Button.inline(f"清理不在群成员: {cleanup}", f"toggle_system_{ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS}".encode('utf-8'))],
             [Button.inline("« 返回主菜单", b"manage_main")]
         ]
         msg = textwrap.dedent("""\

@@ -21,7 +21,7 @@ from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
 from core.initialization import check_sqlite_version, initialize_admin
-from core.scheduler_jobs import (ban_expired_users,
+from core.scheduler_jobs import (ban_expired_users, cleanup_inactive_users,
                                  delete_expired_banned_users, settle_scores)
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
@@ -173,6 +173,14 @@ async def lifespan(app: FastAPI):
         'cron',
         hour=23, minute=0,
         id='settle_scores',
+        replace_existing=True
+    )
+
+    app.state.scheduler.add_job(
+        cleanup_inactive_users,
+        'cron',
+        hour=1, minute=0,
+        id='cleanup_inactive_users',
         replace_existing=True
     )
 

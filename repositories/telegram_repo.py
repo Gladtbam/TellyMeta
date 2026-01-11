@@ -136,6 +136,12 @@ class TelegramRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_all_users(self) -> Sequence[TelegramUser]:
+        """获取所有用户"""
+        stmt = select(TelegramUser)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def batch_update_scores(self, score_deltas: dict[int, int]):
         """批量更新用户积分
         Args:
