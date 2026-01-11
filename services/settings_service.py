@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 
 import httpx
 from fastapi import FastAPI
-from sqlalchemy.exc import IntegrityError
+from loguru import logger
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button
 
@@ -404,8 +405,11 @@ class SettingsServices:
 
         try:
             libraries = await client.get_libraries()
-        except Exception as e:
+        except httpx.HTTPError as e:
             return Result(False, f"连接失败: {e}")
+        except Exception as e:
+            logger.error("获取媒体库失败: {}", e)
+            return Result(False, f"获取失败: {e}")
 
         if libraries is None:
             return Result(False, "无法获取媒体库列表。")
@@ -936,8 +940,11 @@ class SettingsServices:
             instance = await self.server_repo.add(name, server_type, url, api_key, priority=0)
         except IntegrityError:
             return Result(False, "服务器名称已存在，请勿重复添加。")
+        except SQLAlchemyError as e:
+            logger.error("数据库错误 when add_server: {}", e)
+            return Result(False, "系统数据库错误，请联系管理员")
         except Exception as e:
-            return Result(False, f"数据库添加失败: {str(e)}")
+            return Result(False, f"添加失败: {str(e)}")
 
         try:
             new_client = None
@@ -956,8 +963,12 @@ class SettingsServices:
 
             return Result(True, f"✅ 服务器 **{name}** 添加成功并已上线！")
 
+        except httpx.HTTPError as e:
+            # 初始化连接失败
+            await self.server_repo.delete(instance.id)
+            return Result(False, f"❌ 连接服务器失败 (已回滚): {e}")
         except Exception as e:
-            # 初始化失败，回滚数据库
+            # 其他初始化失败，回滚数据库
             await self.server_repo.delete(instance.id)
             return Result(False, f"❌ 客户端初始化失败 (已回滚): {str(e)}")
 

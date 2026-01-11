@@ -2,6 +2,7 @@ import base64
 import textwrap
 from typing import Any
 
+import httpx
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -176,7 +177,11 @@ class RequestService:
                 results.append(item)
                 if len(results) >= 5:
                     break
+        except httpx.HTTPError as e:
+            logger.warning("Media search failed (HTTP): {}", e)
+            return Result(False, "服务器连接失败，请稍后重试。")
         except Exception as e:
+            logger.error("Media search failed (Unknown): {}", e)
             return Result(False, f"搜索失败: {str(e)}")
 
         if not results:
@@ -214,8 +219,10 @@ class RequestService:
                 existing_item = await client.get_series_by_tvdb(media_id)
             elif isinstance(client, RadarrClient):
                 existing_item = await client.get_movie_by_tmdb(media_id)
+        except httpx.HTTPError as e:
+            logger.debug("查重请求失败 (HTTP): {}", e)
         except Exception as e:
-            logger.debug("查重请求失败: {}", e)
+            logger.debug("查重请求失败 (Unknown): {}", e)
 
         if existing_item:
             return Result(False, f"✅ **{existing_item.title}** 已经在媒体库中了，无需重复请求。")
@@ -227,6 +234,8 @@ class RequestService:
                 if item:
                     selected_media = item
                     break
+        except httpx.HTTPError as e:
+            return Result(False, f"获取媒体元数据失败 (HTTP): {e}")
         except Exception as e:
             return Result(False, f"获取媒体元数据失败: {e}")
 
@@ -345,5 +354,7 @@ class RequestService:
             if result:
                 return Result(True, f"✅ 已批准并添加 **{result.title}** (操作人: {approver_name})")
             return Result(False, "添加失败，接口未返回确认数据。")
+        except httpx.HTTPError as e:
+            return Result(False, f"添加失败 (API错误): {e}")
         except Exception as e:
             return Result(False, f"添加失败: {e}")
