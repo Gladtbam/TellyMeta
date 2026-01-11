@@ -535,8 +535,6 @@ class SettingsServices:
             profiles = await client.get_quality_profiles() or []
         except httpx.HTTPError as e:
             return Result(False, f"连接失败: {e}")
-        except KeyError as e:
-            return Result(False, f"获取失败，响应格式错误: {e}")
         except Exception as e:
             return Result(False, f"获取失败: {e}")
 
@@ -571,8 +569,6 @@ class SettingsServices:
             folders = await client.get_root_folders() or []
         except httpx.HTTPError as e:
             return Result(False, f"连接失败: {e}")
-        except KeyError as e:
-            return Result(False, f"获取失败，响应格式错误: {e}")
         except Exception as e:
             return Result(False, f"获取失败: {e}")
 

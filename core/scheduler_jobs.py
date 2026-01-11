@@ -110,7 +110,8 @@ async def settle_scores() -> None:
                     user_name = await client.get_user_name(user.id)
                     medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"{idx}.")
                     total_lines.append(f"{medal} [{user_name}](tg://user?id={user.id}) — `{user.score}`")
-                except Exception:
+                except Exception as e:
+                    logger.warning("获取{}的名称失败: {}", user.id, e)
                     total_lines.append(f"{idx}. `Unknown` — `{user.score}`")
 
             # 合并消息
