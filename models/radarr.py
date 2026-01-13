@@ -354,16 +354,16 @@ class FileInfoDto(BaseModel):
     dateAdded: datetime
     languages: list[Languages] = Field(default_factory=list)
     mediaInfo: MediaInfoDto | None = None
-    sourcePath: str| None = None
+    sourcePath: str | None = None
 
 class RadarrRelease(BaseModel):
     """release"""
-    quality: str
-    qualityVersion: int
-    releaseGroup: str
+    quality: str | None = None
+    qualityVersion: int | None = None
+    releaseGroup: str | None = None
     releaseTitle: str
     indexer: str
-    size: str
+    size: int
     customFormatScore: int | None = None
     customFormats: list[str] = Field(default_factory=list)
     languages: list[Languages] = Field(default_factory=list)

@@ -311,7 +311,7 @@ class SonarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpda
 
 class SonarrWebhookManualInteractionPayload(WebhookBase[Literal["ManualInteractionRequired"]]):
     eventType: Literal["ManualInteractionRequired"]
-    series: Series
+    series: Series | None # 未知剧集为 None
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     downloadInfo: DownloadInfo
     downloadClient: str | None = None
