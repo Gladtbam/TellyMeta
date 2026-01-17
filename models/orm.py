@@ -165,3 +165,12 @@ class LibraryBindingModel(BaseModel):
             logger.error("解析绑定配置 {} 失败: {}。数据: {}", config_row.key, e, config_row.value)
             # 返回一个至少包含名称的“空”模型
             return cls(library_name=config_row.key)
+
+class ApiCache(Base):
+    """API 响应缓存模型"""
+    __tablename__ = 'api_cache'
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    value: Mapped[str] = mapped_column(String, nullable=False) # JSON data
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)

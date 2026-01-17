@@ -9,6 +9,7 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.telegram_repo import TelegramRepository
+from services.cache_service import CacheService
 from services.media_service import MediaService
 from services.score_service import ScoreService
 from services.user_service import UserService
@@ -165,3 +166,7 @@ async def cleanup_inactive_users() -> None:
             await session.rollback()
         finally:
             await session.close()
+
+async def cleanup_api_cache_task() -> None:
+    """清理过期的 API 缓存"""
+    await CacheService.cleanup_expired()

@@ -11,17 +11,18 @@ from fastapi import FastAPI
 from loguru import logger
 
 from clients.ai_client import AIClientWarper
+from clients.cached_tmdb_client import CachedTmdbClient
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
-from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
 from core.initialization import check_sqlite_version, initialize_admin
-from core.scheduler_jobs import (ban_expired_users, cleanup_inactive_users,
+from core.scheduler_jobs import (ban_expired_users, cleanup_api_cache_task,
+                                 cleanup_inactive_users,
                                  delete_expired_banned_users, settle_scores)
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
@@ -67,7 +68,7 @@ async def lifespan(app: FastAPI):
         password=settings.qbittorrent_password
     )
 
-    app.state.tmdb_client = TmdbClient(
+    app.state.tmdb_client = CachedTmdbClient(
         client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
         api_key=settings.tmdb_api_key
     )
@@ -189,6 +190,14 @@ async def lifespan(app: FastAPI):
         'cron',
         hour=1, minute=0,
         id='cleanup_inactive_users',
+        replace_existing=True
+    )
+
+    app.state.scheduler.add_job(
+        cleanup_api_cache_task,
+        'cron',
+        hour=3, minute=0,
+        id='cleanup_api_cache',
         replace_existing=True
     )
 
