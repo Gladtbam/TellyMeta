@@ -2,22 +2,43 @@
 <tvshow>
     <title>{{ title }}</title>
     <originaltitle>{{ original_title }}</originaltitle>
+    {% if sort_title %}
     <sorttitle>{{ sort_title }}</sorttitle>
+    {% endif -%}
+
+    {% if rating %}
     <rating>{{ rating }}</rating>
+    {% endif -%}
+
+    {% if plot %}
     <plot>{{ plot }}</plot>
+    {% endif -%}
+
+    {% if mpaa %}
     <mpaa>{{ mpaa }}</mpaa>
+    {% endif -%}
+
+    {% if premiered %}
     <premiered>{{ premiered }}</premiered>
+    {% endif -%}
+
+    {% if studio %}
     <studio>{{ studio }}</studio>
+    {% endif -%}
+
     {% for genre in genres %}
     <genre>{{ genre }}</genre>
-    {% endfor %}
-    {% if tmdbid %}
-    <uniqueid type="tmdb" default="true">{{ tmdbid }}</uniqueid>
-    {% endif %}
-    {% if tvdbid %}
-    <uniqueid type="tvdb">{{ tvdbid }}</uniqueid>
-    {% endif %}
-    {% if imdbid %}
-    <uniqueid type="imdb">{{ imdbid }}</uniqueid>
-    {% endif %}
+    {% endfor -%}
+
+    {% if tmdb_id %}
+    <uniqueid type="tmdb">{{ tmdb_id }}</uniqueid>
+    {% endif -%}
+
+    {% if tvdb_id %}
+    <uniqueid type="tvdb">{{ tmdb_id }}</uniqueid>
+    {% endif -%}
+
+    {% if imdb_id %}
+    <uniqueid type="imdb">{{ tmdb_id }}</uniqueid>
+    {% endif -%}
 </tvshow>

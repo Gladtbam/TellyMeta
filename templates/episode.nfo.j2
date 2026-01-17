@@ -2,28 +2,30 @@
 <episodedetails>
     {% if title %}
     <title>{{ title }}</title>
-    {% endif %}
+    {% endif -%}
 
     {% if original_title %}
     <originaltitle>{{ original_title }}</originaltitle>
     {% endif %}
-
     <season>{{ season_number }}</season>
     <episode>{{ episode_number }}</episode>
-
     {% if plot %}
     <plot>{{ plot }}</plot>
-    {% endif %}
+    {% endif -%}
 
     {% if aired_date %}
     <aired>{{ aired_date }}</aired>
-    {% endif %}
+    {% endif -%}
 
     {% if tvdb_id %}
     <uniqueid type="tvdb">{{ tvdb_id }}</uniqueid>
-    {% endif %}
+    {% endif -%}
 
     {% if tmdb_id %}
     <uniqueid type="tmdb">{{ tmdb_id }}</uniqueid>
-    {% endif %}
+    {% endif -%}
+
+    {% if imdbid %}
+    <uniqueid type="imdb">{{ imdbid }}</uniqueid>
+    {% endif -%}
 </episodedetails>
