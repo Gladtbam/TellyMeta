@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import aiofiles
@@ -110,6 +111,14 @@ async def create_episode_nfo(
 
             tmdb_season = await tmdb.get_tv_seasons_details(series_tmdb_id, episode.seasonNumber)
 
+            if not tmdb_season:
+                logger.warning(f"获取 TMDB S{episode.seasonNumber} 失败，尝试获取最新季进行匹配")
+                series_info = await tmdb.get_tv_series_details(series_tmdb_id)
+                if series_info and series_info.seasons:
+                    last_season = series_info.seasons[-1]
+                    logger.info("正在获取 TMDB 最新季 S{} 的详情", last_season.season_number)
+                    tmdb_season = await tmdb.get_tv_seasons_details(series_tmdb_id, last_season.season_number)
+
             if tmdb_season and tmdb_season.episodes and target_air_date:
                 for ep in tmdb_season.episodes:
                     if ep.air_date == target_air_date:
@@ -117,9 +126,14 @@ async def create_episode_nfo(
                         logger.info("通过首播日期 {} 匹配到 TMDB 剧集: {}", target_air_date, ep.name)
                         break
 
+    tmdb_title = None
+    if tmdb_ep and tmdb_ep.name:
+        if not re.match(r'^(第[\d ]+集|Episode\s*[\d ]+)$', tmdb_ep.name, re.IGNORECASE):
+            tmdb_title = tmdb_ep.name
+
     title = (
         (tvdb_data.name if tvdb_data and tvdb_data.name else None) or
-        (tmdb_ep.name if tmdb_ep and tmdb_ep.name else None)
+        tmdb_title
     )
     plot = (
         (tvdb_data.overview if tvdb_data and tvdb_data.overview else None) or

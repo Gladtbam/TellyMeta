@@ -11,6 +11,7 @@ class TmdbTvSeries(BaseModel):
     first_air_date: str
     genre_ids: list[int | str] = Field(default_factory=list)
     genres: list[str] = Field(default_factory=list)
+    seasons: list['TmdbSeason'] = Field(default_factory=list)
 
     @field_validator('genre_ids', mode='before')
     @classmethod
@@ -42,6 +43,13 @@ class TmdbTvSeries(BaseModel):
         else:
             raise ValueError("类型格式、预期列表或字符串无效")
 
+    @field_validator('seasons', mode='before')
+    @classmethod
+    def validate_seasons(cls, value):
+        if isinstance(value, list):
+            return [TmdbSeason.model_validate(season) for season in value]
+        return []
+
 class TmdbEpisode(BaseModel):
     id: int
     name: str
@@ -57,8 +65,8 @@ class TmdbEpisode(BaseModel):
     vote_count: int | None = None
 
 class TmdbSeason(BaseModel):
-    _id: str
-    air_date: str
+    _id: str | None = None
+    air_date: str | None = None
     name: str
     overview: str
     id: int
@@ -111,3 +119,9 @@ class TmdbMovie(BaseModel):
     title: str
     vote_average: float | None = None
     vote_count: int | None = None
+
+TmdbTvSeries.model_rebuild()
+TmdbEpisode.model_rebuild()
+TmdbSeason.model_rebuild()
+TmdbFindPayload.model_rebuild()
+TmdbMovie.model_rebuild()
