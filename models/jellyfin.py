@@ -432,7 +432,6 @@ class BaseItemDto(BaseModel):
     IsNews: bool | None = None
     IsKids: bool | None = None
     IsPremiere: bool | None = None
-    TimerId: str | None = None
     Disabled: bool | None = None
     ManagementId: str | None = None
     TimerId: str | None = None
@@ -588,7 +587,6 @@ class SessionInfoDto(BaseModel):
     HasCustomDeviceName: bool
     PlaylistItemId: str | None = None
     ServerId: str | None = None
-    UserPrimaryImageTag: str | None = None
     SupportedCommands: list[str] = Field(default_factory=list)
 
 class MediaPathInfo(BaseModel):

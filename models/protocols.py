@@ -1,5 +1,7 @@
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, Protocol, runtime_checkable, TypeVar
+from datetime import datetime
+from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+
 from typing_extensions import Self
 
 
@@ -43,6 +45,10 @@ class BaseItem(Dumpable, Protocol):
     Overview: str | None = None
     Genres: list
     ProviderIds: dict
+    SeriesId: str | None = None
+    ParentIndexNumber: int | None = None
+    PremiereDate: datetime | None = None
+    Type: str
 
 BaseItemT_co = TypeVar("BaseItemT_co", bound=BaseItem, covariant=True)
 
