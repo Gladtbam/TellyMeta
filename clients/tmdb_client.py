@@ -32,6 +32,10 @@ class TmdbClient(AuthenticatedClient):
         try:
             return await super()._request(*args, **kwargs)
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.debug(f"TMDB 资源未找到 (404): {e.request.url}")
+                return None
+
             if e.response.status_code == 429:
                 logger.warning(f"TMDB 速率限制已触发 (429)。正在等待重试... URL: {e.request.url}")
 
