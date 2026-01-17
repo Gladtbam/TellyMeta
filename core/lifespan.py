@@ -47,16 +47,19 @@ async def lifespan(app: FastAPI):
     app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
     app.state.message_tracker = MessageTrackingState()
 
-    app.state.ai_client = AIClientWarper(
-        base_url=settings.ai_base_url,
-        api_key=settings.ai_api_key,
-        model=settings.ai_model,
-        temperature=settings.ai_temperature,
-        rpm=settings.ai_rpm,
-        rpd=settings.ai_rpd,
-        tpm=settings.ai_tpm,
-        concurrency=settings.ai_concurrency
-    )
+    if settings.ai_api_key:
+        app.state.ai_client = AIClientWarper(
+            base_url=settings.ai_base_url,
+            api_key=settings.ai_api_key,
+            model=settings.ai_model,
+            temperature=settings.ai_temperature,
+            rpm=settings.ai_rpm,
+            rpd=settings.ai_rpd,
+            tpm=settings.ai_tpm,
+            concurrency=settings.ai_concurrency
+        )
+    else:
+        app.state.ai_client = None
 
     app.state.qb_client = QbittorrentClient(
         client=httpx.AsyncClient(base_url=settings.qbittorrent_base_url),

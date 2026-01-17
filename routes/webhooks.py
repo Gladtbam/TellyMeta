@@ -2,20 +2,21 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Response
 from loguru import logger
 
+from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
-from core.dependencies import (get_media_clients, get_notification_service,
-                               get_qb_client, get_radarr_clients,
-                               get_server_by_token, get_sonarr_clients,
-                               get_task_queue, get_tmdb_client,
-                               get_tvdb_client)
+from core.dependencies import (get_ai_client, get_media_clients,
+                               get_notification_service, get_qb_client,
+                               get_radarr_clients, get_server_by_token,
+                               get_sonarr_clients, get_task_queue,
+                               get_tmdb_client, get_tvdb_client)
 from models.emby_webhook import (EmbyPayload, LibraryDeletedEvent,
                                  LibraryNewEvent)
 from models.events import NotificationEvent
@@ -142,6 +143,7 @@ async def radarrarr_webhook(
 async def emby_webhook(
     payload: EmbyPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
+    ai_client: AIClientWarper | None = Depends(get_ai_client),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
@@ -151,9 +153,10 @@ async def emby_webhook(
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
     if isinstance(payload, LibraryNewEvent):
-        asyncio.create_task(
-            translate_media_item(server_instance.id, payload.item.id)
-        )
+        if ai_client:
+            asyncio.create_task(
+                translate_media_item(server_instance.id, payload.item.id)
+            )
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -163,9 +166,10 @@ async def emby_webhook(
                 item=payload.item
             )
     elif isinstance(payload, LibraryDeletedEvent):
-        asyncio.create_task(
-            cancel_translate_media_item(server_instance.id, payload.item.id)
-        )
+        if ai_client:
+            asyncio.create_task(
+                cancel_translate_media_item(server_instance.id, payload.item.id)
+            )
 
     return Response(content="Webhook received", status_code=200)
 
@@ -173,6 +177,7 @@ async def emby_webhook(
 async def jellyfin(
     payload: JellyfinPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
+    ai_client: AIClientWarper | None = Depends(get_ai_client),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
@@ -182,9 +187,10 @@ async def jellyfin(
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
     if payload.notification_type == NotificationType.ITEM_ADDED:
-        asyncio.create_task(
-            translate_media_item(server_instance.id, payload.item_id)
-        )
+        if ai_client:
+            asyncio.create_task(
+                translate_media_item(server_instance.id, payload.item_id)
+            )
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -194,9 +200,10 @@ async def jellyfin(
                 item=payload.item_id
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED:
-        asyncio.create_task(
-            cancel_translate_media_item(server_instance.id, payload.item_id)
-        )
+        if ai_client:
+            asyncio.create_task(
+                cancel_translate_media_item(server_instance.id, payload.item_id)
+            )
     return Response(content="Webhook received", status_code=200)
 
 @router.get("/health", status_code=200)

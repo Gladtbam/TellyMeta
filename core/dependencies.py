@@ -26,7 +26,7 @@ def get_mkv_worker(request: Request) -> asyncio.Task:
     """获取 MKV 合并任务的工作线程。"""
     return request.app.state.mkv_worker
 
-def get_ai_client(request: Request) -> AIClientWarper:
+def get_ai_client(request: Request) -> AIClientWarper | None:
     """获取 AI 客户端实例。"""
     return request.app.state.ai_client
 
