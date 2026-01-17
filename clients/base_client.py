@@ -20,7 +20,7 @@ class RateLimiter:
         self.last_check = monotonic()
         self._lock = asyncio.Lock()
 
-    async def acquire(self):
+    async def acquire(self, amount: float = 1.0):
         async with self._lock:
             current = monotonic()
             time_passed = current - self.last_check
@@ -30,13 +30,13 @@ class RateLimiter:
             if self.allowance > self.rate:
                 self.allowance = self.rate
 
-            if self.allowance < 1.0:
-                wait_time = (1.0 - self.allowance) * (self.per / self.rate)
+            if self.allowance < amount:
+                wait_time = (amount - self.allowance) * (self.per / self.rate)
                 if wait_time > 0:
                     await asyncio.sleep(wait_time)
                 self.allowance = 0.0
             else:
-                self.allowance -= 1.0
+                self.allowance -= amount
 
 class AuthenticatedClientError(Exception):
     """自定义认证失败异常"""
