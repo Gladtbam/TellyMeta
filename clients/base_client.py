@@ -38,10 +38,6 @@ class RateLimiter:
             else:
                 self.allowance -= amount
 
-class AuthenticatedClientError(Exception):
-    """自定义认证失败异常"""
-    pass
-
 class BaseClient(ABC):
     """抽象基类，定义了基本的HTTP客户端接口"""
     def __init__(self, client: httpx.AsyncClient):
@@ -74,8 +70,20 @@ class BaseClient(ABC):
         if self._client is None:
             raise RuntimeError("HTTP 客户端未初始化。首先调用 login()。")
 
+        # 设置识别程序的 User-Agent
+        headers = kwargs.get('headers', {})
+        if 'User-Agent' not in headers:
+            headers['User-Agent'] = "TellyMeta/1.0"
+        kwargs['headers'] = headers
+
         try:
             response = await self._client.request(method, url, **kwargs)
+
+            if response.status_code == 403 and ("cloudflare" in response.text.lower() or "just a moment" in response.text.lower()):
+                logger.error("HTTP 错误 403：请求被 Cloudflare 拦截。这通常是因为站点启用了 WAF 机器人检测或“我在受攻击”模式。")
+                logger.error("URL: {}", url)
+                logger.error("提示：请尝试将运行该程序的服务器 IP 加入站点的 Cloudflare 白名单。")
+
             response.raise_for_status()
             if response_model and parser:
                 raise ValueError("response_model 和 parser 不能同时使用")
@@ -97,7 +105,8 @@ class BaseClient(ABC):
             logger.error("响应验证错误: {}", repr(e.errors()))
             raise
         except httpx.HTTPStatusError as e:
-            logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
+            if not (e.response.status_code == 403 and ("cloudflare" in e.response.text.lower() or "just a moment" in e.response.text.lower())):
+                logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
             raise
         except httpx.RequestError as e:
             logger.error("请求错误：{}", e)
@@ -331,11 +340,12 @@ class AuthenticatedClient(BaseClient):
             kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
         try:
             return await super()._request(method, url, response_model=response_model, parser=parser, raw=raw, **kwargs)
-        except AuthenticatedClientError as e:
-            logger.error("身份验证错误：{}", e)
-            raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
+                # 如果是 Cloudflare 拦截，则不应尝试重新登录
+                if "cloudflare" in e.response.text.lower() or "just a moment" in e.response.text.lower():
+                    raise
+
                 if _retry >= self._max_retries:
                     logger.error("达到最大重试次数，无法重新登录")
                     raise
@@ -349,6 +359,4 @@ class AuthenticatedClient(BaseClient):
                     kwargs['headers'] = {**kwargs.get('headers', {}), **auth_headers}
                 return await self._request(method, url, response_model=response_model, _retry = _retry + 1 ,**kwargs)
 
-            raise
-        except Exception:
             raise
