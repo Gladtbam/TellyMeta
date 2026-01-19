@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ''
     telegram_bot_name: str = ''
     telegram_chat_id: int = 0
+    telegram_webapp_url: str = ''
 
 @lru_cache
 def get_settings() -> Settings:

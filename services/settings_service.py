@@ -20,6 +20,8 @@ from core.telegram_manager import TelethonClientWarper
 from models.emby import LibraryMediaFolder
 from models.orm import (LibraryBindingModel, RegistrationMode, ServerInstance,
                         ServerType)
+from models.schemas import (ArrServerDto, BindingDto, LibraryDto,
+                            NsfwLibraryDto, QualityProfileDto, RootFolderDto)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -658,6 +660,92 @@ class SettingsServices:
         """)
         return Result(success=True, message=msg, keyboard=keyboard)
 
+    async def get_libraries_data(self, server_id: int) -> list[LibraryDto]:
+        """获取服务器媒体库及绑定状态 (API)"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or server.id not in self.media_clients:
+            raise ValueError("未找到服务器或未连接")
+
+        client = self.media_clients[server.id]
+        libraries = await client.get_libraries() or []
+
+        # 获取所有绑定配置
+        bindings = await self.config_repo.get_all_library_bindings()
+
+        result = []
+        for lib in libraries:
+            lib_name = lib.Name
+            # Emby uses Guid, Jellyfin uses ItemId (sometimes Id in API response)
+            lib_id = getattr(lib, 'ItemId', None) or getattr(lib, 'Guid', None) or getattr(lib, 'Id', None)
+
+            dto = LibraryDto(name=lib_name, id=lib_id)
+
+            # 填充绑定信息
+            if lib_name in bindings:
+                binding_model = bindings[lib_name]
+                if binding_model.server_id:
+                    arr_server = await self.server_repo.get_by_id(binding_model.server_id)
+                    server_name = arr_server.name if arr_server else "Unknown"
+
+                    dto.binding = BindingDto(
+                        server_id=binding_model.server_id,
+                        server_name=server_name,
+                        arr_type=binding_model.arr_type,
+                        quality_profile_id=binding_model.quality_profile_id,
+                        root_folder=binding_model.root_folder
+                    )
+            result.append(dto)
+
+        return result
+
+    async def get_arr_servers_data(self) -> list[ArrServerDto]:
+        """获取所有 Sonarr/Radarr 实例 (API)"""
+        servers = []
+        for s in await self.server_repo.get_by_type(ServerType.SONARR):
+            servers.append(ArrServerDto(id=s.id, name=s.name, type='sonarr'))
+        for r in await self.server_repo.get_by_type(ServerType.RADARR):
+            servers.append(ArrServerDto(id=r.id, name=r.name, type='radarr'))
+        return servers
+
+    async def get_arr_resources(self, server_id: int) -> tuple[list[QualityProfileDto], list[RootFolderDto]]:
+        """获取 Sonarr/Radarr 的资源 (API)"""
+        client = self.sonarr_clients.get(server_id) or self.radarr_clients.get(server_id)
+        if not client:
+            raise ValueError("Server instance not found")
+
+        profiles = await client.get_quality_profiles() or []
+        folders = await client.get_root_folders() or []
+
+        p_dtos = [QualityProfileDto(id=p.id, name=p.name) for p in profiles]
+        f_dtos = [RootFolderDto(id=f.id, path=f.path, freeSpace=f.freeSpace) for f in folders if f.path]
+
+        return p_dtos, f_dtos
+
+    async def save_library_binding(self, library_name: str, server_id: int, quality_id: int, root_folder: str) -> None:
+        """保存媒体库绑定 (API)"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server:
+            raise ValueError("Server not found")
+
+        binding = await self.config_repo.get_library_binding(library_name)
+        binding.server_id = server_id
+        binding.arr_type = server.server_type
+        binding.quality_profile_id = quality_id
+        binding.root_folder = root_folder
+
+        await self.config_repo.set_library_binding(binding)
+
+    async def unbind_library(self, library_name: str) -> None:
+        """解绑媒体库 (API)"""
+        # 通过创建一个新的空绑定覆盖旧的，或者在 ConfigRepository 中实现删除逻辑
+        # 这里简化为置空
+        binding = await self.config_repo.get_library_binding(library_name)
+        binding.server_id = None
+        binding.arr_type = None
+        binding.quality_profile_id = None
+        binding.root_folder = None
+        await self.config_repo.set_library_binding(binding)
+
     async def toggle_system_setting(self, key: str) -> Result:
         """切换系统功能设置"""
         try:
@@ -669,6 +757,31 @@ class SettingsServices:
             return Result(success=True, message=f"已{status_text}该功能。")
         except Exception as e:
             return Result(success=False, message=f"设置失败: {str(e)}")
+
+    async def get_nsfw_libraries_data(self, server_id: int) -> list[NsfwLibraryDto]:
+        """获取服务器所有媒体库的 NSFW 状态"""
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or server.id not in self.media_clients:
+            raise ValueError("Server not found or not connected")
+
+        client = self.media_clients[server.id]
+        libraries = await client.get_libraries() or []
+
+        # 解析当前已存储的 NSFW ID 列表
+        current_ids = set(server.nsfw_library_ids.split('|')) if server.nsfw_library_ids else set()
+
+        result = []
+        for lib in libraries:
+            lib_id = getattr(lib, 'ItemId', None) or getattr(lib, 'Guid', None) or getattr(lib, 'Id', None)
+            if not lib_id:
+                continue
+
+            result.append(NsfwLibraryDto(
+                id=lib_id,
+                name=lib.Name,
+                is_nsfw=(lib_id in current_ids)
+            ))
+        return result
 
     async def toggle_server_nsfw(self, server_id: int) -> Result:
         """切换服务器 NSFW 开关"""

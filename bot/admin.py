@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, errors, events
+from telethon.tl.types import KeyboardButtonWebView
 
 from bot.decorators import provide_db_session, require_admin
 from bot.utils import (get_user_input_or_cancel, safe_delete, safe_reply,
@@ -240,6 +241,14 @@ async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session
     """设置处理器
     处理管理员请求设置面板
     """
+    web_app_url = f"{settings.telegram_webapp_url}/webapp/settings.html"
+
+    await event.respond(
+        "🔧 **系统设置**\n\n点击下方按钮打开控制面板：",
+        buttons=[
+            [KeyboardButtonWebView(text="🛠 打开设置面板", url=web_app_url)]
+        ]
+    )
     settings_service = SettingsServices(app, session)
     result = await settings_service.get_admin_management_keyboard()
 

@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>TellyMeta 设置</title>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f4f4f5);
+            --destructive-text-color: var(--tg-theme-destructive-text-color, #ff3b30);
+            --section-header-text-color: var(--tg-theme-section-header-text-color, #6d6d72);
+        }
+
+        body {
+            background-color: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* 模态框样式 */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            z-index: 1000;
+            justify-content: center;
+            align-items: flex-end; /* 底部弹出 */
+        }
+        
+        .modal {
+            background: var(--bg-color);
+            width: 100%;
+            max-height: 90vh;
+            border-radius: 12px 12px 0 0;
+            padding: 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            transform: translateY(100%);
+            transition: transform 0.3s ease-out;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal.open {
+            transform: translateY(0);
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .modal-close {
+            color: var(--link-color);
+            cursor: pointer;
+        }
+
+        /* 表单样式 */
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-label {
+            font-size: 13px;
+            color: var(--hint-color);
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        .form-input, .form-select, textarea {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--secondary-bg-color);
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .form-input:focus, textarea:focus {
+            border-color: var(--link-color);
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        /* 列表样式 */
+        .container { padding: 16px; padding-bottom: 100px; }
+        .section-title { font-size: 13px; color: var(--section-header-text-color); text-transform: uppercase; margin: 24px 0 8px 16px; }
+        .section-title:first-child { margin-top: 8px; }
+        .section-hint { font-size: 13px; color: var(--hint-color); margin: 8px 16px; line-height: 1.4; }
+        .card { background-color: var(--bg-color); border-radius: 10px; overflow: hidden; }
+        .item { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid var(--secondary-bg-color); transition: background-color 0.2s; }
+        .item:active { background-color: var(--secondary-bg-color); }
+        .item:last-child { border-bottom: none; }
+        .item-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+        .item-title { font-size: 17px; font-weight: 400; }
+        .item-subtitle { font-size: 14px; color: var(--hint-color); margin-top: 4px; }
+        .item-status { font-size: 12px; margin-left: 10px; flex-shrink: 0; }
+        
+        /* 开关样式 */
+        .switch { position: relative; display: inline-block; width: 51px; height: 31px; flex-shrink: 0; margin-left: 12px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #e9e9ea; transition: .3s; border-radius: 34px; }
+        @media (prefers-color-scheme: dark) { .slider { background-color: #39393d; } }
+        .slider:before { position: absolute; content: ""; height: 27px; width: 27px; left: 2px; bottom: 2px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px 0 rgba(0,0,0,0.2); }
+        input:checked + .slider { background-color: #34c759; }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* 按钮样式 */
+        .btn { background-color: var(--bg-color); color: var(--link-color); border: none; padding: 14px; border-radius: 10px; width: 100%; font-size: 17px; cursor: pointer; text-align: center; margin-top: 10px; }
+        .btn-primary { background-color: var(--button-color); color: #fff; margin-top: 20px; }
+        .btn-danger { color: var(--destructive-text-color); margin-top: 20px; }
+        .btn-sm { padding: 8px 12px; font-size: 14px; width: auto; margin-top: 0; border-radius: 6px; background-color: var(--secondary-bg-color); }
+        
+        /* Tabs 样式 */
+        .tabs { display: flex; border-bottom: 1px solid var(--secondary-bg-color); margin-bottom: 15px; flex-shrink: 0; }
+        .tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; color: var(--hint-color); font-weight: 500; border-bottom: 2px solid transparent; transition: 0.2s; }
+        .tab.active { color: var(--link-color); border-bottom-color: var(--link-color); }
+        .tab-content { display: none; padding-bottom: 20px; }
+        .tab-content.active { display: block; animation: fadeIn 0.2s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Path Mapping 列表优化 */
+        .mapping-item { 
+            background: var(--secondary-bg-color);
+            border: 1px solid rgba(0,0,0,0.05);
+            padding: 12px; 
+            border-radius: 10px; 
+            margin-bottom: 12px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 8px; 
+        }
+        .mapping-arrow {
+            text-align: center;
+            color: var(--hint-color);
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .state-text { padding: 20px; text-align: center; color: var(--hint-color); font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <div class="section-title">Bot 管理员</div>
+        <div class="section">
+            <div class="card" id="admin-list"><div class="state-text">加载中...</div></div>
+        </div>
+
+        <div class="section-title">媒体服务器</div>
+        <div class="section">
+            <div class="card" id="server-list"><div class="state-text">加载中...</div></div>
+            <button class="btn" onclick="openAddServerModal()">添加服务器</button>
+        </div>
+
+        <div class="section-title">系统功能</div>
+        <div class="section">
+            <div class="card">
+                <div class="item"><div class="item-content"><span class="item-title">积分/签到功能</span></div><label class="switch"><input type="checkbox" id="toggle-points" onchange="toggleSystem('enable_points')"><span class="slider"></span></label></div>
+                <div class="item"><div class="item-content"><span class="item-title">入群验证</span></div><label class="switch"><input type="checkbox" id="toggle-verification" onchange="toggleSystem('enable_verification')"><span class="slider"></span></label></div>
+                <div class="item"><div class="item-content"><span class="item-title">求片功能</span></div><label class="switch"><input type="checkbox" id="toggle-requestmedia" onchange="toggleSystem('enable_requestmedia')"><span class="slider"></span></label></div>
+                <div class="item"><div class="item-content"><span class="item-title">清理不在群成员</span></div><label class="switch"><input type="checkbox" id="toggle-cleanup" onchange="toggleSystem('enable_cleanup_inactive_users')"><span class="slider"></span></label></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="server-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span id="modal-title">服务器设置</span>
+                <span class="modal-close" onclick="closeModal('server-modal')">取消</span>
+            </div>
+            
+            <div class="tabs" id="srv-tabs" style="display:none">
+                <div class="tab active" onclick="switchTab('basic')">基础</div>
+                <div class="tab" onclick="switchTab('policy')" id="tab-policy">策略</div>
+                <div class="tab" onclick="switchTab('paths')" id="tab-paths">路径</div>
+                <div class="tab" onclick="switchTab('advanced')">高级</div>
+            </div>
+
+            <form id="server-form" onsubmit="handleServerSubmit(event)" style="overflow-y:auto; flex:1;">
+                <input type="hidden" id="srv-id">
+                
+                <div id="tab-content-basic" class="tab-content active">
+                    <div class="form-group">
+                        <label class="form-label">启用状态</label>
+                        <div class="item" style="padding:0; border:none; background:transparent">
+                            <span>启用此服务器</span>
+                            <label class="switch"><input type="checkbox" id="srv-enabled"><span class="slider"></span></label>
+                        </div>
+                    </div>
+                    <div class="form-group"><label class="form-label">名称</label><input type="text" class="form-input" id="srv-name" required placeholder="服务器昵称"></div>
+                    <div class="form-group"><label class="form-label">类型</label><select class="form-select" id="srv-type"><option value="emby">Emby</option><option value="jellyfin">Jellyfin</option><option value="sonarr">Sonarr</option><option value="radarr">Radarr</option></select></div>
+                    <div class="form-group"><label class="form-label">地址 (URL)</label><input type="url" class="form-input" id="srv-url" required placeholder="http://127.0.0.1:8096"></div>
+                    <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="srv-key" required placeholder="API Key"></div>
+                </div>
+
+                <div id="tab-content-policy" class="tab-content">
+                    <div class="form-group">
+                        <label class="form-label">注册模式</label>
+                        <select class="form-select" id="srv-reg-mode" onchange="onRegModeChange()">
+                            <option value="default">默认 (仅邀请/积分)</option>
+                            <option value="open">完全开放</option>
+                            <option value="count">名额限制</option>
+                            <option value="time">限时开放</option>
+                            <option value="external">外部验证</option>
+                            <option value="close">关闭注册</option>
+                        </select>
+                    </div>
+                    
+                    <div id="reg-extra-count" class="form-group" style="display:none">
+                        <label class="form-label">剩余名额</label>
+                        <input type="number" class="form-input" id="srv-reg-count">
+                    </div>
+                    <div id="reg-extra-time" class="form-group" style="display:none">
+                        <label class="form-label">截止时间</label>
+                        <input type="datetime-local" class="form-input" id="srv-reg-time-picker" onchange="updateTimestamp()">
+                        <input type="hidden" id="srv-reg-time"> 
+                    </div>
+                    <div id="reg-extra-ext" style="display:none">
+                        <div class="form-group"><label class="form-label">验证 URL 前缀</label><input type="text" class="form-input" id="srv-reg-url" placeholder="http://..."></div>
+                        <div class="form-group"><label class="form-label">解析代码 (Python 表达式)</label><textarea class="form-input" id="srv-reg-parser" placeholder="response.status_code == 200"></textarea></div>
+                    </div>
+
+                    <div class="form-group" style="display:flex; gap:10px">
+                        <div style="flex:1">
+                            <label class="form-label">账户有效期 (天)</label>
+                            <input type="number" class="form-input" id="srv-reg-days" placeholder="0为永久">
+                        </div>
+                        <div style="flex:1">
+                            <label class="form-label">邀请码有效期 (天)</label>
+                            <input type="number" class="form-input" id="srv-code-days" placeholder="默认30">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">用户协议 (TOS)</label>
+                        <textarea class="form-input" id="srv-tos" rows="4" placeholder="支持 Markdown 格式"></textarea>
+                    </div>
+
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>开启 NSFW 限制</span>
+                        <label class="switch"><input type="checkbox" id="srv-nsfw"><span class="slider"></span></label>
+                    </div>
+                    <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
+                    <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂 媒体库绑定</button>
+                </div>
+
+                <div id="tab-content-paths" class="tab-content">
+                    <div class="section-hint">将 Sonarr/Radarr 的容器路径映射到 Bot 的本地路径，以便 Bot 读取文件信息。</div>
+                    <div id="path-mappings-list"></div>
+                    <button type="button" class="btn btn-sm" onclick="addPathMapping()">+ 添加路径映射</button>
+                </div>
+
+                <div id="tab-content-advanced" class="tab-content">
+                    <div class="form-group">
+                        <label class="form-label">常规通知频道</label>
+                        <select class="form-select" id="srv-notify-topic"><option value="0">未设置</option></select>
+                    </div>
+                    <div class="form-group" id="req-topic-group">
+                        <label class="form-label">求片通知频道</label>
+                        <select class="form-select" id="srv-req-topic"><option value="0">未设置</option></select>
+                    </div>
+                    <div class="section-hint" style="margin-top:20px; color:var(--destructive-text-color)">危险区域</div>
+                    <button type="button" class="btn btn-danger" onclick="deleteServer()">删除此服务器</button>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <button type="submit" class="btn btn-primary" id="btn-save">保存配置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="nsfw-modal" style="z-index: 1100;">
+        <div class="modal">
+            <div class="modal-header"><span>NSFW 媒体库</span><span class="modal-close" onclick="closeModal('nsfw-modal')">关闭</span></div>
+            <div class="card" id="nsfw-list"><div class="state-text">加载中...</div></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="library-modal" style="z-index: 1100;">
+        <div class="modal">
+            <div class="modal-header"><span>媒体库绑定</span><span class="modal-close" onclick="closeModal('library-modal')">关闭</span></div>
+            <div class="card" id="lib-list"><div class="state-text">加载中...</div></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="binding-modal" style="z-index: 1200;">
+        <div class="modal">
+            <div class="modal-header"><span id="bind-title">配置绑定</span><span class="modal-close" onclick="closeModal('binding-modal')">返回</span></div>
+            <form id="binding-form" onsubmit="handleBindingSubmit(event)">
+                <input type="hidden" id="bind-lib-name">
+                <div class="form-group">
+                    <label class="form-label">Sonarr/Radarr 实例</label>
+                    <select class="form-select" id="bind-server" onchange="onBindServerChange()"><option value="">未绑定</option></select>
+                </div>
+                <div id="bind-details" style="display:none">
+                    <div class="form-group"><label class="form-label">质量配置</label><select class="form-select" id="bind-quality"></select></div>
+                    <div class="form-group"><label class="form-label">根目录</label><select class="form-select" id="bind-folder"></select></div>
+                </div>
+                <button type="submit" class="btn btn-primary">保存绑定</button>
+                <button type="button" class="btn btn-danger" onclick="unbindLibrary()">解除绑定</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready(); tg.expand();
+        let topicList = [], currentServerId = null;
+
+        async function api(endpoint, method = 'GET', body = null) {
+            const options = { method, headers: { 'X-Telegram-Init-Data': tg.initData, 'Content-Type': 'application/json' } };
+            if (body) options.body = JSON.stringify(body);
+            try {
+                const res = await fetch(`/api/settings${endpoint}`, options);
+                if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+                return await res.json();
+            } catch (e) { tg.showAlert(e.message); throw e; }
+        }
+
+        async function loadData() {
+            const [sys, admins, servers, topics] = await Promise.allSettled([
+                api('/system'), api('/admins'), api('/servers'), api('/topics')
+            ]);
+            if (topics.status === 'fulfilled') topicList = topics.value;
+            if (sys.status === 'fulfilled') {
+                for (const [k, v] of Object.entries(sys.value)) document.getElementById(`toggle-${k.split('_')[1]}`).checked = v;
+            }
+            renderServers(servers.status === 'fulfilled' ? servers.value : []);
+            renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
+        }
+
+        function renderAdmins(data) {
+            const list = document.getElementById('admin-list');
+            list.innerHTML = data.length ? '' : '<div class="state-text">无数据</div>';
+            data.forEach(u => {
+                list.innerHTML += `<div class="item"><div class="item-content"><span class="item-title">${u.name}</span><span class="item-subtitle">ID: ${u.id}</span></div><label class="switch"><input type="checkbox" ${u.is_bot_admin?'checked':''} onchange="toggleAdmin(${u.id}, this)"><span class="slider"></span></label></div>`;
+            });
+        }
+
+        function renderServers(data) {
+            const list = document.getElementById('server-list');
+            list.innerHTML = data.length ? '' : '<div class="state-text">无服务器</div>';
+            data.forEach(s => {
+                list.innerHTML += `<div class="item" onclick='openEditServer(${JSON.stringify(s)})'><div class="item-content"><span class="item-title">${s.name}</span><span class="item-subtitle">${s.server_type} • ${s.url}</span></div><span class="item-status" style="color:${s.is_enabled?'#34c759':'#ff3b30'}">●</span><div style="color:var(--hint-color);margin-left:8px">›</div></div>`;
+            });
+        }
+
+        // --- Server Edit ---
+        function openAddServerModal() {
+            currentServerId = null;
+            document.getElementById('server-form').reset();
+            document.getElementById('srv-type').disabled = false;
+            document.getElementById('srv-enabled').checked = true;
+            document.getElementById('srv-tabs').style.display = 'none';
+            switchTab('basic');
+            openModal('server-modal', '添加服务器');
+        }
+
+        function openEditServer(s) {
+            currentServerId = s.id;
+            document.getElementById('srv-name').value = s.name;
+            document.getElementById('srv-type').value = s.server_type;
+            document.getElementById('srv-type').disabled = true;
+            document.getElementById('srv-url').value = s.url;
+            document.getElementById('srv-key').value = "******";
+            document.getElementById('srv-enabled').checked = s.is_enabled;
+            
+            fillTopicSelect('srv-notify-topic', s.notify_topic_id);
+            fillTopicSelect('srv-req-topic', s.request_notify_topic_id);
+
+            const isMedia = ['emby', 'jellyfin'].includes(s.server_type);
+            document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
+            document.getElementById('tab-paths').style.display = isMedia ? 'none' : 'block';
+            document.getElementById('req-topic-group').style.display = isMedia ? 'none' : 'block';
+
+            if (isMedia) {
+                document.getElementById('srv-reg-mode').value = s.registration_mode || 'default';
+                document.getElementById('srv-reg-count').value = s.registration_count_limit;
+                
+                const ts = parseInt(s.registration_time_limit);
+                if (ts > 0) {
+                    const date = new Date(ts * 1000);
+                    const localIso = new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+                    document.getElementById('srv-reg-time-picker').value = localIso;
+                    document.getElementById('srv-reg-time').value = ts;
+                } else {
+                    document.getElementById('srv-reg-time-picker').value = "";
+                    document.getElementById('srv-reg-time').value = "0";
+                }
+
+                document.getElementById('srv-reg-url').value = s.registration_external_url || '';
+                document.getElementById('srv-reg-parser').value = s.registration_external_parser || '';
+                document.getElementById('srv-reg-days').value = s.registration_expiry_days;
+                document.getElementById('srv-code-days').value = s.code_expiry_days;
+                document.getElementById('srv-tos').value = s.tos || '';
+                document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
+                onRegModeChange();
+            } else {
+                renderPathMappings(s.path_mappings || []);
+            }
+
+            document.getElementById('srv-tabs').style.display = 'flex';
+            switchTab('basic');
+            openModal('server-modal', '编辑服务器');
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            const tabBtn = document.querySelector(`.tab[onclick="switchTab('${tabName}')"]`);
+            if (tabBtn) tabBtn.classList.add('active');
+            document.getElementById(`tab-content-${tabName}`).classList.add('active');
+        }
+
+        function onRegModeChange() {
+            const mode = document.getElementById('srv-reg-mode').value;
+            document.getElementById('reg-extra-count').style.display = mode === 'count' ? 'block' : 'none';
+            document.getElementById('reg-extra-time').style.display = mode === 'time' ? 'block' : 'none';
+            document.getElementById('reg-extra-ext').style.display = mode === 'external' ? 'block' : 'none';
+        }
+
+        function updateTimestamp() {
+            const val = document.getElementById('srv-reg-time-picker').value;
+            document.getElementById('srv-reg-time').value = val ? Math.floor(new Date(val).getTime() / 1000) : "0";
+        }
+
+        // --- Path Mappings (Updated Layout) ---
+        function renderPathMappings(mappings) {
+            const container = document.getElementById('path-mappings-list');
+            container.innerHTML = '';
+            mappings.forEach(m => addPathMapping(m.remote, m.local));
+        }
+
+        function addPathMapping(remote = '', local = '') {
+            const div = document.createElement('div');
+            div.className = 'mapping-item';
+            div.innerHTML = `
+                <input type="text" class="form-input mapping-input remote" placeholder="远程路径 (容器内/Remote)" value="${remote}">
+                <div class="mapping-arrow">⬇️ 映射到 (Mapped to)</div>
+                <input type="text" class="form-input mapping-input local" placeholder="本地路径 (宿主机/Local)" value="${local}">
+                <button type="button" class="btn btn-danger btn-sm" style="width:100%; margin-top:5px; background-color:transparent; color:var(--destructive-text-color); border:1px solid var(--destructive-text-color);" onclick="this.parentElement.remove()">删除此映射</button>
+            `;
+            document.getElementById('path-mappings-list').appendChild(div);
+        }
+
+        // --- NSFW Management ---
+        async function openNsfwModal() {
+            if (!currentServerId) return;
+            openModal('nsfw-modal');
+            const list = document.getElementById('nsfw-list');
+            list.innerHTML = '<div class="state-text">加载中...</div>';
+            try {
+                const libs = await api(`/servers/${currentServerId}/nsfw_libraries`);
+                list.innerHTML = '';
+                libs.forEach(l => {
+                    list.innerHTML += `
+                        <div class="item">
+                            <span class="item-title">${l.name}</span>
+                            <label class="switch">
+                                <input type="checkbox" ${l.is_nsfw ? 'checked' : ''} onchange="toggleNsfwLib('${l.id}')">
+                                <span class="slider"></span>
+                            </label>
+                        </div>`;
+                });
+            } catch (e) { list.innerHTML = `<div class="state-text">加载失败</div>`; }
+        }
+
+        async function toggleNsfwLib(libId) {
+            await api(`/servers/${currentServerId}/nsfw_libraries/${encodeURIComponent(libId)}/toggle`, 'POST');
+        }
+
+        // --- Library Binding ---
+        async function openLibraryModal() {
+            if (!currentServerId) return;
+            const list = document.getElementById('lib-list');
+            list.innerHTML = '<div class="state-text">加载中...</div>';
+            openModal('library-modal');
+            try {
+                const libs = await api(`/servers/${currentServerId}/libraries`);
+                list.innerHTML = '';
+                if(libs.length === 0) list.innerHTML = '<div class="state-text">无库</div>';
+                libs.forEach(lib => {
+                    const status = (lib.binding && lib.binding.server_id) ? `🟢 ${lib.binding.server_name}` : "🔴 未绑定";
+                    const el = document.createElement('div'); el.className = 'item';
+                    el.onclick = () => openBindingModal(lib);
+                    el.innerHTML = `<div class="item-content"><span class="item-title">${lib.name}</span><span class="item-subtitle">${status}</span></div><div>›</div>`;
+                    list.appendChild(el);
+                });
+            } catch (e) { list.innerHTML = '加载失败'; }
+        }
+
+        async function openBindingModal(lib) {
+            document.getElementById('bind-title').innerText = lib.name;
+            document.getElementById('bind-lib-name').value = lib.name;
+            const servers = await api('/bindings/options');
+            const sel = document.getElementById('bind-server');
+            sel.innerHTML = '<option value="">未绑定</option>';
+            servers.forEach(s => sel.add(new Option(`${s.name} (${s.type})`, s.id)));
+            
+            if (lib.binding && lib.binding.server_id) {
+                sel.value = lib.binding.server_id;
+                await loadArrResources(lib.binding.server_id, lib.binding);
+                document.getElementById('bind-details').style.display = 'block';
+            } else {
+                document.getElementById('bind-details').style.display = 'none';
+            }
+            openModal('binding-modal');
+        }
+
+        async function onBindServerChange() {
+            const sid = document.getElementById('bind-server').value;
+            document.getElementById('bind-details').style.display = sid ? 'block' : 'none';
+            if(sid) loadArrResources(sid);
+        }
+
+        async function loadArrResources(sid, binding=null) {
+            const qSel = document.getElementById('bind-quality'); qSel.innerHTML = '<option>加载中...</option>';
+            const fSel = document.getElementById('bind-folder'); fSel.innerHTML = '<option>加载中...</option>';
+            const res = await api(`/arr/${sid}/resources`);
+            qSel.innerHTML = ''; res.profiles.forEach(p => qSel.add(new Option(p.name, p.id, false, binding && binding.quality_profile_id == p.id)));
+            fSel.innerHTML = ''; res.folders.forEach(f => fSel.add(new Option(f.path, f.path, false, binding && binding.root_folder == f.path)));
+        }
+
+        async function handleBindingSubmit(e) {
+            e.preventDefault();
+            const payload = {
+                server_id: parseInt(document.getElementById('bind-server').value),
+                quality_profile_id: parseInt(document.getElementById('bind-quality').value),
+                root_folder: document.getElementById('bind-folder').value
+            };
+            await api(`/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'POST', payload);
+            closeModal('binding-modal'); openLibraryModal();
+        }
+
+        async function unbindLibrary() {
+            await api(`/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'DELETE');
+            closeModal('binding-modal'); openLibraryModal();
+        }
+
+        // --- Save Server ---
+        async function handleServerSubmit(e) {
+            e.preventDefault();
+            const payload = {
+                name: document.getElementById('srv-name').value,
+                url: document.getElementById('srv-url').value,
+                api_key: document.getElementById('srv-key').value,
+                is_enabled: document.getElementById('srv-enabled').checked,
+                notify_topic_id: parseInt(document.getElementById('srv-notify-topic').value) || 0,
+            };
+
+            const type = document.getElementById('srv-type').value;
+            if (['emby', 'jellyfin'].includes(type)) {
+                payload.registration_mode = document.getElementById('srv-reg-mode').value;
+                payload.registration_count_limit = parseInt(document.getElementById('srv-reg-count').value) || 0;
+                payload.registration_time_limit = document.getElementById('srv-reg-time').value || "0";
+                payload.registration_external_url = document.getElementById('srv-reg-url').value;
+                payload.registration_external_parser = document.getElementById('srv-reg-parser').value;
+                payload.registration_expiry_days = parseInt(document.getElementById('srv-reg-days').value) || 0;
+                payload.code_expiry_days = parseInt(document.getElementById('srv-code-days').value) || 30;
+                payload.tos = document.getElementById('srv-tos').value;
+                payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
+            } else {
+                payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
+                payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({
+                    remote: div.querySelector('.remote').value,
+                    local: div.querySelector('.local').value
+                })).filter(m => m.remote && m.local);
+            }
+
+            if (currentServerId) {
+                await api(`/servers/${currentServerId}`, 'PATCH', payload);
+            } else {
+                payload.server_type = type;
+                await api('/servers', 'POST', payload);
+            }
+            closeModal('server-modal');
+            loadData();
+        }
+
+        async function deleteServer() {
+            if(!confirm("确定删除？")) return;
+            await api(`/servers/${currentServerId}`, 'DELETE');
+            closeModal('server-modal');
+            loadData();
+        }
+
+        // Helpers
+        function fillTopicSelect(id, val) {
+            const sel = document.getElementById(id);
+            sel.innerHTML = '<option value="0">未设置</option>';
+            topicList.forEach(t => sel.add(new Option(t.name, t.id, false, t.id == val)));
+        }
+        function openModal(id, title=null) {
+            if(title) document.getElementById('modal-title').innerText = title;
+            document.querySelector(`#${id}`).style.display = 'flex';
+            setTimeout(() => document.querySelector(`#${id} .modal`).classList.add('open'), 10);
+        }
+        function closeModal(id) {
+            document.querySelector(`#${id} .modal`).classList.remove('open');
+            setTimeout(() => document.querySelector(`#${id}`).style.display = 'none', 300);
+        }
+        async function toggleAdmin(uid, cb) { try { await api(`/admins/${uid}/toggle`, 'POST'); } catch(e) { cb.checked = !cb.checked; } }
+        async function toggleSystem(key) { try { await api(`/system/${key}/toggle`, 'POST'); } catch(e) { document.getElementById(`toggle-${key.split('_')[1]}`).checked = !document.getElementById(`toggle-${key.split('_')[1]}`).checked; } }
+
+        loadData();
+    </script>
+</body>
+</html>

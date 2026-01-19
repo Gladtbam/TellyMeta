@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -7,12 +8,16 @@ import bot
 from core.config import get_settings, setup_logging
 from core.lifespan import lifespan
 from routes.webhooks import router as webhooks_router
+from routes.settings_api import router as settings_router
 
 setup_logging()
 settings = get_settings()
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(webhooks_router)
+app.include_router(settings_router)
+
+app.mount("/webapp", StaticFiles(directory="static", html=True), name="static")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
