@@ -163,20 +163,6 @@ class SettingsServices:
         await self._remove_and_close_client(server)
         await self._init_and_add_client(server)
 
-    async def update_server_mapping(self, server_id: int, mappings: dict[str, str]) -> Result:
-        """更新路径映射"""
-        server = await self.server_repo.get_by_id(server_id)
-        if not server:
-            return Result(False, "服务器不存在")
-
-        mapping_str = json.dumps(mappings)
-        await self.server_repo.update_basic_info(server_id, path_mappings=mapping_str)
-
-        if server.is_enabled:
-            await self._reload_server_client(server)
-
-        return Result(True, "✅ 路径映射已更新。")
-
     async def get_libraries_data(self, server_id: int) -> list[LibraryDto]:
         """获取服务器媒体库及绑定状态 (API)"""
         server = await self.server_repo.get_by_id(server_id)

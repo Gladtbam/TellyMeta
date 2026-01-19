@@ -214,6 +214,13 @@
                     <div class="form-group"><label class="form-label">类型</label><select class="form-select" id="srv-type"><option value="emby">Emby</option><option value="jellyfin">Jellyfin</option><option value="sonarr">Sonarr</option><option value="radarr">Radarr</option></select></div>
                     <div class="form-group"><label class="form-label">地址 (URL)</label><input type="url" class="form-input" id="srv-url" required placeholder="http://127.0.0.1:8096"></div>
                     <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="srv-key" required placeholder="API Key"></div>
+                    <div class="form-group">
+                        <label class="form-label">Webhook URL (点击复制)</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" class="form-input" id="srv-webhook" readonly onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');" style="background: #eee; color: #555;">
+                        </div>
+                        <div class="section-hint" style="margin: 4px 0 0 0;">请将此地址填入 Jellyfin/Emby/Sonarr/Radarr 的 Webhook 设置中。</div>
+                    </div>
                 </div>
 
                 <div id="tab-content-policy" class="tab-content">
@@ -388,6 +395,10 @@
             document.getElementById('srv-url').value = s.url;
             document.getElementById('srv-key').value = "******";
             document.getElementById('srv-enabled').checked = s.is_enabled;
+
+            const origin = window.location.origin;
+            const webhookPath = `/webhook/${s.server_type}?token=${s.webhook_token}`;
+            document.getElementById('srv-webhook').value = origin + webhookPath;
             
             fillTopicSelect('srv-notify-topic', s.notify_topic_id);
             fillTopicSelect('srv-req-topic', s.request_notify_topic_id);
