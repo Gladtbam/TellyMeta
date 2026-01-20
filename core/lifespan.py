@@ -117,7 +117,10 @@ async def lifespan(app: FastAPI):
                 match server.server_type:
                     case ServerType.SONARR:
                         app.state.sonarr_clients[server.id] = SonarrClient(
-                            client=httpx.AsyncClient(base_url=server.url),
+                            client=httpx.AsyncClient(
+                                base_url=server.url,
+                                timeout=httpx.Timeout(10.0, read=30.0)
+                                ),
                             api_key=server.api_key,
                             server_name = server.name,
                             path_mappings=mappings,
@@ -126,7 +129,10 @@ async def lifespan(app: FastAPI):
                         )
                     case ServerType.RADARR:
                         app.state.radarr_clients[server.id] = RadarrClient(
-                            client=httpx.AsyncClient(base_url=server.url),
+                            client=httpx.AsyncClient(
+                                base_url=server.url,
+                                timeout=httpx.Timeout(10.0, read=30.0)
+                                ),
                             api_key=server.api_key,
                             server_name = server.name,
                             path_mappings=mappings,

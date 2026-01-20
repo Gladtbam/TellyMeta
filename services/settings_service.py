@@ -101,44 +101,50 @@ class SettingsServices:
 
         if server.server_type == ServerType.EMBY:
             client = EmbyClient(
-                httpx.AsyncClient(
+                client=httpx.AsyncClient(
                     base_url=f"{server.url}/emby",
                     timeout=httpx.Timeout(10.0, read=30.0)
                     ),
-                server.api_key,
-                server.name,
-                server.notify_topic_id
+                api_key=server.api_key,
+                server_name=server.name,
+                notify_topic_id=server.notify_topic_id
             )
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.JELLYFIN:
             client = JellyfinClient(
-                httpx.AsyncClient(
+                client=httpx.AsyncClient(
                     base_url=server.url,
                     timeout=httpx.Timeout(10.0, read=30.0)
                     ),
-                server.api_key,
-                server.name,
-                server.notify_topic_id
+                api_key=server.api_key,
+                server_name=server.name,
+                notify_topic_id=server.notify_topic_id
             )
             self.media_clients[server.id] = client
         elif server.server_type == ServerType.SONARR:
             client = SonarrClient(
-                httpx.AsyncClient(base_url=server.url),
-                server.api_key,
-                server.name,
-                mappings,
-                server.notify_topic_id,
-                server.request_notify_topic_id
+                client=httpx.AsyncClient(
+                    base_url=server.url,
+                    timeout=httpx.Timeout(10.0, read=30.0)
+                    ),
+                api_key=server.api_key,
+                server_name=server.name,
+                path_mappings=mappings,
+                notify_topic_id=server.notify_topic_id,
+                request_notify_topic_id=server.request_notify_topic_id
             )
             self.sonarr_clients[server.id] = client
         elif server.server_type == ServerType.RADARR:
             client = RadarrClient(
-                httpx.AsyncClient(base_url=server.url),
-                server.api_key,
-                server.name,
-                mappings,
-                server.notify_topic_id,
-                server.request_notify_topic_id
+                client=httpx.AsyncClient(
+                    base_url=server.url,
+                    timeout=httpx.Timeout(10.0, read=30.0)
+                    ),
+                api_key=server.api_key,
+                server_name=server.name,
+                path_mappings=mappings,
+                notify_topic_id=server.notify_topic_id,
+                request_notify_topic_id=server.request_notify_topic_id
             )
             self.radarr_clients[server.id] = client
 
