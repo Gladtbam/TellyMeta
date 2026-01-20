@@ -12,12 +12,12 @@ from loguru import logger
 
 from clients.ai_client import AIClientWarper
 from clients.cached_tmdb_client import CachedTmdbClient
+from clients.cached_tvdb_client import CachedTvdbClient
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
-from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
 from core.initialization import check_sqlite_version, initialize_admin
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     )
 
     if settings.tvdb_api_key:
-        app.state.tvdb_client = TvdbClient(
+        app.state.tvdb_client = CachedTvdbClient(
             client=httpx.AsyncClient(base_url='https://api4.thetvdb.com/v4'),
             api_key=settings.tvdb_api_key
         )

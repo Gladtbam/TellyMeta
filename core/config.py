@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     ai_rpm: int | None = 60
     ai_rpd: int | None = None
     ai_tpm: int | None = None
-    ai_concurrency: int | None = None
+    ai_concurrency: int = 1
     qbittorrent_base_url: str = ''
     qbittorrent_username: str = ''
     qbittorrent_password: str = ''
