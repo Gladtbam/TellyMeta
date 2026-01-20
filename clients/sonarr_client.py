@@ -146,3 +146,17 @@ class SonarrClient(AuthenticatedClient):
         url = "/api/v3/qualityprofile"
         return await self.get(url,
             parser=lambda data: TypeAdapter(list[QualityProfileResource]).validate_python(data))
+
+    async def get_all_series(self) -> list[SeriesResource] | None:
+        """获取 Sonarr 中的所有剧集信息。
+        Returns:
+            list[SeriesResource] | None: 返回所有剧集信息的列表，如果查询失败则返回 None。
+        """
+        url = "/api/v3/series"
+        series_list = await self.get(url,
+            parser=lambda data: TypeAdapter(list[SeriesResource]).validate_python(data))
+
+        if series_list:
+            for series in series_list:
+                series.path = self.to_local_path(series.path)
+        return series_list

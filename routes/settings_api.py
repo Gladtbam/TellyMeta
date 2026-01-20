@@ -1,19 +1,24 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException, Request
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from clients.sonarr_client import SonarrClient
+from clients.tmdb_client import TmdbClient
+from clients.tvdb_client import TvdbClient
 from core.database import get_db
+from core.dependencies import (get_sonarr_clients, get_tmdb_client,
+                               get_tvdb_client)
 from core.webapp_auth import validate_admin_access
-from models.orm import ServerInstance
-
-from models.schemas import (
-    AdminDto, ArrServerDto, BindingUpdate, LibraryDto, NsfwLibraryDto,
-    QualityProfileDto, RootFolderDto, ServerCreate, ServerDto, ServerUpdate,
-    SystemConfigResponse, ToggleResponse, TopicDto
-)
+from models.orm import ServerInstance, ServerType
+from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
+                            NsfwLibraryDto, QualityProfileDto, RootFolderDto,
+                            ServerCreate, ServerDto, ServerUpdate,
+                            SystemConfigResponse, ToggleResponse, TopicDto)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.settings_service import SettingsServices
+from workers.nfo_worker import rebuild_sonarr_metadata_task
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -262,3 +267,37 @@ async def delete_binding(request: Request, library_name: str, session: AsyncSess
         return {"success": True, "message": "已解除绑定"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.post("/servers/{server_id}/rebuild_metadata", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
+async def rebuild_server_metadata(
+    request: Request,
+    server_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+    sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
+    tmdb_client: TmdbClient = Depends(get_tmdb_client),
+    tvdb_client: TvdbClient = Depends(get_tvdb_client)
+):
+    """触发 Sonarr 元数据重建任务"""
+    repo = ServerRepository(session)
+    server = await repo.get_by_id(server_id)
+
+    if not server:
+        raise HTTPException(status_code=404, detail="服务器不存在")
+
+    if server.server_type != ServerType.SONARR:
+        raise HTTPException(status_code=400, detail="目前仅支持 Sonarr 服务器")
+
+    client = sonarr_clients.get(server_id)
+    if not client:
+        raise HTTPException(status_code=500, detail="Sonarr 客户端未连接")
+
+    # 添加后台任务
+    background_tasks.add_task(
+        rebuild_sonarr_metadata_task,
+        client,
+        tmdb_client,
+        tvdb_client
+    )
+
+    return {"success": True, "message": "元数据重建任务已在后台启动，请查看日志关注进度。"}

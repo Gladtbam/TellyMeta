@@ -289,6 +289,11 @@
                         <label class="form-label">求片通知频道</label>
                         <select class="form-select" id="srv-req-topic"><option value="0">未设置</option></select>
                     </div>
+                    <div id="sonarr-actions" style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
+                        <div class="section-hint">高级维护工具</div>
+                        <button type="button" class="btn btn-sm" onclick="triggerRebuildMetadata()">🔄 重建元数据 (生成 NFO)</button>
+                        <div class="section-hint">此操作将遍历所有剧集并重新生成 NFO 文件，耗时较长，请勿频繁点击。</div>
+                    </div>
                     <div class="section-hint" style="margin-top:20px; color:var(--destructive-text-color)">危险区域</div>
                     <button type="button" class="btn btn-danger" onclick="deleteServer()">删除此服务器</button>
                 </div>
@@ -408,6 +413,11 @@
             document.getElementById('tab-paths').style.display = isMedia ? 'none' : 'block';
             document.getElementById('req-topic-group').style.display = isMedia ? 'none' : 'block';
 
+            const sonarrActions = document.getElementById('sonarr-actions');
+            if (sonarrActions) {
+                sonarrActions.style.display = (s.server_type === 'sonarr') ? 'block' : 'none';
+            }
+
             if (isMedia) {
                 document.getElementById('srv-reg-mode').value = s.registration_mode || 'default';
                 document.getElementById('srv-reg-count').value = s.registration_count_limit;
@@ -476,6 +486,19 @@
                 <button type="button" class="btn btn-danger btn-sm" style="width:100%; margin-top:5px; background-color:transparent; color:var(--destructive-text-color); border:1px solid var(--destructive-text-color);" onclick="this.parentElement.remove()">删除此映射</button>
             `;
             document.getElementById('path-mappings-list').appendChild(div);
+        }
+
+        async function triggerRebuildMetadata() {
+            if (!confirm("确定要重建所有媒体的元数据吗？这可能需要很长时间，并且会占用大量 API 请求配额。")) return;
+            
+            try {
+                const res = await api(`/servers/${currentServerId}/rebuild_metadata`, 'POST');
+                if (res.success) {
+                    tg.showAlert(res.message);
+                }
+            } catch (e) {
+                //
+            }
         }
 
         // --- NSFW Management ---
