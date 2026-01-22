@@ -4,9 +4,43 @@ import textwrap
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
 
+
+settings = get_settings()
+
+def check_required_settings():
+    """检查启动必须的配置项"""
+    missing = []
+    if not settings.telegram_api_id:
+        missing.append("telegram_api_id")
+    if not settings.telegram_api_hash:
+        missing.append("telegram_api_hash")
+    if not settings.telegram_bot_token:
+        missing.append("telegram_bot_token")
+    if not settings.telegram_bot_name:
+        missing.append("telegram_bot_name")
+    # if not settings.telegram_chat_id:
+    #     missing.append("telegram_chat_id")
+    if not settings.telegram_webapp_url:
+        missing.append("telegram_webapp_url")
+
+    if missing:
+        logger.error("❌ 启动失败：缺少必要的配置项: {}", ", ".join(missing))
+        logger.error("请在 .env 文件或环境变量中填入这些配置。")
+        sys.exit(textwrap.dedent(f"""\
+            ==================================================================
+            |                      错误提示                       |
+            ==================================================================
+            | 启动失败：缺少必要的配置项: {', '.join(missing)}。
+            | 请在 .env 文件或环境变量中填入这些配置。
+            ==================================================================
+            """))
+    else:
+        logger.info("所有必要的配置项均已设置。")
 
 def check_sqlite_version():
     """检查SQLite版本，确保其支持所需的功能"""

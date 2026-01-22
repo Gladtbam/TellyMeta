@@ -20,7 +20,8 @@ from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
-from core.initialization import check_sqlite_version, initialize_admin
+from core.initialization import (check_required_settings, check_sqlite_version,
+                                 initialize_admin)
 from core.scheduler_jobs import (ban_expired_users, cleanup_api_cache_task,
                                  cleanup_inactive_users,
                                  delete_expired_banned_users, settle_scores)
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     time.tzset()
     logger.info("时区已设置为 {}", settings.timezone)
 
+    check_required_settings()
     check_sqlite_version()
 
     logger.info("启动应用程序生命周期上下文")
