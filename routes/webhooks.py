@@ -40,10 +40,10 @@ async def sonarr_webhook(
     payload: SonarrPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
-    tmdb_client: TmdbClient = Depends(get_tmdb_client),
-    tvdb_client: TvdbClient = Depends(get_tvdb_client),
+    tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
+    tvdb_client: TvdbClient | None = Depends(get_tvdb_client),
     task_queue: asyncio.Queue = Depends(get_task_queue),
-    qb_client: QbittorrentClient = Depends(get_qb_client),
+    qb_client: QbittorrentClient | None = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
@@ -54,7 +54,8 @@ async def sonarr_webhook(
     if isinstance(payload, SonarrWebhookSeriesAddPayload):
         if mapped_path := client.to_local_path(payload.series.path):
             payload.series.path = mapped_path
-        asyncio.create_task(create_series_nfo(payload, tmdb_client))
+        if tmdb_client:
+            asyncio.create_task(create_series_nfo(payload, tmdb_client))
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -67,10 +68,11 @@ async def sonarr_webhook(
         if payload.episodeFile and payload.episodeFile.path and 'VCB-Studio' not in payload.episodeFile.path:
             if mapped_path := client.to_local_path(payload.episodeFile.path):
                 payload.episodeFile.path = mapped_path
-            asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
+            if tmdb_client:
+                asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
             await task_queue.put(Path(payload.episodeFile.path))
 
-        if payload.downloadId:
+        if payload.downloadId and qb_client:
             asyncio.create_task(qb_client.torrents_set_share_limits(
                 torrent_hash=payload.downloadId,
                 seeding_time_limit=settings.qbittorrent_torrent_limit
@@ -97,7 +99,7 @@ async def radarrarr_webhook(
     server_instance: ServerInstance = Depends(get_server_by_token),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     task_queue: asyncio.Queue = Depends(get_task_queue),
-    qb_client: QbittorrentClient = Depends(get_qb_client),
+    qb_client: QbittorrentClient | None = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
     """处理来自 Radarr 的 Webhook"""
@@ -111,7 +113,7 @@ async def radarrarr_webhook(
                 payload.movieFile.path = mapped_path
             await task_queue.put(Path(payload.movieFile.path))
 
-        if payload.downloadId:
+        if payload.downloadId and qb_client:
             asyncio.create_task(qb_client.torrents_set_share_limits(
                 torrent_hash=payload.downloadId,
                 seeding_time_limit=settings.qbittorrent_torrent_limit

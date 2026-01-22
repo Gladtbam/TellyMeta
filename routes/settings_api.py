@@ -275,10 +275,13 @@ async def rebuild_server_metadata(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
-    tmdb_client: TmdbClient = Depends(get_tmdb_client),
-    tvdb_client: TvdbClient = Depends(get_tvdb_client)
+    tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
+    tvdb_client: TvdbClient | None = Depends(get_tvdb_client)
 ):
     """触发 Sonarr 元数据重建任务"""
+    if not tmdb_client:
+        raise HTTPException(status_code=400, detail="TMDB API Key 未配置，无法执行 NFO 重建任务")
+
     repo = ServerRepository(session)
     server = await repo.get_by_id(server_id)
 

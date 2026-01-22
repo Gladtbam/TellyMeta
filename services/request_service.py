@@ -36,8 +36,8 @@ class RequestService:
         self.notification_service = NotificationService(app)
         self._sonarr_clients: dict[int, SonarrClient] = app.state.sonarr_clients
         self._radarr_clients: dict[int, RadarrClient] = app.state.radarr_clients
-        self.tmdb_client: TmdbClient = app.state.tmdb_client
-        self.tvdb_client: TvdbClient = app.state.tvdb_client
+        self.tmdb_client: TmdbClient | None = app.state.tmdb_client
+        self.tvdb_client: TvdbClient | None = app.state.tvdb_client
         self.client: TelethonClientWarper = app.state.telethon_client
 
     async def _get_client_by_library(self, library_name: str) -> tuple[SonarrClient | RadarrClient | None, int | None]:

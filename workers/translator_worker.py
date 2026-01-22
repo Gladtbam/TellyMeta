@@ -72,7 +72,7 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
     """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。"""
     from main import app
     scheduler: AsyncIOScheduler = app.state.scheduler
-    tmdb_client: TmdbClient = app.state.tmdb_client
+    tmdb_client: TmdbClient | None = app.state.tmdb_client
     media_clients: dict[int, MediaService] = app.state.media_clients
     ai_client: AIClientWarper = app.state.ai_client
 
@@ -93,7 +93,10 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
     tmdb_overview: str | None = None
 
     if item.Type == 'Episode':
-        tmdb_ep = await _get_tmdb_episode_info(item, tmdb_client, media_client)
+        if not tmdb_client:
+            tmdb_ep = None
+        else:
+            tmdb_ep = await _get_tmdb_episode_info(item, tmdb_client, media_client)
         if tmdb_ep:
             tmdb_overview = tmdb_ep.overview
             # 过滤无效标题
@@ -103,7 +106,7 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
     # 电影或剧集处理 (Movie / Series) # Radarr 能够提供足够的中文元数据，因此跳过Movie
     else:
         imdb_id = item.ProviderIds.get('Imdb') or item.ProviderIds.get('IMDB')
-        if imdb_id:
+        if imdb_id and tmdb_client:
             tmdb_find_res = await tmdb_client.find_info_by_external_id('imdb_id', imdb_id)
             if tmdb_find_res:
                 res = None

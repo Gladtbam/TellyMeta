@@ -62,16 +62,22 @@ async def lifespan(app: FastAPI):
     else:
         app.state.ai_client = None
 
-    app.state.qb_client = QbittorrentClient(
-        client=httpx.AsyncClient(base_url=settings.qbittorrent_base_url),
-        username=settings.qbittorrent_username,
-        password=settings.qbittorrent_password
-    )
+    if settings.qbittorrent_base_url:
+        app.state.qb_client = QbittorrentClient(
+            client=httpx.AsyncClient(base_url=settings.qbittorrent_base_url),
+            username=settings.qbittorrent_username,
+            password=settings.qbittorrent_password
+        )
+    else:
+        app.state.qb_client = None
 
-    app.state.tmdb_client = CachedTmdbClient(
-        client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
-        api_key=settings.tmdb_api_key
-    )
+    if settings.tmdb_api_key:
+        app.state.tmdb_client = CachedTmdbClient(
+            client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
+            api_key=settings.tmdb_api_key
+        )
+    else:
+        app.state.tmdb_client = None
 
     if settings.tvdb_api_key:
         app.state.tvdb_client = CachedTvdbClient(
@@ -222,7 +228,8 @@ async def lifespan(app: FastAPI):
         app.state.scheduler.shutdown(wait=True)
         logger.info("任务计划程序已关闭")
 
-    await app.state.qb_client.close()
+    if app.state.qb_client:
+        await app.state.qb_client.close()
     if app.state.tvdb_client:
         await app.state.tvdb_client.close()
 

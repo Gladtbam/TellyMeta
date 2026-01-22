@@ -30,11 +30,11 @@ def get_ai_client(request: Request) -> AIClientWarper | None:
     """获取 AI 客户端实例。"""
     return request.app.state.ai_client
 
-def get_qb_client(request: Request) -> QbittorrentClient:
+def get_qb_client(request: Request) -> QbittorrentClient | None:
     """获取 qBittorrent 客户端实例。"""
     return request.app.state.qb_client
 
-def get_tmdb_client(request: Request) -> TmdbClient:
+def get_tmdb_client(request: Request) -> TmdbClient | None:
     """获取 TMDB 客户端实例。"""
     return request.app.state.tmdb_client
 

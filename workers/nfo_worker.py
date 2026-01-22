@@ -144,10 +144,13 @@ async def create_episode_nfo_from_resource(
 
 async def rebuild_sonarr_metadata_task(
     sonarr_client: SonarrClient,
-    tmdb_client: TmdbClient,
+    tmdb_client: TmdbClient | None,
     tvdb_client: TvdbClient | None
 ) -> None:
     """遍历 Sonarr 库并重建所有 NFO"""
+    if not tmdb_client:
+        logger.error("TMDB 客户端未配置，无法执行 Sonarr 元数据重建任务")
+        return
     logger.info("开始重建 Sonarr ({}) 元数据...", sonarr_client.server_name)
 
     try:
