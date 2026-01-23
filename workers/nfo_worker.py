@@ -3,8 +3,11 @@ import re
 from pathlib import Path
 
 import aiofiles
+import aiofiles.os as aio_os
 from loguru import logger
+from lxml import etree
 
+from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
@@ -312,3 +315,106 @@ async def create_episode_nfo(
 
     nfo_path = Path(payload.episodeFile.path).with_suffix('.nfo')
     await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
+
+def _clean_nfo_xml_sync(file_path: Path) -> bool:
+    """使用 lxml 清洗 NFO 文件中的 http 图片链接 (同步方法)"""
+    try:
+        parser = etree.XMLParser(remove_blank_text=True, strip_cdata=False, recover=True)
+        tree = etree.parse(str(file_path), parser)
+        root = tree.getroot()
+
+        modified = False
+
+        target_tags = ['thumb', 'poster', 'fanart']
+
+        for tag_name in target_tags:
+            for element in root.findall(tag_name):
+                if element.text and (element.text.strip().startswith('http') or element.text.strip().startswith('https')):
+                    root.remove(element)
+                    modified = True
+
+        for fanart in root.findall('fanart'):
+            for thumb in fanart.findall('thumb'):
+                if thumb.text and (thumb.text.strip().startswith('http') or thumb.text.strip().startswith('https')):
+                    fanart.remove(thumb)
+                    modified = True
+
+            if len(list(fanart)) == 0:
+                root.remove(fanart)
+                modified = True
+
+        if modified:
+            tree.write(str(file_path), encoding='utf-8', xml_declaration=True, pretty_print=True)
+            return True
+    except Exception as e:
+        logger.error(f"清洗 NFO 文件失败 {file_path}: {e}")
+    return False
+
+async def clean_radarr_nfo(movie_path: str | Path) -> None:
+    """清洗指定电影目录下的 NFO 文件"""
+    path = Path(movie_path)
+    if not await aio_os.path.exists(path):
+        return
+
+    ignore_file = path / '.ignore'
+    if not await aio_os.path.exists(ignore_file):
+        try:
+            async with aiofiles.open(ignore_file, 'w', encoding='utf-8') as f:
+                await f.write("# Ignore file created by TellyMeta to prevent media server scanning.\n")
+            logger.debug(f"已创建忽略文件: {ignore_file}")
+        except OSError as e:
+            logger.error(f"创建忽略文件失败 (IO错误): {ignore_file} - {e}")
+    await asyncio.sleep(5)  # 等待文件系统稳定
+    nfo_files = []
+
+    try:
+        for f in await aio_os.listdir(path):
+            if f.lower().endswith('.nfo'):
+                nfo_files.append(path / f)
+    except Exception:
+        pass
+
+    loop = asyncio.get_running_loop()
+
+    for nfo_file in nfo_files:
+        if await aio_os.path.exists(nfo_file):
+            logger.debug(f"正在检查 NFO: {nfo_file}")
+            is_cleaned = await loop.run_in_executor(None, _clean_nfo_xml_sync, nfo_file)
+            if is_cleaned:
+                logger.info(f"已清洗 NFO 中的在线链接: {nfo_file}")
+
+    if await aio_os.path.exists(ignore_file):
+        try:
+            await aio_os.remove(ignore_file)
+            logger.debug(f"已删除忽略文件: {ignore_file}")
+        except OSError as e:
+            logger.error(f"删除忽略文件失败 (IO错误): {ignore_file} - {e}")
+
+async def rebuild_radarr_nfo_clean_task(
+    radarr_client: RadarrClient
+) -> None:
+    """遍历 Radarr 库并清洗所有 NFO"""
+    logger.info("开始清洗 Radarr ({}) NFO 元数据...", radarr_client.server_name)
+
+    try:
+        all_movies = await radarr_client.get_all_movies()
+        if not all_movies:
+            logger.warning("Radarr 库为空或获取失败。")
+            return
+
+        total = len(all_movies)
+        logger.info("共获取到 {} 部电影，开始处理...", total)
+
+        for index, movie in enumerate(all_movies, 1):
+            if not movie.path:
+                continue
+
+            if index % 20 == 0:
+                await asyncio.sleep(0.1)
+
+            await clean_radarr_nfo(movie.path)
+
+        logger.info("Radarr ({}) NFO 清洗完成。", radarr_client.server_name)
+
+    except Exception as e:
+        logger.exception("Radarr NFO 清洗任务异常: {}", e)

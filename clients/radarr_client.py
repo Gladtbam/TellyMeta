@@ -137,3 +137,14 @@ class RadarrClient(AuthenticatedClient):
         url = "/api/v3/qualityprofile"
         return await self.get(url,
             parser=lambda data: TypeAdapter(list[QualityProfileResource]).validate_python(data))
+
+    async def get_all_movies(self) -> list[MovieResource] | None:
+        """获取 Radarr 中的所有电影信息。"""
+        url = "/api/v3/movie"
+        response = await self.get(url,
+            parser=lambda data: TypeAdapter(list[MovieResource]).validate_python(data))
+
+        if response:
+            for movie in response:
+                movie.path = self.to_local_path(movie.path)
+        return response

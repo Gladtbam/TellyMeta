@@ -3,11 +3,12 @@ import json
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.database import get_db
-from core.dependencies import (get_sonarr_clients, get_tmdb_client,
+from core.dependencies import (get_radarr_clients, get_sonarr_clients, get_tmdb_client,
                                get_tvdb_client)
 from core.webapp_auth import validate_admin_access
 from models.orm import ServerInstance, ServerType
@@ -18,7 +19,7 @@ from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.settings_service import SettingsServices
-from workers.nfo_worker import rebuild_sonarr_metadata_task
+from workers.nfo_worker import rebuild_radarr_nfo_clean_task, rebuild_sonarr_metadata_task
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -306,3 +307,32 @@ async def rebuild_server_metadata(
     )
 
     return {"success": True, "message": "元数据重建任务已在后台启动，请查看日志关注进度。"}
+
+@router.post("/servers/{server_id}/clean_nfo", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
+async def clean_server_nfo(
+    request: Request,
+    server_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+    radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients)
+):
+    """触发 Radarr NFO 清洗任务"""
+    repo = ServerRepository(session)
+    server = await repo.get_by_id(server_id)
+
+    if not server:
+        raise HTTPException(status_code=404, detail="服务器不存在")
+
+    if server.server_type != ServerType.RADARR:
+        raise HTTPException(status_code=400, detail="目前仅支持 Radarr 服务器进行 NFO 清洗")
+
+    client = radarr_clients.get(server_id)
+    if not client:
+        raise HTTPException(status_code=500, detail="Radarr 客户端未连接")
+
+    background_tasks.add_task(
+        rebuild_radarr_nfo_clean_task,
+        client
+    )
+
+    return {"success": True, "message": "NFO 清洗任务已在后台启动，请查看日志关注进度。"}

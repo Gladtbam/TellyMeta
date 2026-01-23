@@ -28,7 +28,7 @@ from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
 from services.media_service import MediaService
 from services.notification_service import NotificationService
-from workers.nfo_worker import create_episode_nfo, create_series_nfo
+from workers.nfo_worker import clean_radarr_nfo, create_episode_nfo, create_series_nfo
 from workers.translator_worker import (cancel_translate_media_item,
                                        translate_media_item)
 
@@ -113,6 +113,9 @@ async def radarrarr_webhook(
                 payload.movieFile.path = mapped_path
             await task_queue.put(Path(payload.movieFile.path))
 
+        if local_folder_path := client.to_local_path(payload.movie.folderPath):
+            asyncio.create_task(clean_radarr_nfo(local_folder_path))
+
         if payload.downloadId and qb_client:
             asyncio.create_task(qb_client.torrents_set_share_limits(
                 torrent_hash=payload.downloadId,
@@ -131,6 +134,8 @@ async def radarrarr_webhook(
                 customFormatInfo=payload.customFormatInfo
             )
     elif isinstance(payload, RadarrWebhookAddedPayload):
+        if local_folder_path := client.to_local_path(payload.movie.folderPath):
+            asyncio.create_task(clean_radarr_nfo(local_folder_path))
         if client.notify_topic_id:
             await notify_service.send_to_topic(
                 topic_id=client.notify_topic_id,
