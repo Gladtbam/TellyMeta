@@ -130,11 +130,13 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
     service = SettingsServices(request.app, session)
     repo = ServerRepository(session)
 
-    # 1. 状态切换
-    if data.is_enabled is not None:
+    # 状态切换
+    current_server = await repo.get_by_id(server_id)
+
+    if current_server and data.is_enabled is not None and current_server.is_enabled != data.is_enabled:
         await service.toggle_server_status(server_id)
 
-    # 2. 基础信息
+    # 基础信息
     update_dict = {}
     if data.name:
         update_dict['name'] = data.name
@@ -145,18 +147,18 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
     if data.tos is not None:
         update_dict['tos'] = data.tos
 
-    # 3. 路径映射 (List -> JSON)
+    # 路径映射 (List -> JSON)
     if data.path_mappings is not None:
         mapping_dict = {m.remote: m.local for m in data.path_mappings if m.remote and m.local}
         update_dict['path_mappings'] = json.dumps(mapping_dict)
 
-    # 4. 高级配置
+    # 高级配置
     if data.notify_topic_id is not None:
         await repo.update_notify_config(server_id, notify_topic_id=data.notify_topic_id)
     if data.request_notify_topic_id is not None:
         await repo.update_notify_config(server_id, request_notify_topic_id=data.request_notify_topic_id)
 
-    # 5. 注册策略
+    # 注册策略
     policy_kwargs = {}
     if data.registration_mode:
         policy_kwargs['mode'] = data.registration_mode
@@ -172,7 +174,7 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
     if policy_kwargs:
         await repo.update_policy_config(server_id, **policy_kwargs)
 
-    # 6. 有效期与 NSFW (Global for server)
+    # 有效期与 NSFW (Global for server)
     expiry_kwargs = {}
     if data.registration_expiry_days is not None:
         expiry_kwargs['expiry_days'] = data.registration_expiry_days
