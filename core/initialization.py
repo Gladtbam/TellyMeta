@@ -23,8 +23,8 @@ def check_required_settings():
         missing.append("telegram_bot_token")
     if not settings.telegram_bot_name:
         missing.append("telegram_bot_name")
-    # if not settings.telegram_chat_id:
-    #     missing.append("telegram_chat_id")
+    if not settings.telegram_chat_id:
+        missing.append("telegram_chat_id")
     if not settings.telegram_webapp_url:
         missing.append("telegram_webapp_url")
 
