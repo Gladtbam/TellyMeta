@@ -15,8 +15,8 @@ from core.template_manager import template_manager
 from models.sonarr import (EpisodeResource, SeriesResource,
                            SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
-from models.tmdb import TmdbEpisode, TmdbTvSeries
-from models.tvdb import TvdbData, TvdbEpisodesData, TvdbPayload
+from models.tmdb import TmdbEpisode
+from models.tvdb import TvdbData, TvdbEpisodesData
 
 
 async def _generate_and_save_nfo(template_name: str, context: dict, file_path: Path):
@@ -64,10 +64,16 @@ async def create_episode_nfo_from_resource(
     series: SeriesResource,
     episode: EpisodeResource,
     tmdb: TmdbClient,
-    tvdb: TvdbClient | None = None
+    tvdb: TvdbClient | None = None,
+    is_override: bool = True
 ) -> None:
     """从 API 资源对象创建单集 NFO"""
     if not episode.hasFile or not episode.episodeFile or not episode.episodeFile.path:
+        return
+
+    nfo_path = Path(episode.episodeFile.path).with_suffix('.nfo')
+    if await aio_os.path.exists(nfo_path) and not is_override:
+        logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
     tvdb_id = episode.tvdbId
@@ -142,7 +148,7 @@ async def create_episode_nfo_from_resource(
         "tmdb_id": tmdb_ep.id if tmdb_ep else None
     }
 
-    nfo_path = Path(episode.episodeFile.path).with_suffix('.nfo')
+    # nfo_path = Path(episode.episodeFile.path).with_suffix('.nfo')
     await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
 
 async def rebuild_sonarr_metadata_task(
@@ -170,17 +176,13 @@ async def rebuild_sonarr_metadata_task(
                 continue
             logger.info("[{}/{}] 处理剧集: {}", index, total, series.title)
 
-            # 1. 生成 tvshow.nfo
             await create_series_nfo_from_resource(series, tmdb_client, tvdb_client)
 
-            # 2. 获取剧集的所有集数信息
             episodes = await sonarr_client.get_episode_by_series_id(series.id)
             if episodes:
                 for ep in episodes:
-                    # 仅为已下载的文件生成 NFO
                     if ep.hasFile and ep.episodeFile:
                         await create_episode_nfo_from_resource(series, ep, tmdb_client, tvdb_client)
-                        # 简单的速率限制，避免被 TMDB/TVDB 封禁
                         await asyncio.sleep(0.2)
 
             await asyncio.sleep(1) # 剧集间间隔
@@ -275,7 +277,7 @@ async def create_episode_nfo(
             tmdb_season = await tmdb.get_tv_seasons_details(series_tmdb_id, episode.seasonNumber)
 
             if not tmdb_season:
-                logger.warning(f"获取 TMDB S{episode.seasonNumber} 失败，尝试获取最新季进行匹配")
+                logger.warning("获取 TMDB S{} 失败，尝试获取最新季进行匹配", episode.seasonNumber)
                 series_info = await tmdb.get_tv_series_details(series_tmdb_id)
                 if series_info and series_info.seasons:
                     last_season = series_info.seasons[-1]
@@ -316,6 +318,52 @@ async def create_episode_nfo(
     nfo_path = Path(payload.episodeFile.path).with_suffix('.nfo')
     await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
 
+async def handle_series_add_metadata(
+    client: SonarrClient,
+    payload: SonarrWebhookSeriesAddPayload,
+    tmdb: TmdbClient,
+    tvdb: TvdbClient | None = None
+) -> None:
+    """处理剧集添加事件：生成剧集 NFO 并尝试为已存在的集数生成 NFO"""
+    ignore_file = Path(payload.series.path) / '.ignore'
+    if not await aio_os.path.exists(ignore_file):
+        try:
+            async with aiofiles.open(ignore_file, 'w', encoding='utf-8') as f:
+                await f.write("# Ignore file created by TellyMeta to prevent media server scanning.\n")
+            logger.debug("已创建忽略文件: {}", ignore_file)
+        except OSError as e:
+            logger.error("创建忽略文件失败 (IO错误): {} - {}", ignore_file, e)
+
+    await create_series_nfo(payload, tmdb, tvdb)
+
+    await asyncio.sleep(60)
+
+    logger.info("正在为新添加的剧集 {} 检查现有集数...", payload.series.title)
+    try:
+        episodes = await client.get_episode_by_series_id(payload.series.id)
+        if episodes:
+            count = 0
+            for ep in episodes:
+                if ep.hasFile and ep.episodeFile and ep.episodeFile.path:
+
+                    if client.path_mappings:
+                        ep.episodeFile.path = client.to_local_path(ep.episodeFile.path)
+
+                    await create_episode_nfo_from_resource(payload.series, ep, tmdb, tvdb, False) # type: ignore
+                    count += 1
+
+            if count > 0:
+                logger.info("已补全剧集 {} 的 {} 个现有文件 NFO", payload.series.title, count)
+    except Exception as e:
+        logger.error("为新剧集生成单集 NFO 失败: {}", e)
+
+    if await aio_os.path.exists(ignore_file):
+        try:
+            await aio_os.remove(ignore_file)
+            logger.debug("已删除忽略文件: {}", ignore_file)
+        except OSError as e:
+            logger.error("删除忽略文件失败 (IO错误): {} - {}", ignore_file, e)
+
 def _clean_nfo_xml_sync(file_path: Path) -> bool:
     """使用 lxml 清洗 NFO 文件中的 http 图片链接 (同步方法)"""
     try:
@@ -347,7 +395,7 @@ def _clean_nfo_xml_sync(file_path: Path) -> bool:
             tree.write(str(file_path), encoding='utf-8', xml_declaration=True, pretty_print=True)
             return True
     except Exception as e:
-        logger.error(f"清洗 NFO 文件失败 {file_path}: {e}")
+        logger.error("清洗 NFO 文件失败 {}: {e}", file_path, e)
     return False
 
 async def clean_radarr_nfo(movie_path: str | Path) -> None:
@@ -361,9 +409,9 @@ async def clean_radarr_nfo(movie_path: str | Path) -> None:
         try:
             async with aiofiles.open(ignore_file, 'w', encoding='utf-8') as f:
                 await f.write("# Ignore file created by TellyMeta to prevent media server scanning.\n")
-            logger.debug(f"已创建忽略文件: {ignore_file}")
+            logger.debug("已创建忽略文件: {}", ignore_file)
         except OSError as e:
-            logger.error(f"创建忽略文件失败 (IO错误): {ignore_file} - {e}")
+            logger.error("创建忽略文件失败 (IO错误): {} - {}", ignore_file, e)
     await asyncio.sleep(5)  # 等待文件系统稳定
     nfo_files = []
 
@@ -378,17 +426,17 @@ async def clean_radarr_nfo(movie_path: str | Path) -> None:
 
     for nfo_file in nfo_files:
         if await aio_os.path.exists(nfo_file):
-            logger.debug(f"正在检查 NFO: {nfo_file}")
+            logger.debug("正在检查 NFO: {}", nfo_file)
             is_cleaned = await loop.run_in_executor(None, _clean_nfo_xml_sync, nfo_file)
             if is_cleaned:
-                logger.info(f"已清洗 NFO 中的在线链接: {nfo_file}")
+                logger.info("已清洗 NFO 中的在线链接: {}", nfo_file)
 
     if await aio_os.path.exists(ignore_file):
         try:
             await aio_os.remove(ignore_file)
-            logger.debug(f"已删除忽略文件: {ignore_file}")
+            logger.debug("已删除忽略文件: {}", ignore_file)
         except OSError as e:
-            logger.error(f"删除忽略文件失败 (IO错误): {ignore_file} - {e}")
+            logger.error("删除忽略文件失败 (IO错误): {} - {}", ignore_file, e)
 
 async def rebuild_radarr_nfo_clean_task(
     radarr_client: RadarrClient

@@ -28,7 +28,8 @@ from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
 from services.media_service import MediaService
 from services.notification_service import NotificationService
-from workers.nfo_worker import clean_radarr_nfo, create_episode_nfo, create_series_nfo
+from workers.nfo_worker import (clean_radarr_nfo, create_episode_nfo,
+                                handle_series_add_metadata)
 from workers.translator_worker import (cancel_translate_media_item,
                                        translate_media_item)
 
@@ -55,7 +56,7 @@ async def sonarr_webhook(
         if mapped_path := client.to_local_path(payload.series.path):
             payload.series.path = mapped_path
         if tmdb_client:
-            asyncio.create_task(create_series_nfo(payload, tmdb_client))
+            asyncio.create_task(handle_series_add_metadata(client, payload, tmdb_client, tvdb_client))
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
