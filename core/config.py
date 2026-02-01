@@ -16,9 +16,15 @@ def setup_logging():
 
     logger.remove()
 
+    def console_filter(record):
+        if "POST /webhook/" in record["message"]:
+            return False
+        return True
+
     logger.add(
         sys.stderr,
-        level="INFO",
+        level=settings.log_level.upper(),
+        filter=console_filter,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
                "<level>{level: <8}</level> | "
                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
@@ -28,6 +34,7 @@ def setup_logging():
     logger.add(
         LOGS_DIR / "tellymeta.log",
         level=settings.log_level.upper(),
+        filter=console_filter,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
         rotation="00:00",  # 每天生成一个新的日志文件
         retention="7 days",  # 保留最近7天的日志文件
