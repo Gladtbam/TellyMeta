@@ -166,7 +166,7 @@ class EpisodeResource(BaseModel):
 #====================================================
 #      SonarrWebhook
 #====================================================
-class Series(BaseModel):
+class SonarrSeries(BaseModel):
     """Sonarr series 模型"""
     id: int
     title: str
@@ -246,7 +246,7 @@ class DownloadInfo(BaseModel):
 
 class SonarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
     eventType: Literal["Grab"]
-    series: Series
+    series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     release: SonarrRelease
     downloadClient: str
@@ -260,7 +260,7 @@ class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
         SonarrWebhookImportCompletePayload
     """
     eventType: Literal["Download"]
-    series: Series
+    series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     episodeFile: FileInfoDto | None = None
     episodeFiles: list[FileInfoDto] = Field(default_factory=list)
@@ -277,23 +277,23 @@ class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
 
 class SonarrWebhookEpisodeDeletePayload(WebhookBase[Literal["EpisodeFileDelete"]]):
     eventType: Literal["EpisodeFileDelete"]
-    series: Series
+    series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     episodeFile: FileInfoDto
     deleteReason: str
 
 class SonarrWebhookSeriesAddPayload(WebhookBase[Literal["SeriesAdd"]]):
     eventType: Literal["SeriesAdd"]
-    series: Series
+    series: SonarrSeries
 
 class SonarrWebhookSeriesDeletePayload(WebhookBase[Literal["SeriesDelete"]]):
     eventType: Literal["SeriesDelete"]
-    series: Series
+    series: SonarrSeries
     deletedFiles: bool
 
 class SonarrWebhookRenamePayload(WebhookBase[Literal["Rename"]]):
     eventType: Literal["Rename"]
-    series: Series
+    series: SonarrSeries
     renamedEpisodeFiles: list[RenamedEpisodeFiles] = Field(default_factory=list)
 
 class SonarrWebhookHealthPayload(WebhookBase[Literal["Health", "HealthRestored"]]):
@@ -311,7 +311,7 @@ class SonarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpda
 
 class SonarrWebhookManualInteractionPayload(WebhookBase[Literal["ManualInteractionRequired"]]):
     eventType: Literal["ManualInteractionRequired"]
-    series: Series | None # 未知剧集为 None
+    series: SonarrSeries | None # 未知剧集为 None
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     downloadInfo: DownloadInfo
     downloadClient: str | None = None

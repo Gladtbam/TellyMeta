@@ -52,6 +52,8 @@ async def sonarr_webhook(
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
+    logger.info("收到来自 {} 的 Webhook, 事件类型: {}", client.server_name, payload.eventType)
+
     if isinstance(payload, SonarrWebhookSeriesAddPayload):
         if mapped_path := client.to_local_path(payload.series.path):
             payload.series.path = mapped_path
@@ -108,6 +110,8 @@ async def radarrarr_webhook(
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
+    logger.info("收到来自 {} 的 Webhook, 事件类型: {}", client.server_name, payload.eventType)
+
     if isinstance(payload, RadarrWebhookDownloadPayload):
         if payload.movieFile and payload.movieFile.path and 'VCB-Studio' not in payload.movieFile.path:
             if mapped_path := client.to_local_path(payload.movieFile.path):
@@ -160,6 +164,8 @@ async def emby_webhook(
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
 
+    logger.info("收到来自 {} 的 Webhook, 事件类型: {}", client.server_name, payload.event)
+
     if isinstance(payload, LibraryNewEvent):
         if ai_client:
             asyncio.create_task(
@@ -193,6 +199,8 @@ async def jellyfin(
     client = media_clients.get(server_instance.id)
     if not client:
         return Response(content="Webhook received (Client Not Found)", status_code=200)
+
+    logger.info("收到来自 {} 的 Webhook, 事件类型: {}", client.server_name, payload.notification_type)
 
     if payload.notification_type == NotificationType.ITEM_ADDED:
         if ai_client:
