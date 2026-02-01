@@ -71,7 +71,6 @@ async def _get_tmdb_episode_info(
 async def translate_media_item(server_id: int, item_id: str) -> None:
     """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。"""
     from main import app
-    scheduler: AsyncIOScheduler = app.state.scheduler
     tmdb_client: TmdbClient | None = app.state.tmdb_client
     media_clients: dict[int, MediaService] = app.state.media_clients
     ai_client: AIClientWarper = app.state.ai_client
@@ -161,17 +160,31 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
     if is_translated:
         logger.info("[{}]正在翻译项目 {}：{}", server_id, item_id, item.Name)
         await media_client.post_item_info(item_id, item)
-        scheduler.add_job(
-            translate_media_item,
-            'date',
-            run_date=(datetime.now() + timedelta(days=8)),
-            id=f'translate_media_item_{server_id}_{item_id}',
-            replace_existing=True,
-            args=[server_id, item_id]
-        )
+        await add_translate_media_item(server_id, item_id, days=8)
+
         logger.info("[{}]计划在 8 天后重试项目 {}", server_id, item_id)
     else:
         logger.info("[{}]无需翻译ID: {}", server_id, item_id)
+
+async def add_translate_media_item(server_id: int, item_id: str, days: int) -> None:
+    """添加媒体项翻译任务到调度器。
+    Args:
+        scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
+        server_id (int): 服务器的唯一标识符。
+        item_id (str): 媒体项的唯一标识符。
+    """
+    from main import app
+    scheduler: AsyncIOScheduler = app.state.scheduler
+
+    scheduler.add_job(
+        translate_media_item,
+        'date',
+        run_date=datetime.now() + timedelta(days=days),
+        id=f'translate_media_item_{server_id}_{item_id}',
+        replace_existing=True,
+        args=[server_id, item_id]
+    )
+    logger.info("已为项目 {} 添加翻译任务", item_id)
 
 async def cancel_translate_media_item(server_id: int, item_id: str) -> None:
     """取消已计划的翻译任务。

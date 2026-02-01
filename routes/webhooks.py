@@ -30,8 +30,8 @@ from services.media_service import MediaService
 from services.notification_service import NotificationService
 from workers.nfo_worker import (clean_radarr_nfo, create_episode_nfo,
                                 handle_series_add_metadata)
-from workers.translator_worker import (cancel_translate_media_item,
-                                       translate_media_item)
+from workers.translator_worker import (add_translate_media_item,
+                                       cancel_translate_media_item)
 
 router = APIRouter()
 settings = get_settings()
@@ -168,9 +168,7 @@ async def emby_webhook(
 
     if isinstance(payload, LibraryNewEvent):
         if ai_client:
-            asyncio.create_task(
-                translate_media_item(server_instance.id, payload.item.id)
-            )
+            await add_translate_media_item(server_instance.id, payload.item.id, days=1)
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -181,9 +179,7 @@ async def emby_webhook(
             )
     elif isinstance(payload, LibraryDeletedEvent):
         if ai_client:
-            asyncio.create_task(
-                cancel_translate_media_item(server_instance.id, payload.item.id)
-            )
+            await cancel_translate_media_item(server_instance.id, payload.item.id)
 
     return Response(content="Webhook received", status_code=200)
 
@@ -204,9 +200,7 @@ async def jellyfin(
 
     if payload.notification_type == NotificationType.ITEM_ADDED:
         if ai_client:
-            asyncio.create_task(
-                translate_media_item(server_instance.id, payload.item_id)
-            )
+            await add_translate_media_item(server_instance.id, payload.item_id, days=1)
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -217,17 +211,5 @@ async def jellyfin(
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED:
         if ai_client:
-            asyncio.create_task(
-                cancel_translate_media_item(server_instance.id, payload.item_id)
-            )
+            await cancel_translate_media_item(server_instance.id, payload.item_id)
     return Response(content="Webhook received", status_code=200)
-
-@router.get("/health", status_code=200)
-async def health_check() -> dict[str, str]:
-    """健康检查端点"""
-    return {"status": "ok"}
-
-@router.post("/webhook/test", status_code=202)
-async def test_webhook(payload: dict[str, Any]) -> Response:
-    logger.info("收到 test 事件： {}", payload)
-    return Response(status_code=200)
