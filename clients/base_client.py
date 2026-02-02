@@ -76,44 +76,54 @@ class BaseClient(ABC):
             headers['User-Agent'] = "TellyMeta/1.0"
         kwargs['headers'] = headers
 
-        try:
-            response = await self._client.request(method, url, **kwargs)
+        max_retries = 3
 
-            if response.status_code == 403 and ("cloudflare" in response.text.lower() or "just a moment" in response.text.lower()):
-                logger.error("HTTP 错误 403：请求被 Cloudflare 拦截。这通常是因为站点启用了 WAF 机器人检测或“我在受攻击”模式。")
-                logger.error("URL: {}", url)
-                logger.error("提示：请尝试将运行该程序的服务器 IP 加入站点的 Cloudflare 白名单。")
+        for attempt in range(max_retries + 1):
+            try:
+                response = await self._client.request(method, url, **kwargs)
 
-            response.raise_for_status()
-            if response_model and parser:
-                raise ValueError("response_model 和 parser 不能同时使用")
+                if response.status_code == 403 and ("cloudflare" in response.text.lower() or "just a moment" in response.text.lower()):
+                    logger.error("HTTP 错误 403：请求被 Cloudflare 拦截。这通常是因为站点启用了 WAF 机器人检测或“我在受攻击”模式。")
+                    logger.error("URL: {}", url)
+                    logger.error("提示：请尝试将运行该程序的服务器 IP 加入站点的 Cloudflare 白名单。")
 
-            if raw:
-                return response
-            if response.status_code == 204 or not response.content:
+                response.raise_for_status()
+                if response_model and parser:
+                    raise ValueError("response_model 和 parser 不能同时使用")
+
+                if raw:
+                    return response
+                if response.status_code == 204 or not response.content:
+                    return None
+
+                data = response.json()
+
+                if parser is not None:
+                    return parser(data)
+
+                if response_model is not None:
+                    return response_model.model_validate(data)
                 return None
 
-            data = response.json()
-
-            if parser is not None:
-                return parser(data)
-
-            if response_model is not None:
-                return response_model.model_validate(data)
-            return None
-        except ValidationError as e:
-            logger.error("响应验证错误: {}", repr(e.errors()))
-            raise
-        except httpx.HTTPStatusError as e:
-            if not (e.response.status_code == 403 and ("cloudflare" in e.response.text.lower() or "just a moment" in e.response.text.lower())):
-                logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
-            raise
-        except httpx.RequestError as e:
-            logger.error("请求错误：{}", e)
-            raise
-        except Exception as e:
-            logger.error("未知错误：{}", e)
-            raise
+            except ValidationError as e:
+                logger.error("响应验证错误: {}", repr(e.errors()))
+                raise
+            except httpx.TimeoutException as e:
+                if attempt == max_retries:
+                    logger.error("请求超时（已重试{}次）：{}", max_retries, e)
+                    raise
+                logger.warning(f"请求超时，正在进行第 {attempt + 1}/{max_retries} 次重试... URL: {url}")
+                await asyncio.sleep(1)
+            except httpx.HTTPStatusError as e:
+                if not (e.response.status_code == 403 and ("cloudflare" in e.response.text.lower() or "just a moment" in e.response.text.lower())):
+                    logger.error("HTTP 错误：{} -{}", e.response.status_code, e.response.text)
+                raise
+            except httpx.RequestError as e:
+                logger.error("请求错误：{}", e)
+                raise
+            except Exception as e:
+                logger.error("未知错误：{}", e)
+                raise
 
     @overload
     async def get(

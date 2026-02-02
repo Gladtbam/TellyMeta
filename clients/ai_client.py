@@ -108,7 +108,7 @@ class AIClientWarper:
                         {"role": "user", "content": text}
                     ],
                     max_tokens=1000,
-                    temperature=self.temperature,
+                    temperature=self.temperature
                 )
                 response_text = response.choices[0].message.content
                 if response_text and any('\u4e00' <= char <= '\u9fff' for char in response_text):

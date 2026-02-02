@@ -75,7 +75,10 @@ async def lifespan(app: FastAPI):
 
     if settings.tmdb_api_key:
         app.state.tmdb_client = CachedTmdbClient(
-            client=httpx.AsyncClient(base_url='https://api.themoviedb.org/3'),
+            client=httpx.AsyncClient(
+                base_url='https://api.themoviedb.org/3',
+                timeout=httpx.Timeout(10.0, read=30.0)
+            ),
             api_key=settings.tmdb_api_key
         )
     else:
@@ -83,7 +86,10 @@ async def lifespan(app: FastAPI):
 
     if settings.tvdb_api_key:
         app.state.tvdb_client = CachedTvdbClient(
-            client=httpx.AsyncClient(base_url='https://api4.thetvdb.com/v4'),
+            client=httpx.AsyncClient(
+                base_url='https://api4.thetvdb.com/v4',
+                timeout=httpx.Timeout(10.0, read=30.0)
+            ),
             api_key=settings.tvdb_api_key
         )
     else:
