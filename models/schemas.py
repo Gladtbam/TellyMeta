@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 # --- 子模型 ---
@@ -156,3 +158,24 @@ class TopicDto(BaseModel):
     """群组话题信息"""
     id: int
     name: str
+
+# --- User Models (用户相关) ---
+
+class MediaAccountDto(BaseModel):
+    """媒体账户信息"""
+    media_name: str
+    server_name: str
+    server_type: str
+    server_url: str
+    status_text: str
+    expires_at: datetime
+    is_banned: bool
+
+class UserInfoDto(BaseModel):
+    """用户信息聚合"""
+    id: int
+    score: int
+    checkin_count: int
+    warning_count: int
+    is_admin: bool = False
+    media_accounts: list[MediaAccountDto]

@@ -226,23 +226,3 @@ async def ban_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
     else:
         await safe_respond(event, "无法处理此事件类型。")
         return
-
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/settings({settings.telegram_bot_name})?$',
-    incoming=True
-))
-@provide_db_session
-@require_admin
-async def settings_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
-    """设置处理器
-    处理管理员请求设置面板
-    """
-    web_app_url = f"{settings.telegram_webapp_url}/webapp/settings.html"
-
-    await event.respond(
-        "🔧 **系统设置**\n\n点击下方按钮打开控制面板：",
-        buttons=[
-            [KeyboardButtonWebView(text="🛠 打开设置面板", url=web_app_url)]
-        ]
-    )
-    logger.info("管理员 {} 请求设置面板", event.sender_id)

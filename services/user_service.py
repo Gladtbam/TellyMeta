@@ -155,35 +155,41 @@ class UserService:
             msg += f"\n(基础 1 + 连签 {bonus})"
         return Result(success=True, message=msg)
 
-    async def get_user_info(self, user_id: int) -> Result:
-        """获取用户信息"""
+    async def get_user_info_data(self, user_id: int) -> dict:
+        """获取结构化用户信息"""
         user = await self.telegram_repo.get_or_create(user_id)
 
-        message = textwrap.dedent(f"""\
-            👤 **个人信息**
-
-            **Telegram ID**: `{user.id}`
-            **积分**: `{user.score}`
-            **签到**: `{user.checkin_count}` 天
-            **警告**: `{user.warning_count}` 次
-        """)
-
+        media_accounts = []
         if user.media_users:
-            message += "\n📺 **媒体账户列表**:\n"
             for mu in user.media_users:
                 server = await self.server_repo.get_by_id(mu.server_id)
-                server_name = server.name if server else f"Server {mu.server_id}"
-                status = "🚫 封禁" if mu.is_banned else "✅ 正常"
+                media_accounts.append({
+                    "media_user": mu,
+                    "server": server,
+                    "server_name": server.name if server else f"Server {mu.server_id}",
+                    "server_url": server.url if server and server.url else "Unknown",
+                    "server_type": server.server_type.capitalize() if server else "Undefind",
+                    "status_text": "🚫 封禁" if mu.is_banned else "✅ 正常",
+                    "is_banned": mu.is_banned,
+                    "media_name": mu.media_name,
+                    "expires_at": mu.expires_at
+                })
 
-                message += textwrap.dedent(f"""\
-                🔹 **{server_name}({server.server_type.capitalize() if server else "Undefind"})**
-                用户: `{mu.media_name}`
-                状态: {status}
-                过期: `{mu.expires_at.strftime('%Y-%m-%d')}`
-                地址: `{server.url if server and server.url else "Unknown"}`
-                """)
-        else:
-            message += f"\n⚠️ [您](tg://user?id={user.id})尚未绑定任何媒体账户。"
+        return {
+            "user": user,
+            "media_accounts": media_accounts
+        }
+
+    async def get_user_info(self, user_id: int) -> Result:
+        """获取用户信息"""
+        data = await self.get_user_info_data(user_id)
+        user = data['user']
+        media_accounts = data['media_accounts']
+
+        message = "个人信息已迁移至 WebApp，请使用 WebApp 查看。"
+
+        if not media_accounts:
+            message += f"\n\n⚠️ [您](tg://user?id={user.id})尚未绑定任何媒体账户。"
 
         button_layout = [
             [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nsfw'), ('忘记密码', 'me_forget_password')],
@@ -196,7 +202,7 @@ class UserService:
             for row in button_layout
         ]
 
-        return Result(success=True, message=message, keyboard=keyboard if user.media_users else None)
+        return Result(success=True, message=message, keyboard=keyboard if media_accounts else None)
 
     async def get_rank_list(self) -> Result:
         """获取排行榜"""

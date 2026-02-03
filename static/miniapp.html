@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>个人中心</title>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f4f4f5);
+            --destructive-text-color: var(--tg-theme-destructive-text-color, #ff3b30);
+            --section-header-text-color: var(--tg-theme-section-header-text-color, #6d6d72);
+        }
+
+        body {
+            background-color: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container {
+            padding: 16px;
+            padding-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: var(--section-header-text-color);
+            text-transform: uppercase;
+            margin: 24px 0 8px 16px;
+        }
+
+        .section-title:first-child {
+            margin-top: 8px;
+        }
+
+        .card {
+            background-color: var(--bg-color);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .item {
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .item:last-child {
+            border-bottom: none;
+        }
+
+        .item-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .item-title {
+            font-size: 17px;
+            font-weight: 400;
+        }
+
+        .item-subtitle {
+            font-size: 14px;
+            color: var(--hint-color);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
+        .item-value {
+            font-size: 17px;
+            color: var(--hint-color);
+        }
+
+        .profile-header {
+            display: flex;
+            align-items: center;
+            padding: 24px 20px;
+            background: var(--bg-color);
+            margin-bottom: 10px;
+        }
+
+        .profile-avatar {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background-color: var(--secondary-bg-color);
+            margin-right: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            overflow: hidden;
+        }
+
+        .profile-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .profile-name {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .profile-id {
+            font-size: 14px;
+            color: var(--hint-color);
+        }
+
+        .tag-type {
+            font-size: 11px;
+            color: var(--text-color);
+            background: var(--secondary-bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        .loader {
+            text-align: center;
+            padding: 20px;
+            color: var(--hint-color);
+            font-size: 14px;
+        }
+
+        .profile-actions {
+            margin-left: auto;
+        }
+
+        .settings-btn {
+            font-size: 24px;
+            color: var(--link-color);
+            cursor: pointer;
+            padding: 10px;
+            display: none;
+            /* 默认隐藏 */
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="profile-header">
+            <div class="profile-avatar" id="avatar">👤</div>
+            <div class="profile-info">
+                <div class="profile-name" id="user-name">加载中...</div>
+                <div class="profile-id" id="user-id"></div>
+            </div>
+            <div class="profile-actions">
+                <div class="settings-btn" id="settings-btn" onclick="goToSettings()">⚙️</div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="section-title">账户状态</div>
+            <div class="card">
+                <div class="item">
+                    <div class="item-content"><span class="item-title">当前积分</span></div>
+                    <span class="item-value" id="score">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">连续签到</span></div>
+                    <span class="item-value" id="checkin">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">警告次数</span></div>
+                    <span class="item-value" id="warning">-</span>
+                </div>
+            </div>
+
+            <div class="section-title" id="media-title">媒体账户</div>
+            <div id="media-list">
+                <div class="loader">正在加载账户信息...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+
+        // 适配主题色
+        function applyTheme() {
+            const p = tg.themeParams;
+            const root = document.documentElement;
+            if (p.bg_color) root.style.setProperty('--tg-theme-bg-color', p.bg_color);
+            if (p.text_color) root.style.setProperty('--tg-theme-text-color', p.text_color);
+            if (p.hint_color) root.style.setProperty('--tg-theme-hint-color', p.hint_color);
+            if (p.link_color) root.style.setProperty('--tg-theme-link-color', p.link_color);
+            if (p.button_color) root.style.setProperty('--tg-theme-button-color', p.button_color);
+            if (p.button_text_color) root.style.setProperty('--tg-theme-button-text-color', p.button_text_color);
+            if (p.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', p.secondary_bg_color);
+        }
+        applyTheme();
+        tg.onEvent('themeChanged', applyTheme);
+        tg.expand();
+
+        // 渲染基本信息（从 WebApp data 获取，无需请求）
+        const user = tg.initDataUnsafe.user;
+        if (user) {
+            document.getElementById('user-name').innerText = [user.first_name, user.last_name].filter(Boolean).join(' ');
+            document.getElementById('user-id').innerText = `ID: ${user.id}`;
+        }
+
+        async function fetchMe() {
+            try {
+                const res = await fetch('/api/miniapp/me', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || "加载失败");
+                }
+
+                const data = await res.json();
+                render(data);
+            } catch (e) {
+                document.getElementById('media-list').innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
+                tg.showAlert(e.message);
+            }
+        }
+
+        function render(data) {
+            // 更新头像
+            const user = tg.initDataUnsafe.user;
+            if (user && user.photo_url) {
+                document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%">`;
+            }
+
+            // 管理员入口
+            if (data.is_admin) {
+                document.getElementById('settings-btn').style.display = 'block';
+            }
+
+            document.getElementById('score').innerText = data.score;
+            document.getElementById('checkin').innerText = `${data.checkin_count} 天`;
+            document.getElementById('warning').innerText = data.warning_count;
+
+            const list = document.getElementById('media-list');
+            list.innerHTML = '';
+
+            if (!data.media_accounts || data.media_accounts.length === 0) {
+                list.innerHTML = '<div class="card"><div class="item" style="justify-content:center; color:var(--hint-color)">暂无绑定的媒体账户</div></div>';
+                return;
+            }
+
+            data.media_accounts.forEach(acc => {
+                const card = document.createElement('div');
+                card.className = 'card';
+
+                const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+                // 格式化日期
+                let expiry = "未知";
+                if (acc.expires_at) {
+                    const d = new Date(acc.expires_at);
+                    expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+                }
+
+                card.innerHTML = `
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
+                            <span class="item-subtitle">${acc.server_url}</span>
+                        </div>
+                        <span style="font-size:13px; color:${statusColor}">${acc.status_text}</span>
+                    </div>
+                    <div class="item">
+                        <div class="item-content"><span class="item-subtitle">媒体用户名</span></div>
+                        <span class="item-value" style="font-size:15px">${acc.media_name}</span>
+                    </div>
+                    <div class="item">
+                        <div class="item-content"><span class="item-subtitle">有效期至</span></div>
+                        <span class="item-value" style="font-size:15px">${expiry}</span>
+                    </div>
+                 `;
+                list.appendChild(card);
+            });
+        }
+
+        function goToSettings() {
+            window.location.href = "settings.html";
+        }
+
+        fetchMe();
+    </script>
+</body>
+
+</html>

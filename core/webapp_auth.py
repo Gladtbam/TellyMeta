@@ -7,16 +7,19 @@ from core.config import get_settings
 
 settings = get_settings()
 
-async def validate_admin_access(request: Request, x_telegram_init_data: str = Header(...)):
-    """验证 Telegram WebApp 数据并检查管理员权限"""
+async def validate_init_data(x_telegram_init_data: str) -> dict:
+    """验证 Telegram MiniApp 数据并返回用户信息"""
     if not settings.telegram_bot_token:
         raise HTTPException(status_code=500, detail="Bot Token未配置")
 
     try:
         parsed_data = dict(parse_qsl(x_telegram_init_data))
+        if 'hash' not in parsed_data:
+            raise HTTPException(status_code=401, detail="缺少 hash 字段")
+
         hash_check = parsed_data.pop('hash')
 
-        # 1. 验证签名
+        # 验证签名
         data_check_string = '\n'.join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
         secret_key = hmac.new(b"WebAppData", settings.telegram_bot_token.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
@@ -24,17 +27,27 @@ async def validate_admin_access(request: Request, x_telegram_init_data: str = He
         if calculated_hash != hash_check:
             raise HTTPException(status_code=401, detail="数据签名无效")
 
-        # 2. 验证是否过期 (可选，检查 auth_date)
+        user_data = json.loads(parsed_data.get('user', '{}'))
+        if not user_data or 'id' not in user_data:
+            raise HTTPException(status_code=401, detail="无效的用户数据")
 
-        # 3. 验证管理员权限
-        user_data = json.loads(parsed_data['user'])
-        user_id = user_data['id']
+        return user_data
 
-        # 从 app.state 中获取管理员列表 (需要在 main.py 中维护或查库)
-        if user_id not in request.app.state.admin_ids:
-            raise HTTPException(status_code=403, detail="未授权")
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"数据验证失败: {str(e)}") from e
 
-        return user_id
+async def get_current_user_id(x_telegram_init_data: str = Header(...)) -> int:
+    """获取当前 WebApp 用户 ID"""
+    user_data = await validate_init_data(x_telegram_init_data)
+    return user_data['id']
 
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=400, detail="初始化数据格式无效") from e
+async def validate_admin_access(request: Request, x_telegram_init_data: str = Header(...)) -> int:
+    """验证管理员权限"""
+    user_data = await validate_init_data(x_telegram_init_data)
+    user_id = user_data['id']
+
+    # 检查管理员权限
+    if hasattr(request.app.state, 'admin_ids') and user_id not in request.app.state.admin_ids:
+        raise HTTPException(status_code=403, detail="未授权: 需要管理员权限")
+
+    return user_id
