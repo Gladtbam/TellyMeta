@@ -53,5 +53,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception as e:
             await session.rollback()
             logger.exception("数据库会话错误：{}", e)
+            raise
         finally:
             await session.close()   # 关闭会话

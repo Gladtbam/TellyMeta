@@ -446,7 +446,7 @@ class RadarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpda
 
 class RadarrWebhookManualInteractionPayload(WebhookBase[Literal["ManualInteractionRequired"]]):
     eventType: Literal["ManualInteractionRequired"]
-    movie: Movie
+    movie: Movie | None = None
     downloadInfo: DownloadInfo
     downloadClient: str | None = None
     downloadClientType: str | None = None
