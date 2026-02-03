@@ -149,9 +149,11 @@ telegram_webapp_url=https://your-public-domain.com
 ```
 
 > **⚠️ 重要提示**: 
-> 1. 系统核心指令 `/settings` 依赖该 URL 唤起 Telegram 内建小程序面板。
-> 2. 你必须通过反向代理（如 Nginx / NPM / Caddy）为该地址配置 **HTTPS** 证书，否则无法正常使用小程序功能。
+> 通过反向代理（如 Nginx / NPM / Caddy）为 `telegram_webapp_url` 配置 **HTTPS** 证书，否则无法正常使用小程序功能。
 
+## 🤖 小程序入口设置
+
+Telegram BotFather 选择 `telegram_bot_name` 设置的机器人，点击 `Mini Apps` -> `Menu Button` 或 `Main App` -> `URL` 填入 `telegram_webapp_url/webapp/miniapp.html`。
 ---
 
 ## 📝 指令手册
@@ -160,7 +162,7 @@ telegram_webapp_url=https://your-public-domain.com
 | 指令 | 描述 |
 | :--- | :--- |
 | `/start` | 启动机器人：如果开启验证，需进行验证码验证 |
-| `/me` | **个人中心**：查看积分、账号状态、求片、上传字幕 |
+| `/me` | **个人中心**：求片、上传字幕等，（查看积分、账号状态已迁移到小程序） |
 | `/checkin` | **每日签到**：获取积分（仅限群组内） |
 | `/signup` | **注册账号**：仅在开放注册模式下可用 |
 | `/code <code>` | **兑换码**：使用注册码注册或续期码续期 |
@@ -172,7 +174,6 @@ telegram_webapp_url=https://your-public-domain.com
 
 | 指令 | 描述 |
 | :--- | :--- |
-| `/settings` | **打开系统控制面板** (核心入口) |
 | `/info` | 查看被回复用户的详细信息 (ID, 积分, 警告数) |
 | `/warn` | 警告用户 (扣除积分) |
 | `/kick` | 踢出用户并删除关联媒体账号 |
