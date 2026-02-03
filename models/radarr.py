@@ -348,7 +348,7 @@ class FileInfoDto(BaseModel):
     quality: str
     qualityVersion: int
     releaseGroup: str
-    sceneName: str
+    sceneName: str | None = None
     indexerFlags: str
     size: int
     dateAdded: datetime
@@ -361,8 +361,8 @@ class RadarrRelease(BaseModel):
     quality: str | None = None
     qualityVersion: int | None = None
     releaseGroup: str | None = None
-    releaseTitle: str
-    indexer: str
+    releaseTitle: str | None = None
+    indexer: str | None = None
     size: int
     customFormatScore: int | None = None
     customFormats: list[str] = Field(default_factory=list)
