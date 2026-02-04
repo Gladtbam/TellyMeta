@@ -106,7 +106,7 @@ class TmdbFindPayload(BaseModel):
 
 class TmdbMovie(BaseModel):
     id: int
-    imdb_id: str
+    imdb_id: str | None = None
     origin_country: list[str] = Field(default_factory=list)
     original_language: str
     original_title: str
@@ -119,6 +119,27 @@ class TmdbMovie(BaseModel):
     title: str
     vote_average: float | None = None
     vote_count: int | None = None
+    genres: list[str] = Field(default_factory=list)
+
+    @field_validator('genres', mode='before')
+    @classmethod
+    def validate_genres(cls, value):
+        if isinstance(value, list):
+            results = []
+            for genre in value:
+                key = None
+                if isinstance(genre, dict):
+                    key = genre.get('id') or genre.get('name')
+                else:
+                    key = genre
+
+                if key is not None:
+                    results.append(genre_mapping.get(key, key))
+            return results
+        elif isinstance(value, str):
+            return [genre_mapping.get(value, value)]
+        else:
+            raise ValueError("类型格式、预期列表或字符串无效")
 
 TmdbTvSeries.model_rebuild()
 TmdbEpisode.model_rebuild()

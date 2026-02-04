@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+    {% if title %}
+    <title>{{ title }}</title>
+    {% endif -%}
+
+    {% if original_title %}
+    <originaltitle>{{ original_title }}</originaltitle>
+    {% endif -%}
+
+    {% if rating %}
+    <rating>{{ rating }}</rating>
+    {% endif -%}
+
+    {% if year %}
+    <year>{{ year }}</year>
+    {% endif -%}
+
+    {% if plot %}
+    <plot>{{ plot }}</plot>
+    {% endif -%}
+
+    {% if genres %}
+    {% for genre in genres %}
+    <genre>{{ genre }}</genre>
+    {% endfor %}
+    {% endif -%}
+
+    {% if tags %}
+    {% for tag in tags %}
+    <tag>{{ tag }}</tag>
+    {% endfor %}
+    {% endif -%}
+
+    {% if premiered %}
+    <premiered>{{ premiered }}</premiered>
+    {% endif -%}
+
+    {% if runtime %}
+    <runtime>{{ runtime }}</runtime>
+    {% endif -%}
+
+    {% if tmdb_id %}
+    <uniqueid type="tmdb">{{ tmdb_id }}</uniqueid>
+    {% endif -%}
+
+    {% if imdb_id %}
+    <uniqueid type="imdb">{{ imdb_id }}</uniqueid>
+    {% endif -%}
+</movie>

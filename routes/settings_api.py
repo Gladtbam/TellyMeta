@@ -19,7 +19,7 @@ from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.settings_service import SettingsServices
-from workers.nfo_worker import rebuild_radarr_nfo_clean_task, rebuild_sonarr_metadata_task
+from workers.nfo_worker import rebuild_radarr_metadata_task, rebuild_sonarr_metadata_task
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -278,6 +278,7 @@ async def rebuild_server_metadata(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
+    radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
     tvdb_client: TvdbClient | None = Depends(get_tvdb_client)
 ):
@@ -291,48 +292,30 @@ async def rebuild_server_metadata(
     if not server:
         raise HTTPException(status_code=404, detail="服务器不存在")
 
-    if server.server_type != ServerType.SONARR:
-        raise HTTPException(status_code=400, detail="目前仅支持 Sonarr 服务器")
+    client = None
+    if server.server_type == ServerType.SONARR:
+        client = sonarr_clients.get(server_id)
+    elif server.server_type == ServerType.RADARR:
+        client = radarr_clients.get(server_id)
+    else:
+        raise HTTPException(status_code=400, detail="目前仅支持 Sonarr 和 Radarr 服务器")
 
-    client = sonarr_clients.get(server_id)
     if not client:
-        raise HTTPException(status_code=500, detail="Sonarr 客户端未连接")
+        raise HTTPException(status_code=500, detail="客户端未连接")
 
     # 添加后台任务
-    background_tasks.add_task(
-        rebuild_sonarr_metadata_task,
-        client,
-        tmdb_client,
-        tvdb_client
-    )
+    if isinstance(client, SonarrClient):
+        background_tasks.add_task(
+            rebuild_sonarr_metadata_task,
+            client,
+            tmdb_client,
+            tvdb_client
+        )
+    elif isinstance(client, RadarrClient):
+        background_tasks.add_task(
+            rebuild_radarr_metadata_task,
+            client,
+            tmdb_client
+        )
 
     return {"success": True, "message": "元数据重建任务已在后台启动，请查看日志关注进度。"}
-
-@router.post("/servers/{server_id}/clean_nfo", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def clean_server_nfo(
-    request: Request,
-    server_id: int,
-    background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(get_db),
-    radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients)
-):
-    """触发 Radarr NFO 清洗任务"""
-    repo = ServerRepository(session)
-    server = await repo.get_by_id(server_id)
-
-    if not server:
-        raise HTTPException(status_code=404, detail="服务器不存在")
-
-    if server.server_type != ServerType.RADARR:
-        raise HTTPException(status_code=400, detail="目前仅支持 Radarr 服务器进行 NFO 清洗")
-
-    client = radarr_clients.get(server_id)
-    if not client:
-        raise HTTPException(status_code=500, detail="Radarr 客户端未连接")
-
-    background_tasks.add_task(
-        rebuild_radarr_nfo_clean_task,
-        client
-    )
-
-    return {"success": True, "message": "NFO 清洗任务已在后台启动，请查看日志关注进度。"}

@@ -6,19 +6,21 @@ from pathlib import Path
 import aiofiles
 import aiofiles.os as aio_os
 from loguru import logger
-from lxml import etree
 
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.template_manager import template_manager
+from models.radarr import MovieResource, RadarrWebhookAddedPayload, RadarrWebhookDownloadPayload
 from models.sonarr import (EpisodeResource, SeriesResource, SonarrEpisode, SonarrSeries,
                            SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
 from models.tmdb import TmdbEpisode
 from models.tvdb import TvdbData, TvdbEpisodesData
 
+
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.m4v', '.webm', '.ts'}
 
 @contextlib.asynccontextmanager
 async def _temporary_ignore_file(path: Path):
@@ -143,7 +145,7 @@ async def create_series_nfo_from_resource(
     """从剧集资源对象创建 NFO"""
     if not series.path:
         return
-    
+
     nfo_path = Path(series.path) / 'tvshow.nfo'
     if await aio_os.path.exists(nfo_path) and not is_override:
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
@@ -267,8 +269,8 @@ async def handle_series_add_metadata(
                 count = 0
                 for ep in episodes:
                     if ep.hasFile and ep.episodeFile and ep.episodeFile.path:
-                        if client.path_mappings:
-                            ep.episodeFile.path = client.to_local_path(ep.episodeFile.path)
+                        if mapped_path := client.to_local_path(ep.episodeFile.path):
+                            ep.episodeFile.path = mapped_path
 
                         await create_episode_nfo_from_resource(payload.series, ep, tmdb, tvdb, False)
                         count += 1
@@ -278,76 +280,89 @@ async def handle_series_add_metadata(
         except Exception as e:
             logger.error("为新剧集生成单集 NFO 失败: {}", e)
 
-def _clean_nfo_xml_sync(file_path: Path) -> bool:
-    """使用 lxml 清洗 NFO 文件 (同步)"""
-    try:
-        parser = etree.XMLParser(remove_blank_text=True, strip_cdata=False, recover=True)
-        tree = etree.parse(str(file_path), parser)
-        root = tree.getroot()
-        modified = False
-
-        for tag in ['thumb', 'poster', 'fanart']:
-            for elem in root.findall(tag):
-                if elem.text and elem.text.strip().startswith(('http', 'https')):
-                    root.remove(elem)
-                    modified = True
-
-        for fanart in root.findall('fanart'):
-            for thumb in fanart.findall('thumb'):
-                if thumb.text and thumb.text.strip().startswith(('http', 'https')):
-                    fanart.remove(thumb)
-                    modified = True
-            if len(list(fanart)) == 0:
-                root.remove(fanart)
-                modified = True
-
-        if modified:
-            tree.write(str(file_path), encoding='utf-8', xml_declaration=True, pretty_print=True)
-            return True
-    except Exception as e:
-        logger.error("清洗 NFO 文件失败 {}: {}", file_path, e)
-    return False
-
-
-async def clean_radarr_nfo(movie_path: str | Path) -> None:
-    """清洗电影目录 NFO"""
-    path = Path(movie_path)
-    if not await aio_os.path.exists(path):
+async def create_movie_nfo(nfo_path: Path, tmdb_id: int, tmdb: TmdbClient | None, is_override: bool = True) -> None:
+    """处理电影添加事件"""
+    if not tmdb:
+        logger.error("TMDB 客户端未配置，无法执行电影元数据重建任务")
+        return
+    if await aio_os.path.exists(nfo_path) and not is_override:
+        logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    async with _temporary_ignore_file(path):
-        await asyncio.sleep(5) # Wait for FS
+    movie_info = await tmdb.get_movie_details(tmdb_id)
+    context = {
+        "title": movie_info.title if movie_info else None,
+        "original_title": movie_info.original_title if movie_info else None,
+        "year": movie_info.release_date.split('-')[0] if movie_info else None,
+        "premiered": movie_info.release_date if movie_info else None,
+        "runtime": movie_info.runtime if movie_info else None,
+        "plot": movie_info.overview if movie_info else None,
+        "genres": movie_info.genres if movie_info else None,
+        "imdb_id": movie_info.imdb_id if movie_info else None,
+        "tmdb_id": tmdb_id,
+    }
+    await _generate_and_save_nfo("movie.nfo.j2", context, nfo_path)
 
-        nfo_files = []
-        with contextlib.suppress(Exception):
-            files = await aio_os.listdir(path)
-            nfo_files = [path / f for f in files if f.lower().endswith('.nfo')]
+async def handle_movie_add_metadata(
+    payload: RadarrWebhookAddedPayload,
+    tmdb: TmdbClient | None
+) -> None:
+    """处理电影添加事件"""
+    folder_path = Path(payload.movie.folderPath)
+    async with _temporary_ignore_file(folder_path):
+        logger.info("正在为新添加的电影 {} 检查现有文件...", payload.movie.title)
+        try:
+            for file in folder_path.iterdir():
+                if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS:
+                    await create_movie_nfo(file.with_suffix('.nfo'), payload.movie.tmdbId, tmdb, False)
+        except Exception as e:
+            logger.error("为新电影生成 NFO 失败: {}", e)
 
-        loop = asyncio.get_running_loop()
-        for nfo_file in nfo_files:
-            if await aio_os.path.exists(nfo_file):
-                if await loop.run_in_executor(None, _clean_nfo_xml_sync, nfo_file):
-                    logger.info("已清洗 NFO 中的在线链接: {}", nfo_file)
+async def create_movie_nfo_from_resource(
+    movie: MovieResource,
+    tmdb: TmdbClient
+) -> None:
+    """从资源创建电影 NFO"""
+    if not movie.path:
+        return
+    folder_path = Path(movie.path)
+    async with _temporary_ignore_file(folder_path):
+        try:
+            for file in folder_path.iterdir():
+                if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS:
+                    await create_movie_nfo(file.with_suffix('.nfo'), movie.tmdbId, tmdb)
+        except Exception as e:
+            logger.error("为电影生成 NFO 失败: {}", e)
 
-async def rebuild_radarr_nfo_clean_task(radarr_client: RadarrClient) -> None:
-    """遍历 Radarr 库并清洗所有 NFO"""
-    logger.info("开始清洗 Radarr ({}) NFO 元数据...", radarr_client.server_name)
+async def rebuild_radarr_metadata_task(
+    radarr_client: RadarrClient,
+    tmdb_client: TmdbClient | None
+) -> None:
+    """遍历 Radarr 库并重建所有 NFO"""
+    if not tmdb_client:
+        logger.error("TMDB 客户端未配置，无法执行 Radarr 元数据重建任务")
+        return
+
+    logger.info("开始重建 Radarr 元数据...")
     try:
         all_movies = await radarr_client.get_all_movies()
         if not all_movies:
-            logger.warning("Radarr 库为空或获取失败。")
+            logger.info("Radarr 库为空或获取失败。")
             return
 
         total = len(all_movies)
         logger.info("共获取到 {} 部电影，开始处理...", total)
 
-        for index, movie in enumerate(all_movies, 1):
-            if not movie.path:
+        for index, movie in enumerate(all_movies):
+            if movie.id is None:
                 continue
-            if index % 20 == 0:
-                await asyncio.sleep(0.1)
-            await clean_radarr_nfo(movie.path)
+            logger.info("[{}/{}] 处理电影: {}", index, total, movie.title)
+            if movie.hasFile and movie.movieFile and movie.movieFile.path:
+                if mapped_path := radarr_client.to_local_path(movie.movieFile.path):
+                    movie.movieFile.path = mapped_path
 
-        logger.info("Radarr ({}) NFO 清洗完成。", radarr_client.server_name)
+                await create_movie_nfo_from_resource(movie, tmdb_client)
+
+        logger.info("Radarr ({}) 元数据重建完成。", radarr_client.server_name)
     except Exception as e:
-        logger.exception("Radarr NFO 清洗任务异常: {}", e)
+        logger.error("重建 Radarr 元数据失败: {}", e)

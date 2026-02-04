@@ -28,7 +28,8 @@ from models.sonarr import (SonarrPayload, SonarrWebhookDownloadPayload,
                            SonarrWebhookSeriesAddPayload)
 from services.media_service import MediaService
 from services.notification_service import NotificationService
-from workers.nfo_worker import (clean_radarr_nfo, create_episode_nfo,
+from workers.nfo_worker import (create_episode_nfo, create_movie_nfo,
+                                handle_movie_add_metadata,
                                 handle_series_add_metadata)
 from workers.translator_worker import (add_translate_media_item,
                                        cancel_translate_media_item)
@@ -101,6 +102,7 @@ async def radarrarr_webhook(
     payload: RadarrPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
+    tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
     task_queue: asyncio.Queue = Depends(get_task_queue),
     qb_client: QbittorrentClient | None = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
@@ -118,8 +120,8 @@ async def radarrarr_webhook(
                 payload.movieFile.path = mapped_path
             await task_queue.put(Path(payload.movieFile.path))
 
-        if local_folder_path := client.to_local_path(payload.movie.folderPath):
-            asyncio.create_task(clean_radarr_nfo(local_folder_path))
+        if local_folder_path := client.to_local_path(payload.movieFile.path):
+            asyncio.create_task(create_movie_nfo(Path(local_folder_path), payload.movie.tmdbId, tmdb_client))
 
         if payload.downloadId and qb_client:
             asyncio.create_task(qb_client.torrents_set_share_limits(
@@ -140,7 +142,8 @@ async def radarrarr_webhook(
             )
     elif isinstance(payload, RadarrWebhookAddedPayload):
         if local_folder_path := client.to_local_path(payload.movie.folderPath):
-            asyncio.create_task(clean_radarr_nfo(local_folder_path))
+            payload.movie.folderPath = local_folder_path
+            asyncio.create_task(handle_movie_add_metadata(payload, tmdb_client))
         if client.notify_topic_id:
             await notify_service.send_to_topic(
                 topic_id=client.notify_topic_id,

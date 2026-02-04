@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -31,14 +32,18 @@
         /* 模态框样式 */
         .modal-overlay {
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5);
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
             display: none;
             z-index: 1000;
             justify-content: center;
-            align-items: flex-end; /* 底部弹出 */
+            align-items: flex-end;
+            /* 底部弹出 */
         }
-        
+
         .modal {
             background: var(--bg-color);
             width: 100%;
@@ -75,7 +80,7 @@
         .form-group {
             margin-bottom: 15px;
         }
-        
+
         .form-label {
             font-size: 13px;
             color: var(--hint-color);
@@ -83,7 +88,9 @@
             display: block;
         }
 
-        .form-input, .form-select, textarea {
+        .form-input,
+        .form-select,
+        textarea {
             width: 100%;
             padding: 10px;
             border-radius: 8px;
@@ -95,92 +102,289 @@
             outline: none;
         }
 
-        .form-input:focus, textarea:focus {
+        .form-input:focus,
+        textarea:focus {
             border-color: var(--link-color);
         }
-        
+
         textarea {
             resize: vertical;
             min-height: 80px;
         }
 
         /* 列表样式 */
-        .container { padding: 16px; padding-bottom: 100px; }
-        .section-title { font-size: 13px; color: var(--section-header-text-color); text-transform: uppercase; margin: 24px 0 8px 16px; }
-        .section-title:first-child { margin-top: 8px; }
-        .section-hint { font-size: 13px; color: var(--hint-color); margin: 8px 16px; line-height: 1.4; }
-        .card { background-color: var(--bg-color); border-radius: 10px; overflow: hidden; }
-        .item { padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px solid var(--secondary-bg-color); transition: background-color 0.2s; }
-        .item:active { background-color: var(--secondary-bg-color); }
-        .item:last-child { border-bottom: none; }
-        .item-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
-        .item-title { font-size: 17px; font-weight: 400; }
-        .item-subtitle { font-size: 14px; color: var(--hint-color); margin-top: 4px; }
-        .item-status { font-size: 12px; margin-left: 10px; flex-shrink: 0; }
-        
+        .container {
+            padding: 16px;
+            padding-bottom: 100px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: var(--section-header-text-color);
+            text-transform: uppercase;
+            margin: 24px 0 8px 16px;
+        }
+
+        .section-title:first-child {
+            margin-top: 8px;
+        }
+
+        .section-hint {
+            font-size: 13px;
+            color: var(--hint-color);
+            margin: 8px 16px;
+            line-height: 1.4;
+        }
+
+        .card {
+            background-color: var(--bg-color);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .item {
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+            transition: background-color 0.2s;
+        }
+
+        .item:active {
+            background-color: var(--secondary-bg-color);
+        }
+
+        .item:last-child {
+            border-bottom: none;
+        }
+
+        .item-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .item-title {
+            font-size: 17px;
+            font-weight: 400;
+        }
+
+        .item-subtitle {
+            font-size: 14px;
+            color: var(--hint-color);
+            margin-top: 4px;
+        }
+
+        .item-status {
+            font-size: 12px;
+            margin-left: 10px;
+            flex-shrink: 0;
+        }
+
         /* 开关样式 */
-        .switch { position: relative; display: inline-block; width: 51px; height: 31px; flex-shrink: 0; margin-left: 12px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #e9e9ea; transition: .3s; border-radius: 34px; }
-        @media (prefers-color-scheme: dark) { .slider { background-color: #39393d; } }
-        .slider:before { position: absolute; content: ""; height: 27px; width: 27px; left: 2px; bottom: 2px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px 0 rgba(0,0,0,0.2); }
-        input:checked + .slider { background-color: #34c759; }
-        input:checked + .slider:before { transform: translateX(20px); }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 51px;
+            height: 31px;
+            flex-shrink: 0;
+            margin-left: 12px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #e9e9ea;
+            transition: .3s;
+            border-radius: 34px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .slider {
+                background-color: #39393d;
+            }
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 27px;
+            width: 27px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.2);
+        }
+
+        input:checked+.slider {
+            background-color: #34c759;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(20px);
+        }
 
         /* 按钮样式 */
-        .btn { background-color: var(--bg-color); color: var(--link-color); border: none; padding: 14px; border-radius: 10px; width: 100%; font-size: 17px; cursor: pointer; text-align: center; margin-top: 10px; }
-        .btn-primary { background-color: var(--button-color); color: #fff; margin-top: 20px; }
-        .btn-danger { color: var(--destructive-text-color); margin-top: 20px; }
-        .btn-sm { padding: 8px 12px; font-size: 14px; width: auto; margin-top: 0; border-radius: 6px; background-color: var(--secondary-bg-color); }
-        
+        .btn {
+            background-color: var(--bg-color);
+            color: var(--link-color);
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            width: 100%;
+            font-size: 17px;
+            cursor: pointer;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .btn-primary {
+            background-color: var(--button-color);
+            color: #fff;
+            margin-top: 20px;
+        }
+
+        .btn-danger {
+            color: var(--destructive-text-color);
+            margin-top: 20px;
+        }
+
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 14px;
+            width: auto;
+            margin-top: 0;
+            border-radius: 6px;
+            background-color: var(--secondary-bg-color);
+        }
+
         /* Tabs 样式 */
-        .tabs { display: flex; border-bottom: 1px solid var(--secondary-bg-color); margin-bottom: 15px; flex-shrink: 0; }
-        .tab { flex: 1; text-align: center; padding: 10px; cursor: pointer; color: var(--hint-color); font-weight: 500; border-bottom: 2px solid transparent; transition: 0.2s; }
-        .tab.active { color: var(--link-color); border-bottom-color: var(--link-color); }
-        .tab-content { display: none; padding-bottom: 20px; }
-        .tab-content.active { display: block; animation: fadeIn 0.2s; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--secondary-bg-color);
+            margin-bottom: 15px;
+            flex-shrink: 0;
+        }
+
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
+            cursor: pointer;
+            color: var(--hint-color);
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: 0.2s;
+        }
+
+        .tab.active {
+            color: var(--link-color);
+            border-bottom-color: var(--link-color);
+        }
+
+        .tab-content {
+            display: none;
+            padding-bottom: 20px;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.2s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
 
         /* Path Mapping 列表优化 */
-        .mapping-item { 
+        .mapping-item {
             background: var(--secondary-bg-color);
-            border: 1px solid rgba(0,0,0,0.05);
-            padding: 12px; 
-            border-radius: 10px; 
-            margin-bottom: 12px; 
-            display: flex; 
-            flex-direction: column; 
-            gap: 8px; 
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }
+
         .mapping-arrow {
             text-align: center;
             color: var(--hint-color);
             font-size: 12px;
             font-weight: 500;
         }
-        .state-text { padding: 20px; text-align: center; color: var(--hint-color); font-size: 14px; }
+
+        .state-text {
+            padding: 20px;
+            text-align: center;
+            color: var(--hint-color);
+            font-size: 14px;
+        }
     </style>
 </head>
+
 <body>
     <div class="container" id="app">
         <div class="section-title">Bot 管理员</div>
         <div class="section">
-            <div class="card" id="admin-list"><div class="state-text">加载中...</div></div>
+            <div class="card" id="admin-list">
+                <div class="state-text">加载中...</div>
+            </div>
         </div>
 
         <div class="section-title">媒体服务器</div>
         <div class="section">
-            <div class="card" id="server-list"><div class="state-text">加载中...</div></div>
+            <div class="card" id="server-list">
+                <div class="state-text">加载中...</div>
+            </div>
             <button class="btn" onclick="openAddServerModal()">添加服务器</button>
         </div>
 
         <div class="section-title">系统功能</div>
         <div class="section">
             <div class="card">
-                <div class="item"><div class="item-content"><span class="item-title">积分/签到功能</span></div><label class="switch"><input type="checkbox" id="toggle-points" onchange="toggleSystem('enable_points')"><span class="slider"></span></label></div>
-                <div class="item"><div class="item-content"><span class="item-title">入群验证</span></div><label class="switch"><input type="checkbox" id="toggle-verification" onchange="toggleSystem('enable_verification')"><span class="slider"></span></label></div>
-                <div class="item"><div class="item-content"><span class="item-title">求片功能</span></div><label class="switch"><input type="checkbox" id="toggle-requestmedia" onchange="toggleSystem('enable_requestmedia')"><span class="slider"></span></label></div>
-                <div class="item"><div class="item-content"><span class="item-title">清理不在群成员</span></div><label class="switch"><input type="checkbox" id="toggle-cleanup" onchange="toggleSystem('enable_cleanup_inactive_users')"><span class="slider"></span></label></div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">积分/签到功能</span></div><label class="switch"><input
+                            type="checkbox" id="toggle-points" onchange="toggleSystem('enable_points')"><span
+                            class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">入群验证</span></div><label class="switch"><input
+                            type="checkbox" id="toggle-verification"
+                            onchange="toggleSystem('enable_verification')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">求片功能</span></div><label class="switch"><input
+                            type="checkbox" id="toggle-requestmedia"
+                            onchange="toggleSystem('enable_requestmedia')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">清理不在群成员</span></div><label class="switch"><input
+                            type="checkbox" id="toggle-cleanup"
+                            onchange="toggleSystem('enable_cleanup_inactive_users')"><span
+                            class="slider"></span></label>
+                </div>
             </div>
         </div>
     </div>
@@ -191,7 +395,7 @@
                 <span id="modal-title">服务器设置</span>
                 <span class="modal-close" onclick="closeModal('server-modal')">取消</span>
             </div>
-            
+
             <div class="tabs" id="srv-tabs" style="display:none">
                 <div class="tab active" onclick="switchTab('basic')">基础</div>
                 <div class="tab" onclick="switchTab('policy')" id="tab-policy">策略</div>
@@ -201,25 +405,38 @@
 
             <form id="server-form" onsubmit="handleServerSubmit(event)" style="overflow-y:auto; flex:1;">
                 <input type="hidden" id="srv-id">
-                
+
                 <div id="tab-content-basic" class="tab-content active">
                     <div class="form-group">
                         <label class="form-label">启用状态</label>
                         <div class="item" style="padding:0; border:none; background:transparent">
                             <span>启用此服务器</span>
-                            <label class="switch"><input type="checkbox" id="srv-enabled"><span class="slider"></span></label>
+                            <label class="switch"><input type="checkbox" id="srv-enabled"><span
+                                    class="slider"></span></label>
                         </div>
                     </div>
-                    <div class="form-group"><label class="form-label">名称</label><input type="text" class="form-input" id="srv-name" required placeholder="服务器昵称"></div>
-                    <div class="form-group"><label class="form-label">类型</label><select class="form-select" id="srv-type"><option value="emby">Emby</option><option value="jellyfin">Jellyfin</option><option value="sonarr">Sonarr</option><option value="radarr">Radarr</option></select></div>
-                    <div class="form-group"><label class="form-label">地址 (URL)</label><input type="url" class="form-input" id="srv-url" required placeholder="http://127.0.0.1:8096"></div>
-                    <div class="form-group"><label class="form-label">API Key</label><input type="text" class="form-input" id="srv-key" required placeholder="API Key"></div>
+                    <div class="form-group"><label class="form-label">名称</label><input type="text" class="form-input"
+                            id="srv-name" required placeholder="服务器昵称"></div>
+                    <div class="form-group"><label class="form-label">类型</label><select class="form-select"
+                            id="srv-type">
+                            <option value="emby">Emby</option>
+                            <option value="jellyfin">Jellyfin</option>
+                            <option value="sonarr">Sonarr</option>
+                            <option value="radarr">Radarr</option>
+                        </select></div>
+                    <div class="form-group"><label class="form-label">地址 (URL)</label><input type="url"
+                            class="form-input" id="srv-url" required placeholder="http://127.0.0.1:8096"></div>
+                    <div class="form-group"><label class="form-label">API Key</label><input type="text"
+                            class="form-input" id="srv-key" required placeholder="API Key"></div>
                     <div class="form-group">
                         <label class="form-label">Webhook URL (点击复制)</label>
                         <div style="display: flex; gap: 8px;">
-                            <input type="text" class="form-input" id="srv-webhook" readonly onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');" style="background: #eee; color: #555;">
+                            <input type="text" class="form-input" id="srv-webhook" readonly
+                                onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
+                                style="background: #eee; color: #555;">
                         </div>
-                        <div class="section-hint" style="margin: 4px 0 0 0;">请将此地址填入 Jellyfin/Emby/Sonarr/Radarr 的 Webhook 设置中。</div>
+                        <div class="section-hint" style="margin: 4px 0 0 0;">请将此地址填入 Jellyfin/Emby/Sonarr/Radarr 的
+                            Webhook 设置中。</div>
                     </div>
                 </div>
 
@@ -235,19 +452,23 @@
                             <option value="close">关闭注册</option>
                         </select>
                     </div>
-                    
+
                     <div id="reg-extra-count" class="form-group" style="display:none">
                         <label class="form-label">剩余名额</label>
                         <input type="number" class="form-input" id="srv-reg-count">
                     </div>
                     <div id="reg-extra-time" class="form-group" style="display:none">
                         <label class="form-label">截止时间</label>
-                        <input type="datetime-local" class="form-input" id="srv-reg-time-picker" onchange="updateTimestamp()">
-                        <input type="hidden" id="srv-reg-time"> 
+                        <input type="datetime-local" class="form-input" id="srv-reg-time-picker"
+                            onchange="updateTimestamp()">
+                        <input type="hidden" id="srv-reg-time">
                     </div>
                     <div id="reg-extra-ext" style="display:none">
-                        <div class="form-group"><label class="form-label">验证 URL 前缀</label><input type="text" class="form-input" id="srv-reg-url" placeholder="http://..."></div>
-                        <div class="form-group"><label class="form-label">解析代码 (Python 表达式)</label><textarea class="form-input" id="srv-reg-parser" placeholder="response.status_code == 200"></textarea></div>
+                        <div class="form-group"><label class="form-label">验证 URL 前缀</label><input type="text"
+                                class="form-input" id="srv-reg-url" placeholder="http://..."></div>
+                        <div class="form-group"><label class="form-label">解析代码 (Python 表达式)</label><textarea
+                                class="form-input" id="srv-reg-parser"
+                                placeholder="response.status_code == 200"></textarea></div>
                     </div>
 
                     <div class="form-group" style="display:flex; gap:10px">
@@ -271,7 +492,8 @@
                         <label class="switch"><input type="checkbox" id="srv-nsfw"><span class="slider"></span></label>
                     </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
-                    <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂 媒体库绑定</button>
+                    <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
+                        媒体库绑定</button>
                 </div>
 
                 <div id="tab-content-paths" class="tab-content">
@@ -283,21 +505,29 @@
                 <div id="tab-content-advanced" class="tab-content">
                     <div class="form-group">
                         <label class="form-label">常规通知频道</label>
-                        <select class="form-select" id="srv-notify-topic"><option value="0">未设置</option></select>
+                        <select class="form-select" id="srv-notify-topic">
+                            <option value="0">未设置</option>
+                        </select>
                     </div>
                     <div class="form-group" id="req-topic-group">
                         <label class="form-label">求片通知频道</label>
-                        <select class="form-select" id="srv-req-topic"><option value="0">未设置</option></select>
+                        <select class="form-select" id="srv-req-topic">
+                            <option value="0">未设置</option>
+                        </select>
                     </div>
-                    <div id="sonarr-actions" style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
+                    <div id="sonarr-actions"
+                        style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
                         <div class="section-hint">高级维护工具</div>
-                        <button type="button" class="btn btn-sm" onclick="triggerRebuildMetadata()">🔄 重建元数据 (生成 NFO)</button>
+                        <button type="button" class="btn btn-sm" onclick="triggerRebuildMetadata()">🔄 重建元数据 (生成
+                            NFO)</button>
                         <div class="section-hint">此操作将遍历所有剧集并重新生成 NFO 文件，耗时较长，请勿频繁点击。</div>
                     </div>
-                    <div id="radarr-actions" style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
+                    <div id="radarr-actions"
+                        style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
                         <div class="section-hint">高级维护工具</div>
-                        <button type="button" class="btn btn-sm" onclick="triggerCleanNfo()">🧹 清洗 NFO (移除海报链接)</button>
-                        <div class="section-hint">此操作将遍历所有电影并移除 NFO 中的在线图片链接，保持元数据整洁。</div>
+                        <button type="button" class="btn btn-sm" onclick="triggerRebuildMetadata()">🔄 重建元数据 (生成
+                            NFO)</button>
+                        <div class="section-hint">此操作将遍历所有电影并重新生成 NFO 文件，耗时较长，请勿频繁点击。</div>
                     </div>
                     <div class="section-hint" style="margin-top:20px; color:var(--destructive-text-color)">危险区域</div>
                     <button type="button" class="btn btn-danger" onclick="deleteServer()">删除此服务器</button>
@@ -312,30 +542,41 @@
 
     <div class="modal-overlay" id="nsfw-modal" style="z-index: 1100;">
         <div class="modal">
-            <div class="modal-header"><span>NSFW 媒体库</span><span class="modal-close" onclick="closeModal('nsfw-modal')">关闭</span></div>
-            <div class="card" id="nsfw-list"><div class="state-text">加载中...</div></div>
+            <div class="modal-header"><span>NSFW 媒体库</span><span class="modal-close"
+                    onclick="closeModal('nsfw-modal')">关闭</span></div>
+            <div class="card" id="nsfw-list">
+                <div class="state-text">加载中...</div>
+            </div>
         </div>
     </div>
 
     <div class="modal-overlay" id="library-modal" style="z-index: 1100;">
         <div class="modal">
-            <div class="modal-header"><span>媒体库绑定</span><span class="modal-close" onclick="closeModal('library-modal')">关闭</span></div>
-            <div class="card" id="lib-list"><div class="state-text">加载中...</div></div>
+            <div class="modal-header"><span>媒体库绑定</span><span class="modal-close"
+                    onclick="closeModal('library-modal')">关闭</span></div>
+            <div class="card" id="lib-list">
+                <div class="state-text">加载中...</div>
+            </div>
         </div>
     </div>
 
     <div class="modal-overlay" id="binding-modal" style="z-index: 1200;">
         <div class="modal">
-            <div class="modal-header"><span id="bind-title">配置绑定</span><span class="modal-close" onclick="closeModal('binding-modal')">返回</span></div>
+            <div class="modal-header"><span id="bind-title">配置绑定</span><span class="modal-close"
+                    onclick="closeModal('binding-modal')">返回</span></div>
             <form id="binding-form" onsubmit="handleBindingSubmit(event)">
                 <input type="hidden" id="bind-lib-name">
                 <div class="form-group">
                     <label class="form-label">Sonarr/Radarr 实例</label>
-                    <select class="form-select" id="bind-server" onchange="onBindServerChange()"><option value="">未绑定</option></select>
+                    <select class="form-select" id="bind-server" onchange="onBindServerChange()">
+                        <option value="">未绑定</option>
+                    </select>
                 </div>
                 <div id="bind-details" style="display:none">
-                    <div class="form-group"><label class="form-label">质量配置</label><select class="form-select" id="bind-quality"></select></div>
-                    <div class="form-group"><label class="form-label">根目录</label><select class="form-select" id="bind-folder"></select></div>
+                    <div class="form-group"><label class="form-label">质量配置</label><select class="form-select"
+                            id="bind-quality"></select></div>
+                    <div class="form-group"><label class="form-label">根目录</label><select class="form-select"
+                            id="bind-folder"></select></div>
                 </div>
                 <button type="submit" class="btn btn-primary">保存绑定</button>
                 <button type="button" class="btn btn-danger" onclick="unbindLibrary()">解除绑定</button>
@@ -374,7 +615,7 @@
             const list = document.getElementById('admin-list');
             list.innerHTML = data.length ? '' : '<div class="state-text">无数据</div>';
             data.forEach(u => {
-                list.innerHTML += `<div class="item"><div class="item-content"><span class="item-title">${u.name}</span><span class="item-subtitle">ID: ${u.id}</span></div><label class="switch"><input type="checkbox" ${u.is_bot_admin?'checked':''} onchange="toggleAdmin(${u.id}, this)"><span class="slider"></span></label></div>`;
+                list.innerHTML += `<div class="item"><div class="item-content"><span class="item-title">${u.name}</span><span class="item-subtitle">ID: ${u.id}</span></div><label class="switch"><input type="checkbox" ${u.is_bot_admin ? 'checked' : ''} onchange="toggleAdmin(${u.id}, this)"><span class="slider"></span></label></div>`;
             });
         }
 
@@ -382,7 +623,7 @@
             const list = document.getElementById('server-list');
             list.innerHTML = data.length ? '' : '<div class="state-text">无服务器</div>';
             data.forEach(s => {
-                list.innerHTML += `<div class="item" onclick='openEditServer(${JSON.stringify(s)})'><div class="item-content"><span class="item-title">${s.name}</span><span class="item-subtitle">${s.server_type} • ${s.url}</span></div><span class="item-status" style="color:${s.is_enabled?'#34c759':'#ff3b30'}">●</span><div style="color:var(--hint-color);margin-left:8px">›</div></div>`;
+                list.innerHTML += `<div class="item" onclick='openEditServer(${JSON.stringify(s)})'><div class="item-content"><span class="item-title">${s.name}</span><span class="item-subtitle">${s.server_type} • ${s.url}</span></div><span class="item-status" style="color:${s.is_enabled ? '#34c759' : '#ff3b30'}">●</span><div style="color:var(--hint-color);margin-left:8px">›</div></div>`;
             });
         }
 
@@ -409,7 +650,7 @@
             const origin = window.location.origin;
             const webhookPath = `/webhook/${s.server_type}?token=${s.webhook_token}`;
             document.getElementById('srv-webhook').value = origin + webhookPath;
-            
+
             fillTopicSelect('srv-notify-topic', s.notify_topic_id);
             fillTopicSelect('srv-req-topic', s.request_notify_topic_id);
 
@@ -431,7 +672,7 @@
             if (isMedia) {
                 document.getElementById('srv-reg-mode').value = s.registration_mode || 'default';
                 document.getElementById('srv-reg-count').value = s.registration_count_limit;
-                
+
                 const ts = parseInt(s.registration_time_limit);
                 if (ts > 0) {
                     const date = new Date(ts * 1000);
@@ -500,22 +741,9 @@
 
         async function triggerRebuildMetadata() {
             if (!confirm("确定要重建所有媒体的元数据吗？这可能需要很长时间，并且会占用大量 API 请求配额。")) return;
-            
+
             try {
                 const res = await api(`/servers/${currentServerId}/rebuild_metadata`, 'POST');
-                if (res.success) {
-                    tg.showAlert(res.message);
-                }
-            } catch (e) {
-                //
-            }
-        }
-
-        async function triggerCleanNfo() {
-            if (!confirm("确定要清洗所有电影的 NFO 文件吗？\n这将移除其中的 <thumb> 和 <poster> 等在线链接，仅保留文本信息。\n此操作不可逆。")) return;
-            
-            try {
-                const res = await api(`/servers/${currentServerId}/clean_nfo`, 'POST');
                 if (res.success) {
                     tg.showAlert(res.message);
                 }
@@ -559,7 +787,7 @@
             try {
                 const libs = await api(`/servers/${currentServerId}/libraries`);
                 list.innerHTML = '';
-                if(libs.length === 0) list.innerHTML = '<div class="state-text">无库</div>';
+                if (libs.length === 0) list.innerHTML = '<div class="state-text">无库</div>';
                 libs.forEach(lib => {
                     const status = (lib.binding && lib.binding.server_id) ? `🟢 ${lib.binding.server_name}` : "🔴 未绑定";
                     const el = document.createElement('div'); el.className = 'item';
@@ -577,7 +805,7 @@
             const sel = document.getElementById('bind-server');
             sel.innerHTML = '<option value="">未绑定</option>';
             servers.forEach(s => sel.add(new Option(`${s.name} (${s.type})`, s.id)));
-            
+
             if (lib.binding && lib.binding.server_id) {
                 sel.value = lib.binding.server_id;
                 await loadArrResources(lib.binding.server_id, lib.binding);
@@ -591,10 +819,10 @@
         async function onBindServerChange() {
             const sid = document.getElementById('bind-server').value;
             document.getElementById('bind-details').style.display = sid ? 'block' : 'none';
-            if(sid) loadArrResources(sid);
+            if (sid) loadArrResources(sid);
         }
 
-        async function loadArrResources(sid, binding=null) {
+        async function loadArrResources(sid, binding = null) {
             const qSel = document.getElementById('bind-quality'); qSel.innerHTML = '<option>加载中...</option>';
             const fSel = document.getElementById('bind-folder'); fSel.innerHTML = '<option>加载中...</option>';
             const res = await api(`/arr/${sid}/resources`);
@@ -659,7 +887,7 @@
         }
 
         async function deleteServer() {
-            if(!confirm("确定删除？")) return;
+            if (!confirm("确定删除？")) return;
             await api(`/servers/${currentServerId}`, 'DELETE');
             closeModal('server-modal');
             loadData();
@@ -671,8 +899,8 @@
             sel.innerHTML = '<option value="0">未设置</option>';
             topicList.forEach(t => sel.add(new Option(t.name, t.id, false, t.id == val)));
         }
-        function openModal(id, title=null) {
-            if(title) document.getElementById('modal-title').innerText = title;
+        function openModal(id, title = null) {
+            if (title) document.getElementById('modal-title').innerText = title;
             document.querySelector(`#${id}`).style.display = 'flex';
             setTimeout(() => document.querySelector(`#${id} .modal`).classList.add('open'), 10);
         }
@@ -680,10 +908,11 @@
             document.querySelector(`#${id} .modal`).classList.remove('open');
             setTimeout(() => document.querySelector(`#${id}`).style.display = 'none', 300);
         }
-        async function toggleAdmin(uid, cb) { try { await api(`/admins/${uid}/toggle`, 'POST'); } catch(e) { cb.checked = !cb.checked; } }
-        async function toggleSystem(key) { try { await api(`/system/${key}/toggle`, 'POST'); } catch(e) { document.getElementById(`toggle-${key.split('_')[1]}`).checked = !document.getElementById(`toggle-${key.split('_')[1]}`).checked; } }
+        async function toggleAdmin(uid, cb) { try { await api(`/admins/${uid}/toggle`, 'POST'); } catch (e) { cb.checked = !cb.checked; } }
+        async function toggleSystem(key) { try { await api(`/system/${key}/toggle`, 'POST'); } catch (e) { document.getElementById(`toggle-${key.split('_')[1]}`).checked = !document.getElementById(`toggle-${key.split('_')[1]}`).checked; } }
 
         loadData();
     </script>
 </body>
+
 </html>
