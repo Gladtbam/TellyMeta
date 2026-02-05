@@ -468,25 +468,6 @@ class AccountService:
         except HTTPError:
             return Result(False, "请稍后重试或寻求管理员帮助")
 
-    async def get_user_accounts_keyboard(self, user_id: int, callback_prefix: str) -> Result:
-        """获取用户绑定的所有账户按钮
-        Args:
-            callback_prefix: 按钮回调数据的前缀，例如 'me_do_renew'，生成的 data 将是 'me_do_renew_{server_id}'
-        """
-        accounts = await self.media_repo.get_all_by_id(user_id)
-        if not accounts:
-            return Result(False, "您没有任何绑定的媒体账户。")
-
-        keyboard = []
-        for acc in accounts:
-            srv = await self.server_repo.get_by_id(acc.server_id)
-            srv_name = srv.name if srv else f"Server-{acc.server_id}"
-            keyboard.append([
-                Button.inline(f"{srv_name} ({acc.media_name})", data=f"{callback_prefix}_{acc.server_id}".encode('utf-8'))
-            ])
-
-        return Result(True, "请选择要操作的账户：", keyboard=keyboard)
-
     async def get_server_selection_for_code(self, callback_prefix: str) -> Result:
         """获取用于生成邀请码的服务器选择按钮"""
         # 仅媒体服务器

@@ -289,39 +289,3 @@ async def create_code_finish_handler(app: FastAPI, event: events.CallbackQuery.E
     result = await service.generate_code(user_id, ctype, server_id)
 
     await event.respond(result.message)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|query_renew)'))
-@provide_db_session
-async def me_action_init_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """续期/忘记密码处理器/查询续期积分
-    处理用户点击续期/忘记密码按钮的事件"""
-    user_id: Any = event.sender_id
-    action = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    account_service = AccountService(app, session)
-
-    result = await account_service.get_user_accounts_keyboard(user_id, f"me_do_{action}")
-
-    if not result.success:
-        await event.answer(result.message, alert=True)
-    else:
-        await safe_respond_keyboard(event, result.message, result.keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_do_(renew|query_renew)_(\\d+)'))
-@provide_db_session
-async def me_action_exec_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """执行个人中心具体操作 (指定服务器)"""
-    action = event.pattern_match.group(1).decode() # type: ignore
-    server_id = int(event.pattern_match.group(2).decode()) # type: ignore
-    user_id: Any = event.sender_id
-    account_service = AccountService(app, session)
-
-    if action == 'renew':
-        result = await account_service.renew(user_id, server_id, use_score=True)
-    elif action == 'query_renew':
-        telegram_repo = TelegramRepository(session)
-        renew_score = int(await telegram_repo.get_renew_score())
-        result = Result(True, f"当前续期积分为 {renew_score}")
-    else:
-        result = Result(False, "未知操作。")
-
-    await safe_respond(event, result.message)

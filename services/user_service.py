@@ -192,7 +192,6 @@ class UserService:
 
         button_layout = [
             [('生成 “码”', 'me_create_code')],
-            [('续期', 'me_renew'), ('查询续期积分', 'me_query_renew')],
             [('求片', f'me_request_{user.id}'), ('上传字幕', f'me_subtitle_{user.id}')]
         ]
 
