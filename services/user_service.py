@@ -1,4 +1,3 @@
-import textwrap
 from dataclasses import dataclass
 from datetime import date, timedelta
 from random import choice, choices, randint
@@ -192,7 +191,7 @@ class UserService:
             message += f"\n\n⚠️ [您](tg://user?id={user.id})尚未绑定任何媒体账户。"
 
         button_layout = [
-            [('生成 “码”', 'me_create_code'), ('NSFW开关', 'me_nsfw'), ('忘记密码', 'me_forget_password')],
+            [('生成 “码”', 'me_create_code'), ('忘记密码', 'me_forget_password')],
             [('续期', 'me_renew'), ('查询续期积分', 'me_query_renew')],
             [('求片', f'me_request_{user.id}'), ('上传字幕', f'me_subtitle_{user.id}')]
         ]

@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.webapp_auth import get_current_user_id
-from models.schemas import MediaAccountDto, UserInfoDto
+from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
+from services.account_service import AccountService
 from services.user_service import UserService
 
 router = APIRouter(prefix="/api/miniapp", tags=["miniapp"])
@@ -32,6 +33,7 @@ async def get_my_info(
             is_admin=is_admin,
             media_accounts=[
                 MediaAccountDto(
+                    server_id=item["media_user"].server_id,
                     media_name=item["media_name"],
                     server_name=item["server_name"],
                     server_type=item["server_type"],
@@ -45,3 +47,17 @@ async def get_my_info(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.post("/accounts/{server_id}/toggle_nsfw", response_model=ToggleResponse)
+async def toggle_account_nsfw(
+    request: Request,
+    server_id: int,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+):
+    """切换账户 NSFW 状态"""
+    service = AccountService(request.app, session)
+    result = await service.toggle_nsfw_policy(user_id, server_id)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {"success": True, "message": result.message}

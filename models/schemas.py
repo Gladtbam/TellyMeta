@@ -163,6 +163,7 @@ class TopicDto(BaseModel):
 
 class MediaAccountDto(BaseModel):
     """媒体账户信息"""
+    server_id: int
     media_name: str
     server_name: str
     server_type: str

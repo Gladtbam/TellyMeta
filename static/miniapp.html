@@ -156,11 +156,35 @@
             display: none;
             /* 默认隐藏 */
         }
+
+
+        .action-btn {
+            background: transparent;
+            border: 1px solid var(--button-color);
+            color: var(--button-color);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .action-btn:active {
+            opacity: 0.6;
+        }
+
+        .nsfw-btn {
+            border-color: var(--destructive-text-color);
+            color: var(--destructive-text-color);
+        }
     </style>
 </head>
 
 <body>
+    <!-- ... (body content remains same until script) ... -->
     <div id="app">
+        <!-- ... -->
         <div class="profile-header">
             <div class="profile-avatar" id="avatar">👤</div>
             <div class="profile-info">
@@ -173,8 +197,10 @@
         </div>
 
         <div class="container">
+            <!-- ... -->
             <div class="section-title">账户状态</div>
             <div class="card">
+                <!-- ... -->
                 <div class="item">
                     <div class="item-content"><span class="item-title">当前积分</span></div>
                     <span class="item-value" id="score">-</span>
@@ -216,7 +242,7 @@
         tg.onEvent('themeChanged', applyTheme);
         tg.expand();
 
-        // 渲染基本信息（从 WebApp data 获取，无需请求）
+        // ... (user init) ...
         const user = tg.initDataUnsafe.user;
         if (user) {
             document.getElementById('user-name').innerText = [user.first_name, user.last_name].filter(Boolean).join(' ');
@@ -243,7 +269,7 @@
         }
 
         function render(data) {
-            // 更新头像
+            // ... (render logic) ...
             const user = tg.initDataUnsafe.user;
             if (user && user.photo_url) {
                 document.getElementById('avatar').innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%">`;
@@ -271,7 +297,6 @@
                 card.className = 'card';
 
                 const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
-                // 格式化日期
                 let expiry = "未知";
                 if (acc.expires_at) {
                     const d = new Date(acc.expires_at);
@@ -294,9 +319,44 @@
                         <div class="item-content"><span class="item-subtitle">有效期至</span></div>
                         <span class="item-value" style="font-size:15px">${expiry}</span>
                     </div>
+                    <div class="item">
+                        <div class="item-content"><span class="item-subtitle">操作</span></div>
+                        <div class="item-value">
+                           <button class="action-btn nsfw-btn" onclick="toggleNsfw(${acc.server_id})">🔞 切换 NSFW</button>
+                        </div>
+                    </div>
                  `;
                 list.appendChild(card);
             });
+        }
+
+        async function toggleNsfw(serverId) {
+            if (!confirm("确认要切换当前账户的 NSFW 权限吗？")) return;
+
+            try {
+                tg.MainButton.text = "正在处理...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}/toggle_nsfw`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                } else {
+                    tg.showAlert(data.detail || data.message || "操作失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
         }
 
         function goToSettings() {
