@@ -290,7 +290,7 @@ async def create_code_finish_handler(app: FastAPI, event: events.CallbackQuery.E
 
     await event.respond(result.message)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|forget_password|query_renew)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_(renew|query_renew)'))
 @provide_db_session
 async def me_action_init_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """续期/忘记密码处理器/查询续期积分
@@ -306,7 +306,7 @@ async def me_action_init_handler(app: FastAPI, event: events.CallbackQuery.Event
     else:
         await safe_respond_keyboard(event, result.message, result.keyboard)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_do_(renew|forget_password|query_renew)_(\\d+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'me_do_(renew|query_renew)_(\\d+)'))
 @provide_db_session
 async def me_action_exec_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """执行个人中心具体操作 (指定服务器)"""
@@ -317,12 +317,6 @@ async def me_action_exec_handler(app: FastAPI, event: events.CallbackQuery.Event
 
     if action == 'renew':
         result = await account_service.renew(user_id, server_id, use_score=True)
-    elif action == 'forget_password':
-        result = await account_service.forget_password(user_id, server_id)
-        if result.success:
-            await event.respond(result.message, parse_mode='markdown') # 密码需要发送新消息以便复制
-            await event.answer("重置成功")
-            return
     elif action == 'query_renew':
         telegram_repo = TelegramRepository(session)
         renew_score = int(await telegram_repo.get_renew_score())

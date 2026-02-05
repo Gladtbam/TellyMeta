@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.dependencies import get_telethon_client
+from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
 from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
 from services.account_service import AccountService
@@ -61,3 +63,21 @@ async def toggle_account_nsfw(
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
     return {"success": True, "message": result.message}
+
+@router.post("/accounts/{server_id}/reset_password", response_model=ToggleResponse)
+async def reset_account_password(
+    request: Request,
+    server_id: int,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+):
+    """重置账户密码"""
+    service = AccountService(request.app, session)
+    result = await service.forget_password(user_id, server_id)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    await client.send_message(user_id, result.message, parse_mode='markdown')
+
+    return {"success": True, "message": "密码重置成功，新密码已发送到您的 Telegram 私聊。"}
