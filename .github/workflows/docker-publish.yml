@@ -85,7 +85,7 @@ jobs:
       
       - uses: actions/delete-package-versions@v5
         with:
-          package-name: 'gladtbam/tellymeta'
+          package-name: 'tellymeta'
           package-type: container
           min-versions-to-keep: 5
           delete-only-untagged-versions: 'true'
