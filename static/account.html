@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>账户管理</title>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f4f4f5);
+            --destructive-text-color: var(--tg-theme-destructive-text-color, #ff3b30);
+            --section-header-text-color: var(--tg-theme-section-header-text-color, #6d6d72);
+        }
+
+        body {
+            background-color: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container {
+            padding: 16px;
+            padding-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: var(--section-header-text-color);
+            text-transform: uppercase;
+            margin: 24px 0 8px 16px;
+        }
+
+        .section-title:first-child {
+            margin-top: 8px;
+        }
+
+        .card {
+            background-color: var(--bg-color);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .item {
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .item:last-child {
+            border-bottom: none;
+        }
+
+        .item-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .item-title {
+            font-size: 17px;
+            font-weight: 400;
+        }
+
+        .item-subtitle {
+            font-size: 14px;
+            color: var(--hint-color);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
+        .item-value {
+            font-size: 17px;
+            color: var(--hint-color);
+        }
+
+        .tag-type {
+            font-size: 11px;
+            color: var(--text-color);
+            background: var(--secondary-bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        .loader {
+            text-align: center;
+            padding: 20px;
+            color: var(--hint-color);
+            font-size: 14px;
+        }
+
+        .action-item {
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+            cursor: pointer;
+            transition: background-color 0.15s;
+        }
+
+        .action-item:last-child {
+            border-bottom: none;
+        }
+
+        .action-item:active {
+            background-color: var(--secondary-bg-color);
+        }
+
+        .action-icon {
+            font-size: 20px;
+            margin-right: 12px;
+        }
+
+        .action-text {
+            font-size: 17px;
+            flex: 1;
+        }
+
+        .action-arrow {
+            color: var(--hint-color);
+            font-size: 14px;
+        }
+
+        .action-item.destructive .action-text {
+            color: var(--destructive-text-color);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div class="container">
+            <div class="section-title">账户信息</div>
+            <div class="card" id="account-info">
+                <div class="loader">正在加载...</div>
+            </div>
+
+            <div class="section-title">操作</div>
+            <div class="card" id="actions">
+                <div class="action-item" onclick="renewAccount()">
+                    <span class="action-icon">🔄</span>
+                    <span class="action-text">续期</span>
+                    <span class="action-arrow">›</span>
+                </div>
+                <div class="action-item" onclick="toggleNsfw()">
+                    <span class="action-icon">🔞</span>
+                    <span class="action-text">切换 NSFW</span>
+                    <span class="action-arrow">›</span>
+                </div>
+                <div class="action-item" onclick="resetPassword()">
+                    <span class="action-icon">🔑</span>
+                    <span class="action-text">重置密码</span>
+                    <span class="action-arrow">›</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+
+        function applyTheme() {
+            const p = tg.themeParams;
+            const root = document.documentElement;
+            if (p.bg_color) root.style.setProperty('--tg-theme-bg-color', p.bg_color);
+            if (p.text_color) root.style.setProperty('--tg-theme-text-color', p.text_color);
+            if (p.hint_color) root.style.setProperty('--tg-theme-hint-color', p.hint_color);
+            if (p.link_color) root.style.setProperty('--tg-theme-link-color', p.link_color);
+            if (p.button_color) root.style.setProperty('--tg-theme-button-color', p.button_color);
+            if (p.button_text_color) root.style.setProperty('--tg-theme-button-text-color', p.button_text_color);
+            if (p.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', p.secondary_bg_color);
+        }
+        applyTheme();
+        tg.onEvent('themeChanged', applyTheme);
+        tg.expand();
+
+        tg.BackButton.show();
+        tg.BackButton.onClick(() => {
+            window.location.href = 'miniapp.html';
+        });
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const serverId = urlParams.get('server_id');
+
+        if (!serverId) {
+            document.getElementById('account-info').innerHTML = '<div class="loader" style="color:var(--destructive-text-color)">参数错误</div>';
+        }
+
+        let accountData = null;
+
+        async function fetchAccountInfo() {
+            try {
+                const res = await fetch('/api/miniapp/me', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || "加载失败");
+                }
+
+                const data = await res.json();
+                const account = data.media_accounts.find(acc => acc.server_id == serverId);
+
+                if (!account) {
+                    throw new Error("账户不存在");
+                }
+
+                accountData = account;
+                renderAccountInfo(account);
+            } catch (e) {
+                document.getElementById('account-info').innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
+            }
+        }
+
+        function renderAccountInfo(acc) {
+            const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+            let expiry = "未知";
+            if (acc.expires_at) {
+                const d = new Date(acc.expires_at);
+                expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+            }
+
+            document.getElementById('account-info').innerHTML = `
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
+                        <span class="item-subtitle">${acc.server_url}</span>
+                    </div>
+                    <span style="font-size:13px; color:${statusColor}">${acc.status_text}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">媒体用户名</span></div>
+                    <span class="item-value" style="font-size:15px">${acc.media_name}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">有效期至</span></div>
+                    <span class="item-value" style="font-size:15px">${expiry}</span>
+                </div>
+            `;
+        }
+
+        async function renewAccount() {
+            if (!confirm("确认要续期当前账户吗？（将消耗积分）")) return;
+
+            try {
+                tg.MainButton.text = "正在续期...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}/renew`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                    fetchAccountInfo(); // 刷新账户信息
+                } else {
+                    tg.showAlert(data.detail || data.message || "续期失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        async function toggleNsfw() {
+            if (!confirm("确认要切换当前账户的 NSFW 权限吗？")) return;
+
+            try {
+                tg.MainButton.text = "正在处理...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}/toggle_nsfw`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                } else {
+                    tg.showAlert(data.detail || data.message || "操作失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        async function resetPassword() {
+            if (!confirm("确认要重置当前账户的密码吗？")) return;
+
+            try {
+                tg.MainButton.text = "正在重置密码...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}/reset_password`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                } else {
+                    tg.showAlert(data.detail || data.message || "重置失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        fetchAccountInfo();
+    </script>
+</body>
+
+</html>
