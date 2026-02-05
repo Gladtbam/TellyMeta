@@ -81,3 +81,17 @@ async def reset_account_password(
     await client.send_message(user_id, result.message, parse_mode='markdown')
 
     return {"success": True, "message": "密码重置成功，新密码已发送到您的 Telegram 私聊。"}
+
+@router.post("/accounts/{server_id}/renew", response_model=ToggleResponse)
+async def renew_account(
+    request: Request,
+    server_id: int,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+):
+    """续期账户"""
+    service = AccountService(request.app, session)
+    result = await service.renew(user_id, server_id, use_score=True)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {"success": True, "message": result.message}

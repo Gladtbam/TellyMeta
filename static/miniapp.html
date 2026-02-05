@@ -322,6 +322,7 @@
                     <div class="item">
                         <div class="item-content"><span class="item-subtitle">操作</span></div>
                         <div class="item-value" style="display:flex; gap:8px; flex-wrap:wrap;">
+                           <button class="action-btn" onclick="renewAccount(${acc.server_id})">🔄 续期</button>
                            <button class="action-btn nsfw-btn" onclick="toggleNsfw(${acc.server_id})">🔞 切换 NSFW</button>
                            <button class="action-btn" onclick="resetPassword(${acc.server_id})">🔑 重置密码</button>
                         </div>
@@ -381,6 +382,36 @@
                     tg.showAlert(data.message);
                 } else {
                     tg.showAlert(data.detail || data.message || "重置失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        async function renewAccount(serverId) {
+            if (!confirm("确认要续期当前账户吗？（将消耗积分）")) return;
+
+            try {
+                tg.MainButton.text = "正在续期...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}/renew`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                    fetchMe(); // 刷新页面数据
+                } else {
+                    tg.showAlert(data.detail || data.message || "续期失败");
                 }
             } catch (e) {
                 tg.MainButton.hideProgress();

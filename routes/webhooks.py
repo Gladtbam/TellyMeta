@@ -216,3 +216,13 @@ async def jellyfin(
         if ai_client:
             await cancel_translate_media_item(server_instance.id, payload.item_id)
     return Response(content="Webhook received", status_code=200)
+
+@router.get("/health", status_code=200)
+async def health_check() -> dict[str, str]:
+    """健康检查端点"""
+    return {"status": "ok"}
+
+@router.post("/webhook/test", status_code=202)
+async def test_webhook(payload: dict[str, Any]) -> Response:
+    logger.info("收到 test 事件： {}", payload)
+    return Response(status_code=200)
