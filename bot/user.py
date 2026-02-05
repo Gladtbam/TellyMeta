@@ -216,7 +216,7 @@ async def _perform_registration(
 
     account_service = AccountService(app, session)
     result = await account_service.register(user_id, user_name, server_id)
-    await safe_respond(event, result.message)
+    await event.respond(result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/code({settings.telegram_bot_name})?(\s.+)?$',
