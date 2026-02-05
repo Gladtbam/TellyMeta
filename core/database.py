@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from fastapi import HTTPException
 from loguru import logger
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
@@ -50,6 +51,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         try:
             yield session
+        except HTTPException:
+            await session.rollback()
+            raise
         except Exception as e:
             await session.rollback()
             logger.exception("数据库会话错误：{}", e)

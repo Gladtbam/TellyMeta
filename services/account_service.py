@@ -337,7 +337,7 @@ class AccountService:
 
         return Result(
             True,
-            f"续期成功，您的 **{server.name}** 账户已延长至 **{media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}**。"
+            f"续期成功，您的 {server.name} 账户已延长至 {media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}。"
         )
 
     async def redeem_code(self, user_id: int, username: str | None | Literal[False], code_str: str) -> Result:
@@ -440,7 +440,7 @@ class AccountService:
         )
 
         action_text = "开启" if target_enable_nsfw else "关闭"
-        return Result(True, f"已 **{action_text}** 您的 NSFW 权限 (服务器: {server.name})。")
+        return Result(True, f"已 {action_text} 您的 NSFW 权限 (服务器: {server.name})。")
 
     async def forget_password(self, user_id: int, server_id: int):
         """重置密码

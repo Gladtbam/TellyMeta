@@ -61,7 +61,7 @@ async def toggle_account_nsfw(
     service = AccountService(request.app, session)
     result = await service.toggle_nsfw_policy(user_id, server_id)
     if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
+        return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
 
 @router.post("/accounts/{server_id}/reset_password", response_model=ToggleResponse)
@@ -76,7 +76,7 @@ async def reset_account_password(
     service = AccountService(request.app, session)
     result = await service.forget_password(user_id, server_id)
     if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
+        return {"success": False, "message": result.message}
 
     await client.send_message(user_id, result.message, parse_mode='markdown')
 
@@ -93,5 +93,5 @@ async def renew_account(
     service = AccountService(request.app, session)
     result = await service.renew(user_id, server_id, use_score=True)
     if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
+        return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
