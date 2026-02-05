@@ -6,6 +6,7 @@ from core.dependencies import get_telethon_client
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
 from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
+from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.user_service import UserService
 
@@ -19,8 +20,10 @@ async def get_my_info(
 ):
     """获取当前 MiniApp 用户信息"""
     service = UserService(request.app, session)
+    telegram_repo = TelegramRepository(session)
     try:
         data = await service.get_user_info_data(user_id)
+        renew_score = await telegram_repo.get_renew_score()
 
         user = data["user"]
         media_accounts_data = data["media_accounts"]
@@ -32,6 +35,7 @@ async def get_my_info(
             score=user.score,
             checkin_count=user.checkin_count,
             warning_count=user.warning_count,
+            renew_score=int(renew_score),
             is_admin=is_admin,
             media_accounts=[
                 MediaAccountDto(

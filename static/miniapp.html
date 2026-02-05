@@ -213,6 +213,10 @@
                     <div class="item-content"><span class="item-title">警告次数</span></div>
                     <span class="item-value" id="warning">-</span>
                 </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">续期/注册积分</span></div>
+                    <span class="item-value" id="renew-score">-</span>
+                </div>
             </div>
 
             <div class="section-title" id="media-title">媒体账户</div>
@@ -281,6 +285,7 @@
             }
 
             document.getElementById('score').innerText = data.score;
+            document.getElementById('renew-score').innerText = data.renew_score;
             document.getElementById('checkin').innerText = `${data.checkin_count} 天`;
             document.getElementById('warning').innerText = data.warning_count;
 

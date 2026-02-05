@@ -178,5 +178,6 @@ class UserInfoDto(BaseModel):
     score: int
     checkin_count: int
     warning_count: int
+    renew_score: int
     is_admin: bool = False
     media_accounts: list[MediaAccountDto]
