@@ -322,13 +322,13 @@ class AccountService:
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
         if media_user.expires_at > datetime.now() + timedelta(days=7):
-            return Result(False, f"续期失败，您的账户有效期还有 **{(media_user.expires_at - datetime.now()).days}** 天，无需续期。")
+            return Result(False, f"续期失败，您的账户有效期还有 {(media_user.expires_at - datetime.now()).days} 天，无需续期。")
 
         if use_score:
             user = await self.telegram_repo.get_or_create(user_id)
             renew_score = int(await self.telegram_repo.get_renew_score())
             if user.score < renew_score:
-                return Result(False, f"续期失败，您的积分不足，续期需要 **{renew_score}** 积分。")
+                return Result(False, f"续期失败，您的积分不足，续期需要 {renew_score} 积分。")
             await self.telegram_repo.update_score(user_id, -renew_score)
 
         media_user = await self.media_repo.extend_expiry(media_user, server.registration_expiry_days)
