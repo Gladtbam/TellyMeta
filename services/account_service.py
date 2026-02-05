@@ -467,21 +467,3 @@ class AccountService:
             """))
         except HTTPError:
             return Result(False, "请稍后重试或寻求管理员帮助")
-
-    async def get_server_selection_for_code(self, callback_prefix: str) -> Result:
-        """获取用于生成邀请码的服务器选择按钮"""
-        # 仅媒体服务器
-        emby = await self.server_repo.get_by_type(ServerType.EMBY)
-        jellyfin = await self.server_repo.get_by_type(ServerType.JELLYFIN)
-        servers = list(emby) + list(jellyfin)
-
-        if not servers:
-            return Result(False, "没有可用的媒体服务器。")
-
-        keyboard = []
-        for srv in servers:
-            keyboard.append([
-                Button.inline(f"{srv.name}", data=f"{callback_prefix}_{srv.id}".encode('utf-8'))
-            ])
-
-        return Result(True, "请选择邀请码所属服务器：", keyboard=keyboard)

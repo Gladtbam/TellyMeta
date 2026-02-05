@@ -191,7 +191,6 @@ class UserService:
             message += f"\n\n⚠️ [您](tg://user?id={user.id})尚未绑定任何媒体账户。"
 
         button_layout = [
-            [('生成 “码”', 'me_create_code')],
             [('求片', f'me_request_{user.id}'), ('上传字幕', f'me_subtitle_{user.id}')]
         ]
 

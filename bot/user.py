@@ -15,9 +15,8 @@ from core.telegram_manager import TelethonClientWarper
 from models.orm import RegistrationMode, ServerInstance
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
-from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
-from services.user_service import Result, UserService
+from services.user_service import UserService
 
 settings = get_settings()
 
@@ -244,48 +243,3 @@ async def code_handler(app: FastAPI, event: events.NewMessage.Event, session: As
     account_service = AccountService(app, session)
     result = await account_service.redeem_code(user_id, user_name, args_str)
     await safe_respond(event, result.message)
-
-@TelethonClientWarper.handler(events.CallbackQuery(data=b'me_create_code'))
-@provide_db_session
-async def create_code_start_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """开始生成码：选择服务器"""
-    service = AccountService(app, session)
-    result = await service.get_server_selection_for_code("create_code_srv")
-
-    if not result.success:
-        await event.answer(result.message, alert=True)
-    else:
-        await event.edit(result.message, buttons=result.keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'create_code_srv_(\\d+)'))
-@provide_db_session
-async def create_code_type_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """选择码类型"""
-    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
-    telegram_repo = TelegramRepository(session)
-    score = await telegram_repo.get_renew_score()
-
-    keyboard = [
-        [Button.inline("注册码 (Signup)", data=f"create_code_fin_{server_id}_signup".encode())],
-        [Button.inline("续期码 (Renew)", data=f"create_code_fin_{server_id}_renew".encode())]
-    ]
-    msg = textwrap.dedent(f"""\
-        生成码需要消耗 **{score}** 积分。
-        请选择要生成的码类型：
-        - 续期码：用于续期现有账户。
-        - 注册码：用于注册新账户。
-        """)
-    await event.edit(msg, buttons=keyboard)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'create_code_fin_(\\d+)_(signup|renew)'))
-@provide_db_session
-async def create_code_finish_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """执行生成"""
-    server_id = int(event.pattern_match.group(1).decode()) # type: ignore
-    ctype = event.pattern_match.group(2).decode() # type: ignore
-    user_id: Any = event.sender_id
-
-    service = AccountService(app, session)
-    result = await service.generate_code(user_id, ctype, server_id)
-
-    await event.respond(result.message)

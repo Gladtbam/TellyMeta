@@ -99,3 +99,26 @@ async def renew_account(
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
+
+@router.post("/accounts/{server_id}/generate_code", response_model=ToggleResponse)
+async def generate_account_code(
+    request: Request,
+    server_id: int,
+    code_type: str,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+):
+    """生成邀请码（注册码/续期码）"""
+    if code_type not in ('signup', 'renew'):
+        return {"success": False, "message": "无效的码类型"}
+
+    service = AccountService(request.app, session)
+    result = await service.generate_code(user_id, code_type, server_id)
+
+    if result.success:
+        # 将生成的码发送到用户私聊
+        await client.send_message(user_id, result.message, parse_mode='markdown')
+        return {"success": True, "message": "邀请码已生成，详情已发送到您的 Telegram 私聊。"}
+
+    return {"success": False, "message": result.message}

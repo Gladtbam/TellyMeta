@@ -168,6 +168,11 @@
                     <span class="action-text">重置密码</span>
                     <span class="action-arrow">›</span>
                 </div>
+                <div class="action-item" onclick="showGenerateCodePopup()">
+                    <span class="action-icon">🎫</span>
+                    <span class="action-text">生成“码”</span>
+                    <span class="action-arrow">›</span>
+                </div>
             </div>
         </div>
     </div>
@@ -177,6 +182,7 @@
         tg.ready();
 
         function applyTheme() {
+            // ... (theme logic remains the same)
             const p = tg.themeParams;
             const root = document.documentElement;
             if (p.bg_color) root.style.setProperty('--tg-theme-bg-color', p.bg_color);
@@ -337,6 +343,50 @@
                     tg.showAlert(data.message);
                 } else {
                     tg.showAlert(data.detail || data.message || "重置失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        function showGenerateCodePopup() {
+            tg.showPopup({
+                title: '选择邀请码类型',
+                message: '请选择您要生成的邀请码类型（将消耗等同续期积分）：',
+                buttons: [
+                    { id: 'signup', type: 'default', text: '注册码 (Signup)' },
+                    { id: 'renew', type: 'default', text: '续期码 (Renew)' },
+                    { type: 'cancel' }
+                ]
+            }, function (btnId) {
+                if (btnId) {
+                    generateCode(btnId);
+                }
+            });
+        }
+
+        async function generateCode(codeType) {
+            try {
+                tg.MainButton.text = "正在生成...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const url = `/api/miniapp/accounts/${serverId}/generate_code?code_type=${codeType}`;
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                } else {
+                    tg.showAlert(data.detail || data.message || "生成失败");
                 }
             } catch (e) {
                 tg.MainButton.hideProgress();
