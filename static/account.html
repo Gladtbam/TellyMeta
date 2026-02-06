@@ -173,7 +173,7 @@
                     <span class="action-text">生成“码”</span>
                     <span class="action-arrow">›</span>
                 </div>
-                <div class="action-item" onclick="uploadSubtitle()">
+                <div class="action-item" id="btn-upload-subtitle" onclick="uploadSubtitle()" style="display:none">
                     <span class="action-icon">📤</span>
                     <span class="action-text">上传字幕</span>
                     <span class="action-arrow">›</span>
@@ -266,6 +266,15 @@
                     <span class="item-value" style="font-size:15px">${expiry}</span>
                 </div>
             `;
+
+            const btnUpload = document.getElementById('btn-upload-subtitle');
+            if (btnUpload) {
+                if (acc.allow_subtitle_upload) {
+                    btnUpload.style.display = 'flex';
+                } else {
+                    btnUpload.style.display = 'none';
+                }
+            }
         }
 
         async function renewAccount() {

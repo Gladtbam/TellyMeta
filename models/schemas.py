@@ -87,6 +87,7 @@ class ServerDto(BaseModel):
     registration_external_parser: str | None = None
     code_expiry_days: int = 30
     nsfw_enabled: bool | None = None
+    allow_subtitle_upload: bool = True
     tos: str | None = None
 
     # 高级配置
@@ -102,6 +103,7 @@ class ServerCreate(BaseModel):
     server_type: str
     url: str
     api_key: str
+    allow_subtitle_upload: bool = True
 
 class ServerUpdate(BaseModel):
     """用于更新服务器的请求体"""
@@ -122,6 +124,7 @@ class ServerUpdate(BaseModel):
     registration_external_parser: str | None = None
     code_expiry_days: int | None = None
     nsfw_enabled: bool | None = None
+    allow_subtitle_upload: bool | None = None
     tos: str | None = None
 
     # 高级配置
@@ -171,6 +174,7 @@ class MediaAccountDto(BaseModel):
     status_text: str
     expires_at: datetime
     is_banned: bool
+    allow_subtitle_upload: bool = True
 
 class UserInfoDto(BaseModel):
     """用户信息聚合"""

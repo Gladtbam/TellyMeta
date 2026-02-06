@@ -171,7 +171,8 @@ class UserService:
                     "status_text": "🚫 封禁" if mu.is_banned else "✅ 正常",
                     "is_banned": mu.is_banned,
                     "media_name": mu.media_name,
-                    "expires_at": mu.expires_at
+                    "expires_at": mu.expires_at,
+                    "allow_subtitle_upload": server.allow_subtitle_upload if server else False
                 })
 
         return {

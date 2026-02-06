@@ -72,6 +72,7 @@ class ServerInstance(Base):
     nsfw_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('false'))
     nsfw_library_ids: Mapped[str] = mapped_column(String(1024), default="", server_default=text("''"))
     nsfw_sub_library_ids: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    allow_subtitle_upload: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text('true'))
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)

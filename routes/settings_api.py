@@ -147,6 +147,8 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
         update_dict['api_key'] = data.api_key
     if data.tos is not None:
         update_dict['tos'] = data.tos
+    if data.allow_subtitle_upload is not None:
+        update_dict['allow_subtitle_upload'] = data.allow_subtitle_upload
 
     # 路径映射 (List -> JSON)
     if data.path_mappings is not None:

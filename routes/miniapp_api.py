@@ -7,10 +7,12 @@ from bot.media import run_subtitle_upload_flow
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.database import get_db
-from core.dependencies import get_radarr_clients, get_sonarr_clients, get_telethon_client
+from core.dependencies import (get_radarr_clients, get_sonarr_clients,
+                               get_telethon_client)
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
 from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
 from services.user_service import UserService
@@ -51,7 +53,8 @@ async def get_my_info(
                     server_url=item["server_url"],
                     status_text=item["status_text"],
                     expires_at=item["expires_at"],
-                    is_banned=item["is_banned"]
+                    is_banned=item["is_banned"],
+                    allow_subtitle_upload=item.get("allow_subtitle_upload")
                 ) for item in media_accounts_data
             ]
         )
@@ -130,7 +133,7 @@ async def generate_account_code(
 
 @router.post("/tools/{server_id}/upload_subtitle", response_model=ToggleResponse)
 async def trigger_upload_subtitle(
-    request: Request,
+    server_id: int,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
@@ -138,8 +141,18 @@ async def trigger_upload_subtitle(
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
 ):
     """触发上传字幕流程"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+
+    if not server:
+        return {"success": False, "message": "服务器不存在"}
+
+    if not server.allow_subtitle_upload:
+        return {"success": False, "message": "该服务器未开放字幕上传功能"}
+
     if not radarr_clients and not sonarr_clients:
         return {"success": False, "message": "媒体服务器未配置"}
+
     asyncio.create_task(run_subtitle_upload_flow(user_id, client, session, radarr_clients, sonarr_clients))
 
     return {"success": True, "message": "请返回 Telegram 聊天窗口，查看上传指引。"}
