@@ -173,6 +173,11 @@
                     <span class="action-text">生成“码”</span>
                     <span class="action-arrow">›</span>
                 </div>
+                <div class="action-item" onclick="uploadSubtitle()">
+                    <span class="action-icon">📤</span>
+                    <span class="action-text">上传字幕</span>
+                    <span class="action-arrow">›</span>
+                </div>
             </div>
         </div>
     </div>
@@ -387,6 +392,36 @@
                     tg.showAlert(data.message);
                 } else {
                     tg.showAlert(data.detail || data.message || "生成失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
+        }
+
+        async function uploadSubtitle() {
+            if (!confirm("确认要开始上传字幕吗？\n系统将会在 Telegram 私聊窗口发送指引。")) return;
+
+            try {
+                tg.MainButton.text = "正在请求...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/tools/${serverId}/upload_subtitle`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message);
+                    tg.close();
+                } else {
+                    tg.showAlert(data.detail || data.message || "请求失败");
                 }
             } catch (e) {
                 tg.MainButton.hideProgress();

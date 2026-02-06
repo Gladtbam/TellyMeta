@@ -6,7 +6,6 @@ import zipfile
 from collections.abc import Callable
 
 import aiofiles.tempfile
-from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,18 +22,15 @@ MAX_SINGLE_FILE_SIZE = 20 * 1024 * 1024
 MAX_TOTAL_EXTRACT_SIZE = 50 * 1024 * 1024
 
 class SubtitleService:
-    def __init__(self, app: FastAPI, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        radarr_clients: dict[int, RadarrClient],
+        sonarr_clients: dict[int, SonarrClient]
+    ):
         self.config_repo = ConfigRepository(session)
-        self._sonarr_clients: dict[int, SonarrClient] = app.state.sonarr_clients
-        self._radarr_clients: dict[int, RadarrClient] = app.state.radarr_clients
-
-    @property
-    def sonarr_clients(self) -> dict[int, SonarrClient]:
-        return self._sonarr_clients or {}
-
-    @property
-    def radarr_clients(self) -> dict[int, RadarrClient]:
-        return self._radarr_clients or {}
+        self.radarr_clients: dict[int, RadarrClient] = radarr_clients
+        self.sonarr_clients: dict[int, SonarrClient] = sonarr_clients
 
     async def handle_file_upload(self, user_id: int, file_path: str, file_name: str) -> Result:
         """处理字幕文件上传（入口分发）"""

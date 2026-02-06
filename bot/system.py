@@ -179,7 +179,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     known_commands = [
         'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
-        'kick', 'ban'
+        'kick', 'ban', 'cancel'
     ]
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore

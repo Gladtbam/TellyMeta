@@ -6,10 +6,13 @@ import aiofiles.tempfile
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button, errors, events
+from telethon import Button, TelegramClient, errors, events
+from telethon.tl.custom import Message
 
 from bot.decorators import provide_db_session, require_admin
 from bot.utils import get_user_input_or_cancel, safe_delete, safe_respond
+from clients.radarr_client import RadarrClient
+from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
@@ -194,72 +197,68 @@ async def start_request_conversation_handler(
         logger.error(f"Conversation error: {e}")
         await safe_respond(event, f"发生错误: {str(e)}")
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_subtitle_(\\d+)'))
-@provide_db_session
-async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
-    """开始上传字幕处理器 (Conversation Mode)"""
-    user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
-    chat_id = event.chat_id
-    subtitle_service = SubtitleService(app, session)
-    client = app.state.telethon_client.client
+MAX_FILE_SIZE = 20 * 1024 * 1024
+INTRO_MSG = textwrap.dedent("""
+    📤 **上传字幕**
+    请直接发送字幕压缩包 (Zip)。
+    
+    **🗂 命名规则 (必须严格遵守)**：
+    • **剧集**: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
+    • **电影**: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
+    
+    **📄 压缩包内文件要求**：
+    • **剧集**: S季E集.字幕语言.后缀
+    • **电影**: 电影名.字幕语言.后缀
 
-    if not subtitle_service.sonarr_clients and not subtitle_service.radarr_clients:
-        await event.answer("系统未配置任何 Sonarr 或 Radarr 实例，无法使用此功能。", alert=True)
-        return
+    **建议**：
+    添加字幕所属字幕组或来源，命名规范：
+    S季E集或电影名.字幕语言.字幕或来源.后缀
 
-    # Start Conversation
+    发送 `/cancel` 或其它指令可退出上传模式。
+    """)
+
+async def run_subtitle_upload_flow(
+    user_id: int,
+    telethon_client: TelethonClientWarper,
+    session: AsyncSession,
+    radarr_clients: dict[int, RadarrClient],
+    sonarr_clients: dict[int, SonarrClient]
+):
+    """运行上传字幕流程 (Conversation)"""
+    chat_id = user_id
+    subtitle_service = SubtitleService(session, radarr_clients, sonarr_clients)
+    client: TelegramClient = telethon_client.client
+
     try:
         async with client.conversation(chat_id, timeout=300) as conv:
-            await event.answer()
+            intro_msg = await conv.send_message(INTRO_MSG)
+            if isinstance(intro_msg, list):
+                intro_msg = intro_msg[0]
 
-            # 直接发送指令
-            intro_msg = textwrap.dedent("""
-                📤 **上传字幕**
-                请直接发送字幕压缩包 (Zip)。
-                
-                **🗂 命名规则 (必须严格遵守)**：
-                • **剧集**: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
-                • **电影**: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
-                
-                **📄 压缩包内文件要求**：
-                • **剧集**: S季E集.字幕语言.后缀
-                • **电影**: 电影名.字幕语言.后缀
-
-                **建议**：
-                添加字幕所属字幕组或来源，命名规范：
-                S季E集或电影名.字幕语言.字幕或来源.后缀
-
-                发送 `/cancel` 或其它指令可退出上传模式。
-                """)
-
-            # 使用新消息以避免编辑可能旧的菜单消息
-            await conv.send_message(intro_msg)
-
-            # Wait for file
+            # Wait for file loop
             while True:
                 response_msg = await conv.get_response()
                 if response_msg.text and response_msg.text.startswith('/'):
-                    # 用户可能正在尝试运行命令，取消对话
-                    await conv.send_message("❌ 检测到命令，已取消上传。")
+                    await intro_msg.edit("❌ 检测到命令，已取消上传。")
                     return
 
                 if not response_msg.file:
-                    await conv.send_message("请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。")
+                    await intro_msg.edit("请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。")
                     continue
 
                 if not response_msg.file.name.lower().endswith('.zip'):
-                    await conv.send_message("❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。")
+                    await intro_msg.edit("❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。")
+                    continue
+
+                if response_msg.file.size > MAX_FILE_SIZE:
+                    await intro_msg.edit(f"❌ 文件过大！最大支持 {MAX_FILE_SIZE // 1024 // 1024} MiB，请重新发送。")
                     continue
 
                 # Valid file found
                 break
 
-            processing_msg = await conv.send_message("📥 正在接收并处理文件，请稍候...")
+            processing_msg = await intro_msg.edit("📥 正在接收并处理文件，请稍候...")
 
-            # Download
-            if response_msg.file.size and response_msg.file.size > 20 * 1024 * 1024:
-                await processing_msg.edit("❌ 文件过大！最大支持 20 MiB，请重新发送。")
-                return
             async with aiofiles.tempfile.NamedTemporaryFile(suffix=".zip") as tmp_file:
                 file_path = await response_msg.download_media(file=tmp_file.name)
 
@@ -267,18 +266,16 @@ async def start_upload_sub_handler(app: FastAPI, event: events.CallbackQuery.Eve
                     await processing_msg.edit("❌ 文件下载失败，请重试。")
                     return
 
-                # Process
                 result = await subtitle_service.handle_file_upload(user_id, file_path, response_msg.file.name)
                 if result.success:
                     await processing_msg.edit(result.message)
-                    return
                 else:
                     await processing_msg.edit(f"❌ **上传失败**\n\n{result.message}")
 
     except errors.AlreadyInConversationError:
-        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
+        await client.send_message(chat_id, "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。")
     except asyncio.TimeoutError:
-        await safe_respond(event, "⏳ 操作超时，字幕上传会话已结束。")
+        await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
     except Exception as e:
         logger.error(f"Conversation error: {e}")
-        await safe_respond(event, f"❌ 发生未知错误: {str(e)}")
+        await client.send_message(chat_id, f"❌ 发生未知错误: {str(e)}")

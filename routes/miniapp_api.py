@@ -1,8 +1,13 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.media import run_subtitle_upload_flow
+from clients.radarr_client import RadarrClient
+from clients.sonarr_client import SonarrClient
 from core.database import get_db
-from core.dependencies import get_telethon_client
+from core.dependencies import get_radarr_clients, get_sonarr_clients, get_telethon_client
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
 from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
@@ -122,3 +127,19 @@ async def generate_account_code(
         return {"success": True, "message": "邀请码已生成，详情已发送到您的 Telegram 私聊。"}
 
     return {"success": False, "message": result.message}
+
+@router.post("/tools/{server_id}/upload_subtitle", response_model=ToggleResponse)
+async def trigger_upload_subtitle(
+    request: Request,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+    radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
+    sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
+):
+    """触发上传字幕流程"""
+    if not radarr_clients and not sonarr_clients:
+        return {"success": False, "message": "媒体服务器未配置"}
+    asyncio.create_task(run_subtitle_upload_flow(user_id, client, session, radarr_clients, sonarr_clients))
+
+    return {"success": True, "message": "请返回 Telegram 聊天窗口，查看上传指引。"}
