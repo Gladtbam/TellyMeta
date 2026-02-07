@@ -6,6 +6,7 @@ from loguru import logger
 
 import bot
 from core.config import get_settings, setup_logging
+from core.initialization import run_db_migrations
 from core.lifespan import lifespan
 from routes.webhooks import router as webhooks_router
 from routes.settings_api import router as settings_router
@@ -31,4 +32,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 if __name__ == "__main__":
     import uvicorn
+    run_db_migrations()
+
     uvicorn.run("main:app", host="0.0.0.0", port=settings.port, log_level=settings.log_level.lower(), reload=False)

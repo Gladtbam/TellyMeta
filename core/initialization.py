@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import sqlite3
 import sys
 import textwrap
@@ -5,12 +7,42 @@ import textwrap
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from alembic import command
+from alembic.config import Config
 from core.config import get_settings
+from core.database import DATABASE_URL
 from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
 
-
 settings = get_settings()
+
+def run_db_migrations():
+    """
+    在程序启动时自动执行 alembic upgrade head
+    """
+    try:
+        base_dir = Path(__file__).resolve().parent.parent
+        alembic_cfg_path = base_dir / "alembic.ini"
+        script_location = base_dir / "alembic"
+
+        if not alembic_cfg_path.exists():
+            logger.warning("找不到 alembic.ini，跳过自动迁移: {}", alembic_cfg_path)
+            return
+
+        logger.info("正在检查并执行数据库迁移...")
+
+        alembic_cfg = Config(str(alembic_cfg_path))
+        alembic_cfg.set_main_option("script_location", str(script_location))
+
+        alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+        command.upgrade(alembic_cfg, "head")
+
+        logger.info("数据库迁移检查完成。")
+
+    except Exception as e:
+        logger.error("数据库自动迁移失败: {}", e)
+        sys.exit(1)
 
 def check_required_settings():
     """检查启动必须的配置项"""

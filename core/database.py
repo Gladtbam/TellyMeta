@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from loguru import logger
-from sqlalchemy import event
+from sqlalchemy import event, MetaData
 from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
                                     create_async_engine)
 from sqlalchemy.orm import DeclarativeBase
@@ -34,8 +34,18 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL;")
     cursor.close()
 
+naming_convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
 class Base(DeclarativeBase):
     """Sqlalchemy模型的基类。"""
+    metadata = MetaData(naming_convention=naming_convention)
+
     def __repr__(self) -> str:
         """返回模型的列名和对应的值。"""
         return f"{self.__class__.__name__}({', '.join(f'{col.name}={getattr(self, col.name)}' for col in self.__table__.columns)})"

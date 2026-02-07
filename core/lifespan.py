@@ -98,14 +98,7 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = async_engine
     app.state.telethon_client = TelethonClientWarper(app)
 
-    async def create_db_tables():
-        async with app.state.db_engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-    await asyncio.gather(
-        create_db_tables(),
-        app.state.telethon_client.connect()
-    )
+    await app.state.telethon_client.connect()
     app.state.telethon_worker = asyncio.create_task(app.state.telethon_client.run_until_disconnected())
 
     app.state.sonarr_clients = {} # dict[int, SonarrClient]
