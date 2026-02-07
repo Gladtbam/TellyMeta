@@ -11,10 +11,12 @@ from core.dependencies import (get_radarr_clients, get_sonarr_clients,
                                get_telethon_client)
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
-from models.schemas import MediaAccountDto, ToggleResponse, UserInfoDto
+from models.schemas import (MediaAccountDto, MediaItemDto, RequestLibraryDto,
+                            RequestSubmitDto, ToggleResponse, UserInfoDto)
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
+from services.request_service import RequestService
 from services.user_service import UserService
 
 router = APIRouter(prefix="/api/miniapp", tags=["miniapp"])
@@ -154,5 +156,41 @@ async def trigger_upload_subtitle(
         return {"success": False, "message": "媒体服务器未配置"}
 
     asyncio.create_task(run_subtitle_upload_flow(user_id, client, session, radarr_clients, sonarr_clients))
-
     return {"success": True, "message": "请返回 Telegram 聊天窗口，查看上传指引。"}
+
+# --- Request API (求片) ---
+
+@router.get("/tools/{server_id}/request/libraries", response_model=list[RequestLibraryDto])
+async def get_request_libraries(
+    request: Request,
+    server_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    """获取可求片的媒体库列表"""
+    service = RequestService(request.app, session)
+    return await service.get_requestable_libraries(server_id)
+
+@router.get("/tools/{server_id}/request/search", response_model=list[MediaItemDto])
+async def search_media(
+    request: Request,
+    library: str,
+    query: str,
+    session: AsyncSession = Depends(get_db),
+):
+    """搜索媒体"""
+    service = RequestService(request.app, session)
+    return await service.search_media_items(library, query)
+
+@router.post("/tools/{server_id}/request/submit", response_model=ToggleResponse)
+async def submit_request(
+    request: Request,
+    payload: RequestSubmitDto,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+):
+    """提交求片请求"""
+    service = RequestService(request.app, session)
+    result = await service.submit_request_api(user_id, payload.library_name, payload.media_id)
+    if not result.success:
+        return {"success": False, "message": result.message}
+    return {"success": True, "message": result.message}

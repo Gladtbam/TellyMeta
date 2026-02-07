@@ -177,7 +177,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     删除所有命令消息
     """
     known_commands = [
-        'start', 'help', 'me', 'info', 'chat_id', 'del', 'code',
+        'start', 'help', 'info', 'chat_id', 'del', 'code',
         'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
         'kick', 'ban', 'cancel'
     ]

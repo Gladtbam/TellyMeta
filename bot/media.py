@@ -6,16 +6,14 @@ import aiofiles.tempfile
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button, TelegramClient, errors, events
-from telethon.tl.custom import Message
+from telethon import TelegramClient, errors, events
 
 from bot.decorators import provide_db_session, require_admin
-from bot.utils import get_user_input_or_cancel, safe_delete, safe_respond
+from bot.utils import safe_delete
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
-from repositories.telegram_repo import TelegramRepository
 from services.request_service import RequestService
 from services.subtitle_service import SubtitleService
 
@@ -60,142 +58,6 @@ async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) 
     original_text = (await event.get_message()).text # type: ignore
     new_text = original_text + "\n\n❌ **已拒绝**"
     await event.edit(new_text, buttons=None)
-
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^me_request_(\\d+)'))
-@provide_db_session
-async def start_request_conversation_handler(
-    app: FastAPI,
-    event: events.CallbackQuery.Event,
-    session: AsyncSession
-) -> None:
-    """开始求片处理器 (Conversation Mode)"""
-    user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
-    chat_id = event.chat_id
-    request_service = RequestService(app, session)
-    telegram_repo = TelegramRepository(session)
-    client = app.state.telethon_client.client
-
-    request_cost = int(await telegram_repo.get_renew_score() * 0.1)
-    # 检查权限
-    # start_request_flow 将检查权限并返回库按钮
-    result = await request_service.start_request_flow(user_id, request_cost)
-
-    if not result.success:
-        await event.answer(result.message, alert=True)
-        return
-
-    # Start Conversation
-    try:
-        async with client.conversation(chat_id, timeout=120) as conv:
-            lib_msg = await conv.send_message(result.message, buttons=result.keyboard)
-
-            # 等待库选择
-            press_event = await conv.wait_event(
-                events.CallbackQuery(func=lambda e: e.message_id == lib_msg.id)
-            )
-
-            data = press_event.data.decode('utf-8')
-            if data == 'req_cancel':
-                await press_event.answer("已取消")
-                await safe_delete(press_event)
-                return
-
-            # 解析库选择
-            # 预期：req_lib_{lib_b64}_{user_id}
-            if not data.startswith('req_lib_'):
-                await press_event.answer("无效选择")
-                return
-
-            parts = data.split('_')
-            # req, lib, b64, userid
-            lib_b64 = parts[2]
-            library_name = base64.b64decode(lib_b64).decode('utf-8')
-
-            await press_event.answer(f"已选择: {library_name}")
-
-
-
-            cancel_button = [Button.inline("取消", b"req_conv_cancel_query")]
-            query_prompt = await press_event.edit(
-                textwrap.dedent(f"""
-                已选择媒体库: **{library_name}**
-                
-                请发送您想搜索的关键词，支持：
-                1. 标题: 例如 `流浪地球`
-                2. ID: 例如 `tvdb:430047` 或 `tmdb:842675`
-                """),
-                buttons=cancel_button
-            )
-
-            query = await get_user_input_or_cancel(conv, query_prompt.id)
-            if not query:
-                await safe_delete(query_prompt)
-                return
-
-            searching_msg = await conv.send_message(f"🔍 正在搜索: **{query}**...")
-            search_result = await request_service.search_media(library_name, query)
-
-            if not search_result.success:
-                await searching_msg.edit(f"❌ 搜索失败: {search_result.message}")
-                return
-
-            results_msg = await searching_msg.edit(search_result.message, buttons=search_result.keyboard)
-
-            sel_event = await conv.wait_event(
-                 events.CallbackQuery(func=lambda e: e.message_id == results_msg.id)
-            )
-
-            sel_data = sel_event.data.decode('utf-8')
-            if sel_data == 'req_cancel':
-                await sel_event.answer("已取消")
-                await safe_delete(sel_event)
-                return
-
-            # 解析选择: req_sel_{lib_b64}_{media_id}
-            sel_parts = sel_data.split('_')
-            media_id = int(sel_parts[3])
-
-            await sel_event.answer("获取详情中...", alert=False)
-            preview_result = await request_service.process_media_selection(user_id, library_name, media_id)
-            if not preview_result.success:
-                await sel_event.edit(preview_result.message, alert=False)
-                return
-
-            # 显示预览卡片
-            preview_msg = await sel_event.edit(
-                preview_result.message,
-                file=preview_result.extra_data,
-                buttons=preview_result.keyboard
-            )
-
-            # 9. 等待最终确认
-            confirm_event = await conv.wait_event(
-                events.CallbackQuery(func=lambda e: e.message_id == preview_msg.id)
-            )
-
-            confirm_data = confirm_event.data.decode('utf-8')
-            if confirm_data == 'req_cancel':
-                await confirm_event.answer("已取消")
-                await safe_delete(confirm_event)
-                return
-
-            if confirm_data.startswith('req_submit_'):
-                await confirm_event.answer("正在提交...", alert=False)
-                final_result = await request_service.submit_final_request(user_id, library_name, media_id, request_cost)
-
-                if final_result.success:
-                    await confirm_event.edit(final_result.message, buttons=None, file=None)
-                    return
-                else:
-                    await confirm_event.answer(final_result.message + "，请重试！", alert=True)
-
-    except errors.AlreadyInConversationError:
-        await event.answer("⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或点击之前的【取消】按钮，或发送 /cancel 指令。", alert=True)
-    except asyncio.TimeoutError:
-        await safe_respond(event, "⏳ 操作超时，请重试。")
-    except Exception as e:
-        logger.error(f"Conversation error: {e}")
-        await safe_respond(event, f"发生错误: {str(e)}")
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 INTRO_MSG = textwrap.dedent("""

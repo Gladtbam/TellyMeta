@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>求片</title>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f4f4f5);
+            --destructive-text-color: var(--tg-theme-destructive-text-color, #ff3b30);
+        }
+
+        body {
+            background-color: var(--bg-color);
+            /* Request page usually full bg */
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .page-header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-color);
+            position: sticky;
+            top: 0;
+            z-index: 20;
+        }
+
+        .back-btn {
+            font-size: 28px;
+            color: var(--link-color);
+            cursor: pointer;
+            margin-right: 16px;
+            line-height: 1;
+        }
+
+        .page-title {
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .search-area {
+            position: sticky;
+            top: 54px;
+            /* header height approx */
+            background: var(--bg-color);
+            padding: 0 16px 10px 16px;
+            z-index: 10;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: var(--secondary-bg-color);
+            border: none;
+            color: var(--text-color);
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .library-scroll {
+            display: flex;
+            overflow-x: auto;
+            padding: 14px 16px;
+            gap: 10px;
+            scrollbar-width: none;
+            background: var(--bg-color);
+        }
+
+        .library-scroll::-webkit-scrollbar {
+            display: none;
+        }
+
+        .lib-chip {
+            padding: 8px 16px;
+            background: var(--secondary-bg-color);
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            color: var(--text-color);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .lib-chip.active {
+            background: var(--button-color);
+            color: var(--button-text-color);
+        }
+
+        .poster-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            padding: 10px 16px 40px 16px;
+        }
+
+        .media-card {
+            position: relative;
+            background: var(--secondary-bg-color);
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 2/3;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .media-poster {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .media-status {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            font-size: 10px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            color: white;
+            font-weight: 600;
+            backdrop-filter: blur(4px);
+        }
+
+        .media-title-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+            color: white;
+            font-size: 11px;
+            padding: 24px 6px 6px;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .loader {
+            text-align: center;
+            padding: 40px;
+            color: var(--hint-color);
+            font-size: 14px;
+            grid-column: 1 / -1;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 200;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .modal-overlay.open {
+            display: flex;
+            opacity: 1;
+        }
+
+        .modal-content {
+            background: var(--bg-color);
+            width: 85%;
+            max-width: 380px;
+            border-radius: 16px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            max-height: 85vh;
+            transform: scale(0.95);
+            transition: transform 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        }
+
+        .modal-overlay.open .modal-content {
+            transform: scale(1);
+        }
+
+        .modal-poster {
+            width: 100%;
+            height: 220px;
+            object-fit: cover;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .modal-footer {
+            padding: 16px;
+            border-top: 0.5px solid var(--secondary-bg-color);
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            user-select: none;
+            transition: opacity 0.2s;
+        }
+
+        .btn:active {
+            opacity: 0.7;
+        }
+
+        .btn-primary {
+            background: var(--button-color);
+            color: var(--button-text-color);
+        }
+
+        .btn-secondary {
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page-header">
+        <div class="back-btn" onclick="goBack()">‹</div>
+        <div class="page-title">求片中心</div>
+    </div>
+
+    <div class="search-area">
+        <input type="text" class="search-input" id="search-input" placeholder="输入关键词搜索 (例如: 权力的游戏)..."
+            oninput="debounceSearch()">
+    </div>
+
+    <div class="library-scroll" id="lib-list">
+        <!-- Chips -->
+    </div>
+
+    <div class="poster-grid" id="search-results">
+        <div class="loader">正在加载媒体库...</div>
+    </div>
+
+    <!-- Modal -->
+    <div id="media-modal" class="modal-overlay" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modal-poster" class="modal-poster" src=""
+                onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTUwIiBmaWxsPSIjZWVlIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjE1MCIvPjwvc3ZnPg=='">
+            <div class="modal-body">
+                <h3 id="modal-title" style="margin:0 0 6px 0; font-size:18px;"></h3>
+                <div style="font-size:13px; color:var(--hint-color); margin-bottom:12px;">
+                    <span id="modal-year"></span> • <span id="modal-lib"></span>
+                </div>
+                <p id="modal-overview"
+                    style="font-size:14px; line-height:1.5; color:var(--text-color); margin:0; word-break: break-word;">
+                </p>
+            </div>
+            <div class="modal-footer">
+                <div class="btn btn-secondary" onclick="closeModal()">取消</div>
+                <div class="btn btn-primary" id="btn-submit" onclick="submitRequest()">提交请求</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        // Theme
+        function applyTheme() {
+            const p = tg.themeParams;
+            const root = document.documentElement;
+            if (p.bg_color) root.style.setProperty('--tg-theme-bg-color', p.bg_color);
+            if (p.text_color) root.style.setProperty('--tg-theme-text-color', p.text_color);
+            if (p.hint_color) root.style.setProperty('--tg-theme-hint-color', p.hint_color);
+            if (p.link_color) root.style.setProperty('--tg-theme-link-color', p.link_color);
+            if (p.button_color) root.style.setProperty('--tg-theme-button-color', p.button_color);
+            if (p.button_text_color) root.style.setProperty('--tg-theme-button-text-color', p.button_text_color);
+            if (p.secondary_bg_color) root.style.setProperty('--tg-theme-secondary-bg-color', p.secondary_bg_color);
+        }
+        applyTheme();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const serverId = urlParams.get('server_id');
+
+        let currentLib = '';
+        let libraries = [];
+        let searchTimer = null;
+        let currentItem = null;
+
+        function goBack() {
+            if (serverId) {
+                window.location.href = `account.html?server_id=${serverId}`;
+            } else {
+                window.history.back();
+            }
+        }
+
+        async function loadLibraries() {
+            try {
+                const url = `/api/miniapp/tools/${serverId}/request/libraries`;
+                const res = await fetch(url, {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                if (!res.ok) throw new Error("加载媒体库失败");
+                libraries = await res.json();
+                renderLibraries();
+            } catch (e) {
+                document.getElementById('search-results').innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
+            }
+        }
+
+        function renderLibraries() {
+            const container = document.getElementById('lib-list');
+            container.innerHTML = '';
+
+            if (libraries.length === 0) {
+                container.innerHTML = '<span style="font-size:13px;color:var(--hint-color)">该服务器暂未配置可求片的媒体库</span>';
+                document.getElementById('search-results').innerHTML = '';
+                return;
+            }
+
+            libraries.forEach((lib, idx) => {
+                const chip = document.createElement('div');
+                chip.className = 'lib-chip' + (currentLib === lib.name ? ' active' : '');
+                chip.innerText = lib.name;
+                chip.onclick = () => selectLib(lib.name);
+                container.appendChild(chip);
+
+                if (idx === 0 && !currentLib) selectLib(lib.name);
+            });
+
+            // Validate currentLib
+            if (currentLib) {
+                const exists = libraries.find(l => l.name === currentLib);
+                if (!exists && libraries.length > 0) selectLib(libraries[0].name);
+
+                // Update active
+                Array.from(container.children).forEach(c => {
+                    if (c.innerText === currentLib) c.classList.add('active');
+                    else c.classList.remove('active');
+                });
+            }
+        }
+
+        function selectLib(name) {
+            currentLib = name;
+            renderLibraries();
+            document.getElementById('search-input').focus();
+
+            const query = document.getElementById('search-input').value.trim();
+            if (query) doSearch();
+            else document.getElementById('search-results').innerHTML = '<div class="loader">请输入关键词搜索</div>';
+        }
+
+        function debounceSearch() {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(doSearch, 800);
+        }
+
+        async function doSearch() {
+            const query = document.getElementById('search-input').value.trim();
+            if (!currentLib || !query) return;
+
+            const container = document.getElementById('search-results');
+            container.innerHTML = '<div class="loader">正在搜索...</div>';
+
+            try {
+                const url = `/api/miniapp/tools/${serverId}/request/search?library=${encodeURIComponent(currentLib)}&query=${encodeURIComponent(query)}`;
+                const res = await fetch(url, {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                if (!res.ok) throw new Error("搜索失败");
+                const data = await res.json();
+                renderSearchResults(data);
+            } catch (e) {
+                container.innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
+            }
+        }
+
+        function renderSearchResults(items) {
+            const container = document.getElementById('search-results');
+            container.innerHTML = '';
+            if (items.length === 0) {
+                container.innerHTML = '<div class="loader">未找到相关结果</div>';
+                return;
+            }
+
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'media-card';
+                card.onclick = () => openModal(item);
+
+                let statusLabel = '';
+                if (item.status === 'existing') statusLabel = '<div class="media-status" style="background:#34c759">已存在</div>';
+                else if (item.status === 'processing') statusLabel = '<div class="media-status" style="background:#ffcc00;color:black">已添加</div>';
+
+                const poster = item.poster || '';
+
+                card.innerHTML = `
+                    ${statusLabel}
+                    <img src="${poster}" class="media-poster" onerror="this.style.display='none'">
+                    <div class="media-title-overlay">${item.title} (${item.year})</div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function openModal(item) {
+            currentItem = item;
+            document.getElementById('modal-poster').src = item.poster || '';
+            document.getElementById('modal-title').innerText = item.title;
+            document.getElementById('modal-year').innerText = item.year;
+            document.getElementById('modal-lib').innerText = currentLib;
+            document.getElementById('modal-overview').innerText = item.overview || '暂无简介';
+
+            const btn = document.getElementById('btn-submit');
+            if (item.status !== 'new') {
+                btn.style.display = 'none';
+            } else {
+                btn.style.display = 'block';
+                btn.innerText = '提交请求';
+                btn.style.opacity = '1';
+                btn.onclick = submitRequest;
+            }
+
+            document.getElementById('media-modal').classList.add('open');
+        }
+
+        function closeModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            document.getElementById('media-modal').classList.remove('open');
+        }
+
+        async function submitRequest() {
+            if (!currentItem || !currentLib) return;
+            const btn = document.getElementById('btn-submit');
+            btn.innerText = '提交中...';
+            btn.style.opacity = '0.7';
+
+            try {
+                const res = await fetch(`/api/miniapp/tools/${serverId}/request/submit`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': tg.initData
+                    },
+                    body: JSON.stringify({
+                        library_name: currentLib,
+                        media_id: currentItem.media_id
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    tg.showAlert(data.message);
+                    closeModal();
+                    currentItem.status = 'processing';
+                    // Re-render
+                    // Find card in grid and update status? Hard.
+                    // Just search again
+                    doSearch();
+                } else {
+                    tg.showAlert(data.message);
+                    btn.innerText = '重试';
+                    btn.style.opacity = '1';
+                }
+            } catch (e) {
+                tg.showAlert("提交失败: " + e.message);
+                btn.innerText = '重试';
+                btn.style.opacity = '1';
+            }
+        }
+
+        // Init
+        loadLibraries();
+    </script>
+</body>
+
+</html>

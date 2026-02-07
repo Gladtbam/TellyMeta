@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, timedelta
 from random import choice, choices, randint
+import textwrap
 from typing import Any, Literal
 
 from fastapi import FastAPI
@@ -183,24 +184,24 @@ class UserService:
     async def get_user_info(self, user_id: int) -> Result:
         """获取用户信息"""
         data = await self.get_user_info_data(user_id)
-        user = data['user']
+        user: TelegramUser = data['user']
         media_accounts = data['media_accounts']
 
-        message = "个人信息已迁移至 WebApp，请使用 WebApp 查看。"
+        message = textwrap.dedent(f"""\
+            👤 **个人信息**
 
-        if not media_accounts:
-            message += f"\n\n⚠️ [您](tg://user?id={user.id})尚未绑定任何媒体账户。"
+            **Telegram ID**: `{user.id}`
+            **积分**: `{user.score}`
+            **签到**: `{user.checkin_count}` 天
+            **警告**: `{user.warning_count}` 次
+        """)
 
-        button_layout = [
-            [('求片', f'me_request_{user.id}')]
-        ]
+        if media_accounts:
+            message += "\n\n**媒体账户**\n"
+            for mu in media_accounts:
+                message += f"- {mu['server_name']}: {mu['media_name']} ({mu['status_text']})\n"
 
-        keyboard = [
-            [Button.inline(text, data=data.encode('utf-8')) for text, data in row]
-            for row in button_layout
-        ]
-
-        return Result(success=True, message=message, keyboard=keyboard if media_accounts else None)
+        return Result(success=True, message=message)
 
     async def get_rank_list(self) -> Result:
         """获取排行榜"""

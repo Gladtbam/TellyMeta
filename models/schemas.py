@@ -161,6 +161,27 @@ class TopicDto(BaseModel):
     id: int
     name: str
 
+# --- Request Models (求片相关) ---
+
+class RequestLibraryDto(BaseModel):
+    """可求片的媒体库"""
+    name: str
+    type: str # sonarr / radarr
+
+class MediaItemDto(BaseModel):
+    """搜索结果单项"""
+    media_id: int
+    title: str
+    year: int | str
+    poster: str | None = None
+    overview: str | None = None
+    status: str = 'new' # new, existing, processing
+
+class RequestSubmitDto(BaseModel):
+    """提交求片请求"""
+    library_name: str
+    media_id: int
+
 # --- User Models (用户相关) ---
 
 class MediaAccountDto(BaseModel):

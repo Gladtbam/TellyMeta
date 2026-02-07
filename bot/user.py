@@ -22,25 +22,6 @@ settings = get_settings()
 
 
 @TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/me({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
-@provide_db_session
-async def me_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
-    """用户信息处理器
-    发送用户信息和交互按钮，私聊仅发送用户信息
-    """
-    if not event.is_private:
-        await safe_reply(event, f'私聊我获取个人信息: {settings.telegram_bot_name}')
-        return
-
-    user_service = UserService(app, session)
-    user_id = event.sender_id
-
-    result = await user_service.get_user_info(user_id)
-    await safe_respond_keyboard(event, result.message, result.keyboard)
-
-@TelethonClientWarper.handler(events.NewMessage(
     pattern=fr'^/checkin({settings.telegram_bot_name})?$',
     incoming=True
     ))

@@ -127,144 +127,6 @@ class RequestService:
 
         return title, overview
 
-    async def start_request_flow(self, user_id: int, request_cost: int) -> Result:
-        user = await self.telegram_repo.get_or_create(user_id)
-        if user.score < request_cost:
-            return Result(False, f"您的积分不足，求片需要消耗 **{request_cost}** 积分，您当前仅有 **{user.score}** 积分。")
-
-        bindings = await self.config_repo.get_all_library_bindings()
-        valid_bindings = []
-
-        for name, binding in bindings.items():
-            if not (binding.server_id and binding.quality_profile_id and binding.root_folder):
-                continue
-            if self._sonarr_clients.get(binding.server_id) or self._radarr_clients.get(binding.server_id):
-                valid_bindings.append(name)
-
-        if not valid_bindings:
-            return Result(False, "未配置任何可用于求片的媒体库，请联系管理员绑定 Sonarr/Radarr。")
-
-        keyboard = []
-        for name in valid_bindings:
-            name_b64 = base64.b64encode(name.encode('utf-8')).decode('utf-8')
-            keyboard.append([
-                Button.inline(f"🔍 {name}", data=f"req_lib_{name_b64}_{user_id}".encode('utf-8'))
-            ])
-
-        msg = textwrap.dedent(f"""\
-            📚 求片流程：
-            1. 选择媒体库
-            2. 搜索媒体
-            3. 选择媒体
-            4. 确认提交请求
-            
-            您当前积分：**{user.score}**
-            求片消耗积分：**{request_cost}**
-        """)
-        return Result(True, msg, keyboard=keyboard)
-
-    async def search_media(self, library_name: str, query: str) -> Result:
-        if not query:
-            return Result(False, "搜索关键词为空。")
-
-        client, _ = await self._get_client_by_library(library_name)
-        if not client:
-            return Result(False, "该媒体库未绑定有效的媒体服务器。")
-
-        results = []
-        try:
-            async for item in client.lookup(query):
-                results.append(item)
-                if len(results) >= 5:
-                    break
-        except httpx.HTTPError as e:
-            logger.warning("Media search failed (HTTP): {}", e)
-            return Result(False, "服务器连接失败，请稍后重试。")
-        except Exception as e:
-            logger.error("Media search failed (Unknown): {}", e)
-            return Result(False, f"搜索失败: {str(e)}")
-
-        if not results:
-            return Result(False, "未找到相关结果，请尝试更换关键词。")
-
-        keyboard = []
-        lib_b64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
-
-        for item in results:
-            status_icon = ""
-            if hasattr(item, 'id') and item.id:
-                status_icon = "✅ "
-            elif hasattr(item, 'added') and item.added:
-                status_icon = "⏳ "
-
-            year = getattr(item, 'year', "未知年份")
-            media_id = getattr(item, 'tvdbId', getattr(item, 'tmdbId', 0))
-
-            btn_text = f"{status_icon}{item.title} ({year})"
-            callback_data = f"req_sel_{lib_b64}_{media_id}".encode('utf-8')
-
-            keyboard.append([Button.inline(btn_text, data=callback_data)])
-
-        keyboard.append([Button.inline("取消", b"req_cancel")])
-        return Result(True, f"🔍 在 **{library_name}** 中搜索 **{query}** 的结果：", keyboard=keyboard)
-
-    async def process_media_selection(self, user_id: int, library_name: str, media_id: int) -> Result:
-        client, server_id = await self._get_client_by_library(library_name)
-        if not client or not server_id:
-            return Result(False, "服务不可用")
-
-        existing_item = None
-        try:
-            if isinstance(client, SonarrClient):
-                existing_item = await client.get_series_by_tvdb(media_id)
-            elif isinstance(client, RadarrClient):
-                existing_item = await client.get_movie_by_tmdb(media_id)
-        except httpx.HTTPError as e:
-            logger.debug("查重请求失败 (HTTP): {}", e)
-        except Exception as e:
-            logger.debug("查重请求失败 (Unknown): {}", e)
-
-        if existing_item:
-            return Result(False, f"✅ **{existing_item.title}** 已经在媒体库中了，无需重复请求。")
-
-        prefix = "tvdb" if isinstance(client, SonarrClient) else "tmdb"
-        selected_media = None
-        try:
-            async for item in client.lookup(f"{prefix}:{media_id}"):
-                if item:
-                    selected_media = item
-                    break
-        except httpx.HTTPError as e:
-            return Result(False, f"获取媒体元数据失败 (HTTP): {e}")
-        except Exception as e:
-            return Result(False, f"获取媒体元数据失败: {e}")
-
-        if not selected_media:
-            return Result(False, "无法获取媒体详情。")
-
-        title, overview, poster = await self._get_media_content(selected_media, client)
-
-        server_info = await self.server_repo.get_by_id(server_id)
-        server_name = server_info.name if server_info else "Unknown"
-        year = getattr(selected_media, 'year', '')
-
-        msg = textwrap.dedent(f"""\
-            🎬 **{title}** ({year})
-            
-            {textwrap.shorten(overview, width=200, placeholder="...") if overview else '暂无简介'}
-
-            📚 媒体库: {library_name}
-            🖥️ 服务器: {server_name}
-        """)
-
-        lib_b64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
-        keyboard = [
-            [Button.inline("📤 确认提交请求", data=f"req_submit_{lib_b64}_{media_id}".encode('utf-8'))],
-            [Button.inline("« 返回", data=b"req_cancel")]
-        ]
-
-        return Result(True, msg, keyboard=keyboard, extra_data=poster)
-
     async def submit_final_request(self, user_id: int, library_name: str, media_id: int, request_cost: int) -> Result:
         client, server_id = await self._get_client_by_library(library_name)
         if not client or not server_id:
@@ -354,7 +216,76 @@ class RequestService:
             if result:
                 return Result(True, f"✅ 已批准并添加 **{result.title}** (操作人: {approver_name})")
             return Result(False, "添加失败，接口未返回确认数据。")
-        except httpx.HTTPError as e:
-            return Result(False, f"添加失败 (API错误): {e}")
         except Exception as e:
             return Result(False, f"添加失败: {e}")
+
+    async def get_request_cost(self) -> int:
+        """获取求片消耗积分"""
+        renew_score = await self.telegram_repo.get_renew_score()
+        return int(renew_score * 0.1)
+
+    async def get_requestable_libraries(self, server_id: int) -> list[dict]:
+        """API: 获取可求片的库列表"""
+        bindings = await self.config_repo.get_all_library_bindings()
+        valid_bindings = []
+        for name, binding in bindings.items():
+            if not (binding.server_id and binding.quality_profile_id and binding.root_folder):
+                continue
+
+            # 预留，后续修改
+            # if binding.server_id != server_id:
+            #     continue
+
+            client = self._sonarr_clients.get(binding.server_id) or self._radarr_clients.get(binding.server_id)
+            if client:
+                type_ = "sonarr" if isinstance(client, SonarrClient) else "radarr"
+                valid_bindings.append({"name": name, "type": type_})
+        return valid_bindings
+
+    async def search_media_items(self, library_name: str, query: str) -> list[dict]:
+        """API: 搜索媒体"""
+        client, _ = await self._get_client_by_library(library_name)
+        if not client:
+            return []
+
+        results = []
+        try:
+            async for item in client.lookup(query):
+                results.append(item)
+                if len(results) >= 20: # Limit for API
+                    break
+        except Exception as e:
+            logger.error("API Search failed: {}", e)
+            return []
+
+        data = []
+        for item in results:
+            media_id = getattr(item, 'tvdbId', getattr(item, 'tmdbId', 0))
+            poster = self._extract_poster(item)
+            year = getattr(item, 'year', 0)
+            status = 'new'
+
+            item_id = getattr(item, 'id', None)
+
+            if isinstance(item_id, int) and item_id > 0:
+                status = 'existing'
+
+            data.append({
+                "media_id": media_id,
+                "title": item.title,
+                "year": year,
+                "poster": poster,
+                "status": status,
+                "overview": getattr(item, 'overview', '')
+            })
+        return data
+
+    async def submit_request_api(self, user_id: int, library_name: str, media_id: int) -> Result:
+        """API: 提交求片"""
+        cost = await self.get_request_cost()
+        user = await self.telegram_repo.get_or_create(user_id)
+
+        if user.score < cost:
+            return Result(False, f"积分不足，需要 {cost} 积分，您当前仅有 {user.score} 积分。")
+
+        return await self.submit_final_request(user_id, library_name, media_id, cost)
