@@ -103,7 +103,6 @@ class ServerCreate(BaseModel):
     server_type: str
     url: str
     api_key: str
-    allow_subtitle_upload: bool = True
 
 class ServerUpdate(BaseModel):
     """用于更新服务器的请求体"""

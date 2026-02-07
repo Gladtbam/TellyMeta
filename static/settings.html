@@ -491,6 +491,11 @@
                         <span>开启 NSFW 限制</span>
                         <label class="switch"><input type="checkbox" id="srv-nsfw"><span class="slider"></span></label>
                     </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>允许字幕上传</span>
+                        <label class="switch"><input type="checkbox" id="srv-subtitle-upload"><span
+                                class="slider"></span></label>
+                    </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
                     <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
@@ -633,6 +638,7 @@
             document.getElementById('server-form').reset();
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
+            if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
             document.getElementById('srv-tabs').style.display = 'none';
             switchTab('basic');
             openModal('server-modal', '添加服务器');
@@ -690,6 +696,7 @@
                 document.getElementById('srv-code-days').value = s.code_expiry_days;
                 document.getElementById('srv-tos').value = s.tos || '';
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
+                if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
                 onRegModeChange();
             } else {
                 renderPathMappings(s.path_mappings || []);
@@ -868,6 +875,7 @@
                 payload.code_expiry_days = parseInt(document.getElementById('srv-code-days').value) || 30;
                 payload.tos = document.getElementById('srv-tos').value;
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
+                payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
             } else {
                 payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({
