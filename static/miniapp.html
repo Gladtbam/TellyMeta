@@ -242,6 +242,11 @@
         tg.onEvent('themeChanged', applyTheme);
         tg.expand();
 
+        tg.BackButton.show();
+        tg.BackButton.onClick(() => {
+            tg.close();
+        });
+
         // ... (user init) ...
         const user = tg.initDataUnsafe.user;
         if (user) {

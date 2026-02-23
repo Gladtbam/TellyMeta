@@ -593,6 +593,12 @@
     <script>
         const tg = window.Telegram.WebApp;
         tg.ready(); tg.expand();
+
+        tg.BackButton.show();
+        tg.BackButton.onClick(() => {
+            window.location.href = 'miniapp.html';
+        });
+
         let topicList = [], currentServerId = null;
 
         async function api(endpoint, method = 'GET', body = null) {
