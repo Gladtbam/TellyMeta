@@ -87,5 +87,5 @@ jobs:
         with:
           package-name: 'tellymeta'
           package-type: container
-          min-versions-to-keep: 5
+          min-versions-to-keep: 4
           delete-only-untagged-versions: 'true'
