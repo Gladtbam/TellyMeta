@@ -374,11 +374,7 @@
                             type="checkbox" id="toggle-verification"
                             onchange="toggleSystem('enable_verification')"><span class="slider"></span></label>
                 </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-title">求片功能</span></div><label class="switch"><input
-                            type="checkbox" id="toggle-requestmedia"
-                            onchange="toggleSystem('enable_requestmedia')"><span class="slider"></span></label>
-                </div>
+
                 <div class="item">
                     <div class="item-content"><span class="item-title">清理不在群成员</span></div><label class="switch"><input
                             type="checkbox" id="toggle-cleanup"
@@ -494,6 +490,11 @@
                     <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
                         <span>允许字幕上传</span>
                         <label class="switch"><input type="checkbox" id="srv-subtitle-upload"><span
+                                class="slider"></span></label>
+                    </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>求片功能</span>
+                        <label class="switch"><input type="checkbox" id="srv-request"><span
                                 class="slider"></span></label>
                     </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
@@ -697,6 +698,7 @@
                 document.getElementById('srv-tos').value = s.tos || '';
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
                 if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
+                if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = s.allow_request !== false;
                 onRegModeChange();
             } else {
                 renderPathMappings(s.path_mappings || []);
@@ -876,6 +878,7 @@
                 payload.tos = document.getElementById('srv-tos').value;
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
+                payload.allow_request = document.getElementById('srv-request').checked;
             } else {
                 payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({

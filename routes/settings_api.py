@@ -8,18 +8,19 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.database import get_db
-from core.dependencies import (get_radarr_clients, get_sonarr_clients, get_tmdb_client,
-                               get_tvdb_client)
+from core.dependencies import (get_radarr_clients, get_sonarr_clients,
+                               get_tmdb_client, get_tvdb_client)
 from core.webapp_auth import validate_admin_access
 from models.orm import ServerInstance, ServerType
 from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
-                            NsfwLibraryDto, QualityProfileDto, RootFolderDto,
-                            ServerCreate, ServerDto, ServerUpdate,
-                            SystemConfigResponse, ToggleResponse, TopicDto)
+                            NsfwLibraryDto, ServerCreate, ServerDto,
+                            ServerUpdate, SystemConfigResponse, ToggleResponse,
+                            TopicDto)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.settings_service import SettingsServices
-from workers.nfo_worker import rebuild_radarr_metadata_task, rebuild_sonarr_metadata_task
+from workers.nfo_worker import (rebuild_radarr_metadata_task,
+                                rebuild_sonarr_metadata_task)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -46,7 +47,6 @@ def mask_server_data(server: ServerInstance) -> dict:
 SYSTEM_KEY_MAP = {
     "enable_points": ConfigRepository.KEY_ENABLE_POINTS,
     "enable_verification": ConfigRepository.KEY_ENABLE_VERIFICATION,
-    "enable_requestmedia": ConfigRepository.KEY_ENABLE_REQUESTMEDIA,
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
 }
 
@@ -56,7 +56,6 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
     return {
         "enable_points": await repo.get_settings(ConfigRepository.KEY_ENABLE_POINTS, "true") == "true",
         "enable_verification": await repo.get_settings(ConfigRepository.KEY_ENABLE_VERIFICATION, "true") == "true",
-        "enable_requestmedia": await repo.get_settings(ConfigRepository.KEY_ENABLE_REQUESTMEDIA, "true") == "true",
         "enable_cleanup_inactive_users": await repo.get_settings(ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false") == "true",
     }
 
@@ -149,6 +148,8 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
         update_dict['tos'] = data.tos
     if data.allow_subtitle_upload is not None:
         update_dict['allow_subtitle_upload'] = data.allow_subtitle_upload
+    if data.allow_request is not None:
+        update_dict['allow_request'] = data.allow_request
 
     # 路径映射 (List -> JSON)
     if data.path_mappings is not None:

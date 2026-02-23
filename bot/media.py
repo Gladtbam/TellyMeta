@@ -85,7 +85,7 @@ async def run_subtitle_upload_flow(
     session: AsyncSession,
     radarr_clients: dict[int, RadarrClient],
     sonarr_clients: dict[int, SonarrClient]
-):
+) -> None:
     """运行上传字幕流程 (Conversation)"""
     chat_id = user_id
     subtitle_service = SubtitleService(session, radarr_clients, sonarr_clients)

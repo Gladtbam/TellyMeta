@@ -1,13 +1,12 @@
+import textwrap
 from dataclasses import dataclass
 from datetime import date, timedelta
 from random import choice, choices, randint
-import textwrap
 from typing import Any, Literal
 
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button
 
 from core.config import get_settings
 from models.orm import RegistrationMode, ServerType, TelegramUser
@@ -173,7 +172,8 @@ class UserService:
                     "is_banned": mu.is_banned,
                     "media_name": mu.media_name,
                     "expires_at": mu.expires_at,
-                    "allow_subtitle_upload": server.allow_subtitle_upload if server else False
+                    "allow_subtitle_upload": server.allow_subtitle_upload if server else False,
+                    "allow_request": server.allow_request if server else False
                 })
 
         return {

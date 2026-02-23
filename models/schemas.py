@@ -88,6 +88,7 @@ class ServerDto(BaseModel):
     code_expiry_days: int = 30
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool = True
+    allow_request: bool = True
     tos: str | None = None
 
     # 高级配置
@@ -124,6 +125,7 @@ class ServerUpdate(BaseModel):
     code_expiry_days: int | None = None
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool | None = None
+    allow_request: bool | None = None
     tos: str | None = None
 
     # 高级配置
@@ -136,7 +138,6 @@ class SystemConfigResponse(BaseModel):
     """系统开关状态响应"""
     enable_points: bool
     enable_verification: bool
-    enable_requestmedia: bool
     enable_cleanup_inactive_users: bool
 
 class ToggleResponse(BaseModel):
@@ -195,6 +196,7 @@ class MediaAccountDto(BaseModel):
     expires_at: datetime
     is_banned: bool
     allow_subtitle_upload: bool = True
+    allow_request: bool = True
 
 class UserInfoDto(BaseModel):
     """用户信息聚合"""

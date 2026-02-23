@@ -158,11 +158,6 @@
                     <span class="action-text">续期</span>
                     <span class="action-arrow">›</span>
                 </div>
-                <div class="action-item" onclick="goToRequest()">
-                    <span class="action-icon">🔍</span>
-                    <span class="action-text">求片</span>
-                    <span class="action-arrow">›</span>
-                </div>
                 <div class="action-item" onclick="toggleNsfw()">
                     <span class="action-icon">🔞</span>
                     <span class="action-text">切换 NSFW</span>
@@ -181,6 +176,11 @@
                 <div class="action-item" id="btn-upload-subtitle" onclick="uploadSubtitle()" style="display:none">
                     <span class="action-icon">📤</span>
                     <span class="action-text">上传字幕</span>
+                    <span class="action-arrow">›</span>
+                </div>
+                <div class="action-item" id="btn-request" onclick="goToRequest()" style="display:none">
+                    <span class="action-icon">🔍</span>
+                    <span class="action-text">求片</span>
                     <span class="action-arrow">›</span>
                 </div>
             </div>
@@ -278,6 +278,15 @@
                     btnUpload.style.display = 'flex';
                 } else {
                     btnUpload.style.display = 'none';
+                }
+            }
+
+            const btnRequest = document.getElementById('btn-request');
+            if (btnRequest) {
+                if (acc.allow_request) {
+                    btnRequest.style.display = 'flex';
+                } else {
+                    btnRequest.style.display = 'none';
                 }
             }
         }

@@ -56,7 +56,8 @@ async def get_my_info(
                     status_text=item["status_text"],
                     expires_at=item["expires_at"],
                     is_banned=item["is_banned"],
-                    allow_subtitle_upload=item.get("allow_subtitle_upload")
+                    allow_subtitle_upload=item.get("allow_subtitle_upload"),
+                    allow_request=item.get("allow_request")
                 ) for item in media_accounts_data
             ]
         )
@@ -167,28 +168,54 @@ async def get_request_libraries(
     session: AsyncSession = Depends(get_db),
 ):
     """获取可求片的媒体库列表"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        return {"success": False, "message": "服务器不存在"}
+
+    if not server.allow_request:
+        return {"success": False, "message": "该服务器未开启求片功能"}
+
     service = RequestService(request.app, session)
     return await service.get_requestable_libraries(server_id)
 
 @router.get("/tools/{server_id}/request/search", response_model=list[MediaItemDto])
 async def search_media(
     request: Request,
+    server_id: int,
     library: str,
     query: str,
     session: AsyncSession = Depends(get_db),
 ):
     """搜索媒体"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        return {"success": False, "message": "服务器不存在"}
+
+    if not server.allow_request:
+        return {"success": False, "message": "该服务器未开启求片功能"}
+
     service = RequestService(request.app, session)
     return await service.search_media_items(library, query)
 
 @router.post("/tools/{server_id}/request/submit", response_model=ToggleResponse)
 async def submit_request(
     request: Request,
+    server_id: int,
     payload: RequestSubmitDto,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
 ):
     """提交求片请求"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        return {"success": False, "message": "服务器不存在"}
+
+    if not server.allow_request:
+        return {"success": False, "message": "该服务器未开启求片功能"}
+
     service = RequestService(request.app, session)
     result = await service.submit_request_api(user_id, payload.library_name, payload.media_id)
     if not result.success:
