@@ -155,10 +155,10 @@ async def group_message_handler(app: FastAPI, event: events.NewMessage.Event, se
     if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
         return
 
-    if not event.message.text.startswith('/'):
+    if event.message.text.startswith('/'):
         return
 
-    if not any(word in event.message.text for word in IGNORED_KEYWORDS):
+    if any(word in event.message.text for word in IGNORED_KEYWORDS):
         return
 
     flood_state: MessageTrackingState = app.state.message_tracker
