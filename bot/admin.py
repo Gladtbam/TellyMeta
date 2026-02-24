@@ -2,12 +2,11 @@ import textwrap
 from typing import Any
 
 from fastapi import FastAPI
-from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import events
-from telethon.tl.types import KeyboardButtonWebView
 
-from bot.decorators import provide_db_session, require_admin
+from bot.decorators import (provide_db_session, require_admin,
+                            require_real_reply)
 from bot.utils import safe_reply, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
@@ -24,19 +23,13 @@ settings = get_settings()
     ))
 @provide_db_session
 @require_admin
-async def info_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+@require_real_reply
+async def info_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
     """用户信息处理器
     发送用户信息，需回复一个用户
     """
-    if not event.is_reply:
-        await safe_reply(event, "请回复一个用户以查看其信息。")
-        return
-
     user_service = UserService(app, session)
-
-    user_id = (await event.get_reply_message()).sender_id
-    result = await user_service.get_user_info(user_id)
-
+    result = await user_service.get_user_info(target_user_id)
     await safe_respond(event, result.message)
 
 @TelethonClientWarper.handler(events.NewMessage(
@@ -45,21 +38,11 @@ async def info_handler(app: FastAPI, event: events.NewMessage.Event, session: As
     ))
 @provide_db_session
 @require_admin
-async def warn_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+@require_real_reply
+async def warn_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
     """警告处理器
     警告一个用户，需回复一个用户
     """
-    if not event.is_reply:
-        await safe_reply(event, "请回复一个用户以警告。")
-        return
-
-    reply_msg = await event.get_reply_message()
-    if not reply_msg.sender_id:
-        await safe_reply(event, "无法获取回复的用户信息。")
-        return
-
-    target_user_id = reply_msg.sender_id
-
     user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_warn_and_score(target_user_id)
 
@@ -71,28 +54,17 @@ async def warn_handler(app: FastAPI, event: events.NewMessage.Event, session: As
     ))
 @provide_db_session
 @require_admin
-async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+@require_real_reply
+async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
     """修改积分处理器
     修改一个用户的积分，需回复一个用户并在命令后添加积分数
     """
-    if not event.is_reply:
-        await safe_reply(event, "请回复一个用户以修改其积分。")
-        return
-
     args = event.message.text.split()
     if len(args) != 2:
         await safe_reply(event, "请在命令后添加积分数，例如: /change 10 或 /change -5")
         return
 
     score_change = int(args[1])
-
-    reply_msg = await event.get_reply_message()
-    if not reply_msg.sender_id:
-        await safe_reply(event, "无法获取回复的用户信息。")
-        return
-
-    target_user_id = reply_msg.sender_id
-
     user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_score(target_user_id, score_change)
 
@@ -136,21 +108,11 @@ async def settle_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     ))
 @provide_db_session
 @require_admin
-async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+@require_real_reply
+async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
     """删除账户处理器
     删除一个用户的 Emby 账户，需回复一个用户
     """
-    if not event.is_reply:
-        await safe_reply(event, "请回复一个用户以删除其账户。")
-        return
-
-    reply_msg = await event.get_reply_message()
-    if not reply_msg.sender_id:
-        await safe_reply(event, "无法获取回复的用户信息。")
-        return
-
-    target_user_id = reply_msg.sender_id
-
     user_service = UserService(app, session)
     result = await user_service.delete_account(target_user_id, 'both')
 
@@ -163,23 +125,15 @@ async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'kick_(\\d+)'))
 @provide_db_session
 @require_admin
-async def kick_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
+@require_real_reply
+async def kick_handler(app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0) -> None:
     """踢出处理器
     踢出一个用户，支持命令和按钮两种触发方式
     """
 
     if isinstance(event, events.NewMessage.Event):
-        if not event.is_reply:
-            await safe_reply(event, "请回复一个用户以踢出。")
-            return
-        reply_msg = await event.get_reply_message()
-        if not reply_msg.sender_id:
-            await safe_reply(event, "无法获取回复的用户信息。")
-            return
-
         user_service = UserService(app, session)
         client: TelethonClientWarper = app.state.telethon_client
-        target_user_id = reply_msg.sender_id
         await client.kick_and_ban_participant(target_user_id)
         result = await user_service.delete_account(target_user_id, 'both')
         await safe_reply(event, '已踢出用户。\n' + result.message)
@@ -199,22 +153,14 @@ async def kick_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b'ban_(\\d+)'))
 @provide_db_session
 @require_admin
-async def ban_handler(app: FastAPI, event: Any, session: AsyncSession) -> None:
+@require_real_reply
+async def ban_handler(app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0) -> None:
     """封禁处理器
     封禁一个用户，支持命令和按钮两种触发方式
     """
 
     if isinstance(event, events.NewMessage.Event):
-        if not event.is_reply:
-            await safe_reply(event, "请回复一个用户以封禁。")
-            return
-        reply_msg = await event.get_reply_message()
-        if not reply_msg.sender_id:
-            await safe_reply(event, "无法获取回复的用户信息。")
-            return
-
         client: TelethonClientWarper = app.state.telethon_client
-        target_user_id = reply_msg.sender_id
         user_name = await client.get_user_name(target_user_id)
         await client.ban_user(target_user_id)
         await safe_reply(event, f'已封禁用户[{user_name}](tg://user?id={target_user_id})')
