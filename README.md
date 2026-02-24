@@ -24,7 +24,7 @@
 * **入群验证**：内置图形验证码。支持管理员邀请**免验证**功能，提升人工邀请的流畅度。
 
 ### 🛡️ 管理与安全
-* **可视化配置**：通过 `/settings` 命令即可在 Telegram 界面管理服务器连接、通知渠道、注册模式、NSFW 策略等，无需修改配置文件。
+* **可视化配置**：通过 **小程序** 即可在 Telegram 界面管理服务器连接、通知渠道、注册模式、NSFW 策略等，无需修改配置文件。
 * **高级注册模式**：支持积分、限额、限时、外部验证（支持自定义 JSON/正则解析器）等多种入库门槛。
 * **安全加强**：Webhooks 支持 Token 鉴权，模板渲染采用安全沙箱环境，文件上传具备严格审计。
 * **用户管控**：支持踢出、封禁、警告用户，并联动删除媒体库账号。
@@ -162,7 +162,6 @@ Telegram BotFather 选择 `telegram_bot_name` 设置的机器人，点击 `Mini 
 | 指令 | 描述 |
 | :--- | :--- |
 | `/start` | 启动机器人：如果开启验证，需进行验证码验证 |
-| `/me` | **个人中心**：求片、上传字幕等，（查看积分、账号状态已迁移到小程序） |
 | `/checkin` | **每日签到**：获取积分（仅限群组内） |
 | `/signup` | **注册账号**：仅在开放注册模式下可用 |
 | `/code <code>` | **兑换码**：使用注册码注册或续期码续期 |
@@ -195,10 +194,10 @@ TellyMeta 采用纯文件驱动的 Jinja2 模板系统。你可以在 `templates
 * `emby_library_new.j2`: 媒体入库通知
 * ...更多事件请查阅文档。
 
-配置 Sonarr/Radarr/Emby 的 Webhook 地址为：
-`http://your-tellymeta-ip:5080/webhook/[sonarr|radarr|emby]?server_id=[ID]&token=[YOUR_TOKEN]`
+配置 Sonarr/Radarr/Emby/Jellyfin 的 Webhook 地址为：
+`http://your-tellymeta-ip:5080/webhook/[sonarr|radarr|emby|jellyfin]?token=[YOUR_TOKEN]`
 
-*(server_id 与 Token 可在 `/settings` -> 服务器详情中查看。Token 用于增强安全性，防止非法调用)*
+*(Token 可在 小程序 -> 服务器详情中查看。Token 用于增强安全性，防止非法调用)*
 
 ## 🤝 贡献
 
