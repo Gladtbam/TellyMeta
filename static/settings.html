@@ -804,7 +804,7 @@
                 list.innerHTML = '';
                 if (libs.length === 0) list.innerHTML = '<div class="state-text">无库</div>';
                 libs.forEach(lib => {
-                    const status = (lib.binding && lib.binding.server_id) ? `🟢 ${lib.binding.server_name}` : "🔴 未绑定";
+                    const status = (lib.binding && lib.binding.arr_id) ? `🟢 ${lib.binding.arr_name}` : "🔴 未绑定";
                     const el = document.createElement('div'); el.className = 'item';
                     el.onclick = () => openBindingModal(lib);
                     el.innerHTML = `<div class="item-content"><span class="item-title">${lib.name}</span><span class="item-subtitle">${status}</span></div><div>›</div>`;
@@ -821,9 +821,9 @@
             sel.innerHTML = '<option value="">未绑定</option>';
             servers.forEach(s => sel.add(new Option(`${s.name} (${s.type})`, s.id)));
 
-            if (lib.binding && lib.binding.server_id) {
-                sel.value = lib.binding.server_id;
-                await loadArrResources(lib.binding.server_id, lib.binding);
+            if (lib.binding && lib.binding.arr_id) {
+                sel.value = lib.binding.arr_id;
+                await loadArrResources(lib.binding.arr_id, lib.binding);
                 document.getElementById('bind-details').style.display = 'block';
             } else {
                 document.getElementById('bind-details').style.display = 'none';
@@ -848,16 +848,16 @@
         async function handleBindingSubmit(e) {
             e.preventDefault();
             const payload = {
-                server_id: parseInt(document.getElementById('bind-server').value),
+                arr_id: parseInt(document.getElementById('bind-server').value),
                 quality_profile_id: parseInt(document.getElementById('bind-quality').value),
                 root_folder: document.getElementById('bind-folder').value
             };
-            await api(`/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'POST', payload);
+            await api(`/servers/${currentServerId}/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'POST', payload);
             closeModal('binding-modal'); openLibraryModal();
         }
 
         async function unbindLibrary() {
-            await api(`/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'DELETE');
+            await api(`/servers/${currentServerId}/bindings/${encodeURIComponent(document.getElementById('bind-lib-name').value)}`, 'DELETE');
             closeModal('binding-modal'); openLibraryModal();
         }
 

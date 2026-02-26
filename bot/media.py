@@ -25,13 +25,14 @@ async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event
     """求片-取消处理器"""
     await safe_delete(event)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_ap_([^_]+)_(\\d+)'))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_ap_(\\d+)_([^_]+)_(\\d+)'))
 @provide_db_session
 @require_admin
 async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
     """求片-批准处理器"""
-    library_name_base64 = event.pattern_match.group(1).decode('utf-8') # type: ignore
-    media_id = int(event.pattern_match.group(2).decode('utf-8')) # type: ignore
+    media_server_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+    library_name_base64 = event.pattern_match.group(2).decode('utf-8') # type: ignore
+    media_id = int(event.pattern_match.group(3).decode('utf-8')) # type: ignore
 
     library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
 
@@ -39,7 +40,7 @@ async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Even
     # Give admin immediate feedback
     await event.answer("正在添加中...", alert=False)
 
-    result = await request_service.handle_approval(library_name, media_id)
+    result = await request_service.handle_approval(media_server_id, library_name, media_id)
 
     if result.success:
         # Edit the message to show approved status and remove buttons

@@ -52,6 +52,7 @@ SYSTEM_KEY_MAP = {
 
 @router.get("/system", dependencies=[Depends(validate_admin_access)], response_model=SystemConfigResponse)
 async def get_system_config(session: AsyncSession = Depends(get_db)):
+    """获取系统配置"""
     repo = ConfigRepository(session)
     return {
         "enable_points": await repo.get_settings(ConfigRepository.KEY_ENABLE_POINTS, "true") == "true",
@@ -61,6 +62,7 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
 
 @router.post("/system/{key}/toggle", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
 async def toggle_system_setting_endpoint(request: Request, key: str, session: AsyncSession = Depends(get_db)):
+    """切换系统配置"""
     db_key = SYSTEM_KEY_MAP.get(key)
     if not db_key:
         raise HTTPException(status_code=400, detail=f"Invalid key: {key}")
@@ -74,6 +76,7 @@ async def toggle_system_setting_endpoint(request: Request, key: str, session: As
 
 @router.get("/admins", dependencies=[Depends(validate_admin_access)], response_model=list[AdminDto])
 async def get_admins(request: Request, session: AsyncSession = Depends(get_db)):
+    """获取管理员列表"""
     service = SettingsServices(request.app, session)
     bot_admin_ids = await service.telegram_repo.get_admins()
     group_admins = await service.client.get_chat_admin_ids()
@@ -89,6 +92,7 @@ async def get_admins(request: Request, session: AsyncSession = Depends(get_db)):
 
 @router.post("/admins/{user_id}/toggle", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
 async def toggle_admin(request: Request, user_id: int, session: AsyncSession = Depends(get_db)):
+    """切换管理员状态"""
     service = SettingsServices(request.app, session)
     result = await service.toggle_admin(user_id)
     if not result.success:
@@ -97,6 +101,7 @@ async def toggle_admin(request: Request, user_id: int, session: AsyncSession = D
 
 @router.get("/topics", dependencies=[Depends(validate_admin_access)], response_model=list[TopicDto])
 async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
+    """获取主题列表"""
     service = SettingsServices(request.app, session)
     topic_map = await service.client.get_topic_map()
     return [{"id": k, "name": v} for k, v in topic_map.items()]
@@ -105,12 +110,14 @@ async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
 
 @router.get("/servers", dependencies=[Depends(validate_admin_access)], response_model=list[ServerDto])
 async def get_servers(session: AsyncSession = Depends(get_db)):
+    """获取服务器列表"""
     repo = ServerRepository(session)
     servers = await repo.get_all()
     return [mask_server_data(s) for s in servers]
 
 @router.get("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ServerDto)
 async def get_server_detail(server_id: int, session: AsyncSession = Depends(get_db)):
+    """获取服务器详情"""
     repo = ServerRepository(session)
     server = await repo.get_by_id(server_id)
     if not server:
@@ -119,6 +126,7 @@ async def get_server_detail(server_id: int, session: AsyncSession = Depends(get_
 
 @router.post("/servers", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
 async def create_server(request: Request, data: ServerCreate, session: AsyncSession = Depends(get_db)):
+    """创建服务器"""
     service = SettingsServices(request.app, session)
     result = await service.add_server(data.name, data.server_type, data.url, data.api_key)
     if not result.success:
@@ -127,6 +135,7 @@ async def create_server(request: Request, data: ServerCreate, session: AsyncSess
 
 @router.patch("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
 async def update_server(request: Request, server_id: int, data: ServerUpdate, session: AsyncSession = Depends(get_db)):
+    """更新服务器"""
     service = SettingsServices(request.app, session)
     repo = ServerRepository(session)
 
@@ -202,6 +211,7 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
 
 @router.delete("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
 async def delete_server_endpoint(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+    """删除服务器"""
     service = SettingsServices(request.app, session)
     result = await service.delete_server(server_id)
     return {"success": True, "message": result.message}
@@ -210,6 +220,7 @@ async def delete_server_endpoint(request: Request, server_id: int, session: Asyn
 
 @router.get("/servers/{server_id}/nsfw_libraries", dependencies=[Depends(validate_admin_access)], response_model=list[NsfwLibraryDto])
 async def get_nsfw_libs(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+    """获取NSFW库列表"""
     service = SettingsServices(request.app, session)
     try:
         return await service.get_nsfw_libraries_data(server_id)
@@ -222,6 +233,7 @@ async def get_nsfw_libs(request: Request, server_id: int, session: AsyncSession 
     response_model=ToggleResponse
 )
 async def toggle_nsfw_lib(request: Request, server_id: int, lib_id: str, session: AsyncSession = Depends(get_db)):
+    """切换NSFW库状态"""
     service = SettingsServices(request.app, session)
     try:
         result = await service.toggle_nsfw_library(server_id, lib_id)
@@ -231,8 +243,13 @@ async def toggle_nsfw_lib(request: Request, server_id: int, lib_id: str, session
 
 # --- Library Binding APIs ---
 
-@router.get("/servers/{server_id}/libraries", dependencies=[Depends(validate_admin_access)], response_model=list[LibraryDto])
+@router.get(
+    "/servers/{server_id}/libraries",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=list[LibraryDto]
+)
 async def get_libraries(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+    """获取库列表"""
     service = SettingsServices(request.app, session)
     try:
         return await service.get_libraries_data(server_id)
@@ -241,11 +258,13 @@ async def get_libraries(request: Request, server_id: int, session: AsyncSession 
 
 @router.get("/bindings/options", dependencies=[Depends(validate_admin_access)], response_model=list[ArrServerDto])
 async def get_binding_options(request: Request, session: AsyncSession = Depends(get_db)):
+    """获取绑定选项(Arr服务器列表)"""
     service = SettingsServices(request.app, session)
     return await service.get_arr_servers_data()
 
 @router.get("/arr/{server_id}/resources", dependencies=[Depends(validate_admin_access)])
 async def get_arr_resources(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+    """获取Arr资源(质量配置文件和根文件夹)"""
     service = SettingsServices(request.app, session)
     try:
         profiles, folders = await service.get_arr_resources(server_id)
@@ -256,20 +275,32 @@ async def get_arr_resources(request: Request, server_id: int, session: AsyncSess
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.post("/bindings/{library_name}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def save_binding(request: Request, library_name: str, data: BindingUpdate, session: AsyncSession = Depends(get_db)):
+@router.post(
+    "/servers/{server_id}/bindings/{library_name}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse
+)
+async def save_binding(
+    request: Request,
+    server_id: int,
+    library_name: str,
+    data: BindingUpdate,
+    session: AsyncSession = Depends(get_db)
+):
+    """保存库绑定"""
     service = SettingsServices(request.app, session)
     try:
-        await service.save_library_binding(library_name, data.server_id, data.quality_profile_id, data.root_folder)
+        await service.save_library_binding(library_name, server_id, data.arr_id, data.quality_profile_id, data.root_folder)
         return {"success": True, "message": "绑定已保存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.delete("/bindings/{library_name}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def delete_binding(request: Request, library_name: str, session: AsyncSession = Depends(get_db)):
+@router.delete("/servers/{server_id}/bindings/{library_name}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
+async def delete_binding(request: Request, server_id: int, library_name: str, session: AsyncSession = Depends(get_db)):
+    """解除库绑定"""
     service = SettingsServices(request.app, session)
     try:
-        await service.unbind_library(library_name)
+        await service.unbind_library(server_id, library_name)
         return {"success": True, "message": "已解除绑定"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

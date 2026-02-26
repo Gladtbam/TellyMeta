@@ -1,8 +1,6 @@
 import base64
-import textwrap
 from typing import Any
 
-import httpx
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +13,16 @@ from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.events import NotificationEvent
+from models.orm import LibraryBinding
 from models.radarr import MovieResource
 from models.sonarr import SeriesResource
 from models.tvdb import TvdbData
+from repositories.binding_repo import BindingRepository
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
+from services import media_service
 from services.notification_service import NotificationService
 from services.user_service import Result
 
@@ -30,6 +31,7 @@ settings = get_settings()
 class RequestService:
     def __init__(self, app: FastAPI, session: AsyncSession):
         self.config_repo = ConfigRepository(session)
+        self.binding_repo = BindingRepository(session)
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
         self.telegram_repo = TelegramRepository(session)
@@ -40,14 +42,14 @@ class RequestService:
         self.tvdb_client: TvdbClient | None = app.state.tvdb_client
         self.client: TelethonClientWarper = app.state.telethon_client
 
-    async def _get_client_by_library(self, library_name: str) -> tuple[SonarrClient | RadarrClient | None, int | None]:
-        """根据库名获取对应的 Media Client 和 Server ID"""
-        binding = await self.config_repo.get_library_binding(library_name)
-        if not binding.server_id:
+    async def _get_client_by_library(self, media_server_id: int, library_name: str) -> tuple[SonarrClient | RadarrClient | None, LibraryBinding | None]:
+        """根据媒体服务器ID+库名获取对应的 Arr Client 和绑定信息"""
+        binding = await self.binding_repo.get_by_key(media_server_id, library_name)
+        if not binding:
             return None, None
 
-        client = self._sonarr_clients.get(binding.server_id) or self._radarr_clients.get(binding.server_id)
-        return client, binding.server_id
+        client = self._sonarr_clients.get(binding.arr_id) or self._radarr_clients.get(binding.arr_id)
+        return client, binding
 
     async def _get_media_content(self, item: Any, client: Any) -> tuple[str, str, str | None]:
         """获取媒体的中文标题、简介和海报"""
@@ -127,9 +129,9 @@ class RequestService:
 
         return title, overview
 
-    async def submit_final_request(self, user_id: int, library_name: str, media_id: int, request_cost: int) -> Result:
-        client, server_id = await self._get_client_by_library(library_name)
-        if not client or not server_id:
+    async def submit_final_request(self, user_id: int, media_server_id: int, library_name: str, media_id: int, request_cost: int) -> Result:
+        client, binding = await self._get_client_by_library(media_server_id, library_name)
+        if not client or not binding:
             return Result(False, "服务不可用")
 
         prefix = "tvdb" if isinstance(client, SonarrClient) else "tmdb"
@@ -143,23 +145,28 @@ class RequestService:
             return Result(False, "获取媒体信息失败")
 
         user_name = await self.client.get_user_name(user_id)
-        server_info = await self.server_repo.get_by_id(server_id)
-        if not server_info:
-            return Result(False, "关联的服务器实例不存在。")
 
-        topic_id = server_info.request_notify_topic_id
+        # 使用绑定的 arr_id 获取 Sonarr/Radarr 服务器信息用于通知
+        arr_server = await self.server_repo.get_by_id(binding.arr_id)
+        if not arr_server:
+            return Result(False, "关联的 Arr 服务器实例不存在。")
+
+        topic_id = arr_server.request_notify_topic_id
         if not topic_id:
-            return Result(False, f"管理员未设置服务器 **{server_info.name}** 的通知，无法提交请求。")
+            return Result(False, f"管理员未设置服务器 **{arr_server.name}** 的通知，无法提交请求。")
 
         title, overview, poster = await self._get_media_content(selected_media, client)
 
+        # 回调数据格式: req_ap_{media_server_id}_{lib_b64}_{media_id}
         lib_b64 = base64.b64encode(library_name.encode('utf-8')).decode('utf-8')
         buttons = [
             [
-                Button.inline("✅ 批准", data=f"req_ap_{lib_b64}_{media_id}".encode('utf-8')),
+                Button.inline("✅ 批准", data=f"req_ap_{media_server_id}_{lib_b64}_{media_id}".encode('utf-8')),
                 Button.inline("❌ 拒绝", data=f"req_deny_{user_id}".encode('utf-8'))
             ]
         ]
+
+        media_server = await self.server_repo.get_by_id(media_server_id)
 
         await self.notification_service.send_to_topic(
             topic_id=topic_id,
@@ -172,7 +179,7 @@ class RequestService:
             media_title=title,
             media_year=getattr(selected_media, 'year', '未知'),
             tmdb_id=media_id,
-            server_name=server_info.name,
+            server_name=getattr(media_server, 'name', '未知'),
             overview=overview,
             prefix=prefix.upper()
         )
@@ -182,11 +189,10 @@ class RequestService:
 
         return Result(True, f"✅ 请求已成功提交！(已扣除 **{request_cost}** 积分)\n请耐心等待管理员审核。")
 
-    async def handle_approval(self, library_name: str, media_id: int, approver_name: str = "管理员") -> Result:
-        client, _ = await self._get_client_by_library(library_name)
-        binding = await self.config_repo.get_library_binding(library_name)
+    async def handle_approval(self, media_server_id: int, library_name: str, media_id: int, approver_name: str = "管理员") -> Result:
+        client, binding = await self._get_client_by_library(media_server_id, library_name)
 
-        if not client or not binding.quality_profile_id or not binding.root_folder:
+        if not client or not binding:
             return Result(False, f"媒体库 {library_name} 配置无效或服务未连接。")
 
         prefix = "tvdb" if isinstance(client, SonarrClient) else "tmdb"
@@ -224,27 +230,20 @@ class RequestService:
         renew_score = await self.telegram_repo.get_renew_score()
         return int(renew_score * 0.1)
 
-    async def get_requestable_libraries(self, server_id: int) -> list[dict]:
-        """API: 获取可求片的库列表"""
-        bindings = await self.config_repo.get_all_library_bindings()
+    async def get_requestable_libraries(self, media_server_id: int) -> list[dict]:
+        """API: 获取可求片的库列表（按 Emby/Jellyfin 实例筛选）"""
+        bindings = await self.binding_repo.get_by_media_id(media_server_id)
         valid_bindings = []
-        for name, binding in bindings.items():
-            if not (binding.server_id and binding.quality_profile_id and binding.root_folder):
-                continue
-
-            # 预留，后续修改
-            # if binding.server_id != server_id:
-            #     continue
-
-            client = self._sonarr_clients.get(binding.server_id) or self._radarr_clients.get(binding.server_id)
+        for binding in bindings:
+            client = self._sonarr_clients.get(binding.arr_id) or self._radarr_clients.get(binding.arr_id)
             if client:
                 type_ = "sonarr" if isinstance(client, SonarrClient) else "radarr"
-                valid_bindings.append({"name": name, "type": type_})
+                valid_bindings.append({"name": binding.library_name, "type": type_})
         return valid_bindings
 
-    async def search_media_items(self, library_name: str, query: str) -> list[dict]:
+    async def search_media_items(self, media_server_id: int, library_name: str, query: str) -> list[dict]:
         """API: 搜索媒体"""
-        client, _ = await self._get_client_by_library(library_name)
+        client, _ = await self._get_client_by_library(media_server_id, library_name)
         if not client:
             return []
 
@@ -280,7 +279,7 @@ class RequestService:
             })
         return data
 
-    async def submit_request_api(self, user_id: int, library_name: str, media_id: int) -> Result:
+    async def submit_request_api(self, user_id: int, media_server_id: int, library_name: str, media_id: int) -> Result:
         """API: 提交求片"""
         cost = await self.get_request_cost()
         user = await self.telegram_repo.get_or_create(user_id)
@@ -288,4 +287,4 @@ class RequestService:
         if user.score < cost:
             return Result(False, f"积分不足，需要 {cost} 积分，您当前仅有 {user.score} 积分。")
 
-        return await self.submit_final_request(user_id, library_name, media_id, cost)
+        return await self.submit_final_request(user_id, media_server_id, library_name, media_id, cost)

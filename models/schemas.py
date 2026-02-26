@@ -9,11 +9,7 @@ class PathMapping(BaseModel):
     remote: str # 远端/容器内路径
     local: str  # 本地/宿主机路径
 
-class LibraryBinding(BaseModel):
-    """媒体库绑定模型"""
-    library_id: str
-    library_name: str
-    topic_id: int # 绑定的 Telegram 话题 ID
+
 
 class NsfwLibraryDto(BaseModel):
     """NSFW 媒体库状态"""
@@ -42,11 +38,11 @@ class RootFolderDto(BaseModel):
 
 class BindingDto(BaseModel):
     """绑定详情"""
-    server_id: int | None = None
-    server_name: str | None = None
-    arr_type: str | None = None
-    quality_profile_id: int | None = None
-    root_folder: str | None = None
+    arr_id: int
+    arr_name: str
+    arr_type: str
+    quality_profile_id: int
+    root_folder: str
 
 class LibraryDto(BaseModel):
     """媒体库信息"""
@@ -56,9 +52,9 @@ class LibraryDto(BaseModel):
 
 class BindingUpdate(BaseModel):
     """更新绑定请求"""
-    server_id: int
+    arr_id: int
     quality_profile_id: int
-    root_folder: str # 传递路径字符串
+    root_folder: str
 
 # --- Server Models (服务器相关) ---
 
@@ -93,7 +89,6 @@ class ServerDto(BaseModel):
 
     # 高级配置
     path_mappings: list[PathMapping] = []
-    library_bindings: list[LibraryBinding] = []
 
     class Config:
         from_attributes = True
@@ -130,7 +125,6 @@ class ServerUpdate(BaseModel):
 
     # 高级配置
     path_mappings: list[PathMapping] = []
-    library_bindings: list[LibraryBinding] = []
 
 # --- System Models (系统配置相关) ---
 

@@ -1,15 +1,10 @@
-import base64
 import json
-import re
-import textwrap
-from datetime import datetime, timedelta
 
 import httpx
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button
 
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
@@ -18,10 +13,10 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.emby import LibraryMediaFolder
-from models.orm import (LibraryBindingModel, RegistrationMode, ServerInstance,
-                        ServerType)
+from models.orm import ServerInstance, ServerType
 from models.schemas import (ArrServerDto, BindingDto, LibraryDto,
                             NsfwLibraryDto, QualityProfileDto, RootFolderDto)
+from repositories.binding_repo import BindingRepository
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -36,6 +31,7 @@ class SettingsServices:
         self.client: TelethonClientWarper = app.state.telethon_client
         self.telegram_repo = TelegramRepository(session)
         self.config_repo = ConfigRepository(session)
+        self.binding_repo = BindingRepository(session)
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients
         self._sonarr_clients = app.state.sonarr_clients
@@ -178,8 +174,9 @@ class SettingsServices:
         client = self.media_clients[server.id]
         libraries = await client.get_libraries() or []
 
-        # 获取所有绑定配置
-        bindings = await self.config_repo.get_all_library_bindings()
+        # 获取该媒体服务器下所有绑定
+        bindings = await self.binding_repo.get_by_media_id(server_id)
+        binding_map = {b.library_name: b for b in bindings}
 
         result = []
         for lib in libraries:
@@ -190,19 +187,16 @@ class SettingsServices:
             dto = LibraryDto(name=lib_name, id=lib_id)
 
             # 填充绑定信息
-            if lib_name in bindings:
-                binding_model = bindings[lib_name]
-                if binding_model.server_id:
-                    arr_server = await self.server_repo.get_by_id(binding_model.server_id)
-                    server_name = arr_server.name if arr_server else "Unknown"
-
-                    dto.binding = BindingDto(
-                        server_id=binding_model.server_id,
-                        server_name=server_name,
-                        arr_type=binding_model.arr_type,
-                        quality_profile_id=binding_model.quality_profile_id,
-                        root_folder=binding_model.root_folder
-                    )
+            if lib_name in binding_map:
+                binding = binding_map[lib_name]
+                arr_server = await self.server_repo.get_by_id(binding.arr_id)
+                dto.binding = BindingDto(
+                    arr_id=binding.arr_id,
+                    arr_name=arr_server.name if arr_server else "Unknown",
+                    arr_type=arr_server.server_type if arr_server else "unknown",
+                    quality_profile_id=binding.quality_profile_id,
+                    root_folder=binding.root_folder
+                )
             result.append(dto)
 
         return result
@@ -230,30 +224,23 @@ class SettingsServices:
 
         return p_dtos, f_dtos
 
-    async def save_library_binding(self, library_name: str, server_id: int, quality_id: int, root_folder: str) -> None:
+    async def save_library_binding(self, library_name: str, media_server_id: int, arr_server_id: int, quality_id: int, root_folder: str) -> None:
         """保存媒体库绑定 (API)"""
-        server = await self.server_repo.get_by_id(server_id)
-        if not server:
-            raise ValueError("Server not found")
+        arr_server = await self.server_repo.get_by_id(arr_server_id)
+        if not arr_server:
+            raise ValueError("Arr server not found")
 
-        binding = await self.config_repo.get_library_binding(library_name)
-        binding.server_id = server_id
-        binding.arr_type = server.server_type
-        binding.quality_profile_id = quality_id
-        binding.root_folder = root_folder
+        await self.binding_repo.upsert(
+            library_name=library_name,
+            media_id=media_server_id,
+            arr_id=arr_server_id,
+            quality_profile_id=quality_id,
+            root_folder=root_folder,
+        )
 
-        await self.config_repo.set_library_binding(binding)
-
-    async def unbind_library(self, library_name: str) -> None:
+    async def unbind_library(self, media_server_id: int, library_name: str) -> None:
         """解绑媒体库 (API)"""
-        # 通过创建一个新的空绑定覆盖旧的，或者在 ConfigRepository 中实现删除逻辑
-        # 这里简化为置空
-        binding = await self.config_repo.get_library_binding(library_name)
-        binding.server_id = None
-        binding.arr_type = None
-        binding.quality_profile_id = None
-        binding.root_folder = None
-        await self.config_repo.set_library_binding(binding)
+        await self.binding_repo.delete(media_server_id, library_name)
 
     async def toggle_system_setting(self, key: str) -> Result:
         """切换系统功能设置"""

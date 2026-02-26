@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from enum import StrEnum
 
-from loguru import logger
-from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Integer,
                         String, UniqueConstraint, text)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -126,47 +123,23 @@ class BotConfiguration(Base):
     value: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-class LibraryBindingModel(BaseModel):
-    """媒体库绑定模型"""
-    library_name: str
-    server_id: int | None = None #server_instance id
-    arr_type: str | None = None
-    quality_profile_id: int | None = None
-    root_folder: str | None = None
+class LibraryBinding(Base):
+    """媒体库绑定模型 - 将 Emby/Jellyfin 媒体库绑定到 Sonarr/Radarr 实例"""
+    __tablename__ = 'library_bindings'
 
-    @field_validator('library_name', mode='before')
-    @classmethod
-    def remove_binding_prefix(cls, value: str) -> str:
-        """移除键中的 'binding:' 前缀"""
-        if value.startswith('binding:'):
-            return value[len('binding:'):]
-        return value
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    library_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    arr_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
+    media_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
+    quality_profile_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    root_folder: Mapped[str] = mapped_column(String(512), nullable=False)
 
-    def to_config_key(self) -> str:
-        """生成用于存储在 BotConfiguration 表中的键"""
-        return f'binding:{self.library_name}'
+    arr_server: Mapped[ServerInstance] = relationship(foreign_keys=[arr_id])
+    media_server: Mapped[ServerInstance] = relationship(foreign_keys=[media_id])
 
-    def to_config_value(self) -> str:
-        """生成用于存储在 BotConfiguration 表中的值，排除 library_name 字段
-        """
-        data_to_store = self.model_dump(exclude={'library_name'})
-        return json.dumps(data_to_store)
-
-    @classmethod
-    def from_db_config(cls, config_row: BotConfiguration) -> 'LibraryBindingModel':
-        """
-        (推荐的辅助方法)
-        从一个 BotConfiguration 数据库行对象创建模型实例。
-        """
-        try:
-            data = json.loads(config_row.value)
-            # 关键：我们将 'key' 传给 'library_name' 字段进行验证和解析
-            data['library_name'] = config_row.key
-            return cls.model_validate(data)
-        except (json.JSONDecodeError, ValidationError) as e:
-            logger.error("解析绑定配置 {} 失败: {}。数据: {}", config_row.key, e, config_row.value)
-            # 返回一个至少包含名称的“空”模型
-            return cls(library_name=config_row.key)
+    __table_args__ = (
+        UniqueConstraint('media_id', 'library_name', name='uq_media_library'),
+    )
 
 class ApiCache(Base):
     """API 响应缓存模型"""

@@ -197,7 +197,7 @@ async def search_media(
         return {"success": False, "message": "该服务器未开启求片功能"}
 
     service = RequestService(request.app, session)
-    return await service.search_media_items(library, query)
+    return await service.search_media_items(server_id, library, query)
 
 @router.post("/tools/{server_id}/request/submit", response_model=ToggleResponse)
 async def submit_request(
@@ -217,7 +217,7 @@ async def submit_request(
         return {"success": False, "message": "该服务器未开启求片功能"}
 
     service = RequestService(request.app, session)
-    result = await service.submit_request_api(user_id, payload.library_name, payload.media_id)
+    result = await service.submit_request_api(user_id, server_id, payload.library_name, payload.media_id)
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
