@@ -19,13 +19,10 @@ from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
-from core.database import DATABASE_URL, Base, async_engine, async_session
+from core.database import DATABASE_URL, async_engine, async_session
 from core.initialization import (check_required_settings, check_sqlite_version,
                                  initialize_admin)
-from core.scheduler_jobs import (auto_backup_db, ban_expired_users,
-                                 cleanup_api_cache_task,
-                                 cleanup_inactive_users,
-                                 delete_expired_banned_users, settle_scores)
+from core.scheduler_jobs import SCHEDULER_JOBS_REGISTRY
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
@@ -175,53 +172,8 @@ async def lifespan(app: FastAPI):
         timezone=settings.timezone
         )
 
-    app.state.scheduler.add_job(
-        ban_expired_users,
-        'cron',
-        hour=0, minute=15,
-        id='ban_expired_users',
-        replace_existing=True
-    )
-
-    app.state.scheduler.add_job(
-        delete_expired_banned_users,
-        'cron',
-        hour=0, minute=30,
-        id='delete_expired_banned_users',
-        replace_existing=True
-    )
-
-    app.state.scheduler.add_job(
-        settle_scores,
-        'cron',
-        hour=23, minute=0,
-        id='settle_scores',
-        replace_existing=True
-    )
-
-    app.state.scheduler.add_job(
-        cleanup_inactive_users,
-        'cron',
-        hour=1, minute=0,
-        id='cleanup_inactive_users',
-        replace_existing=True
-    )
-
-    app.state.scheduler.add_job(
-        cleanup_api_cache_task,
-        'cron',
-        hour=3, minute=0,
-        id='cleanup_api_cache',
-        replace_existing=True
-    )
-
-    app.state.scheduler.add_job(
-        auto_backup_db,
-        'cron',
-        hour=4, minute=0,
-        id='auto_backup_db',
-        replace_existing=True
-    )
+    for job in SCHEDULER_JOBS_REGISTRY:
+        app.state.scheduler.add_job(job.func, job.trigger, **job.kwargs)
 
     app.state.scheduler.start()
 

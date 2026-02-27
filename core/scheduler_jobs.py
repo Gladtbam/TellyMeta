@@ -1,4 +1,7 @@
+from collections.abc import Callable
+from dataclasses import dataclass
 import textwrap
+from typing import Any
 
 from httpx import HTTPError
 from loguru import logger
@@ -16,6 +19,27 @@ from services.user_service import UserService
 
 settings = get_settings()
 
+@dataclass
+class JobConfig:
+    func: Callable
+    trigger: str
+    kwargs: dict[str, Any]
+
+SCHEDULER_JOBS_REGISTRY: list[JobConfig] = []
+
+def scheduled_job(trigger: str, **kwargs):
+    """
+    定时任务注册装饰器
+    用法: @scheduled_job('cron', hour=0, minute=15, id='xxx')
+    """
+    def decorator(func: Callable):
+        SCHEDULER_JOBS_REGISTRY.append(
+            JobConfig(func=func, trigger=trigger, kwargs=kwargs)
+        )
+        return func
+    return decorator
+
+@scheduled_job('cron', hour=0, minute=15, id='ban_expired_users', replace_existing=True)
 async def ban_expired_users() -> None:
     """封禁过期用户
     检查所有用户的订阅状态，封禁那些订阅已过期的用户。
@@ -47,6 +71,7 @@ async def ban_expired_users() -> None:
         finally:
             await session.close()
 
+@scheduled_job('cron', hour=0, minute=30, id='delete_expired_banned_users', replace_existing=True)
 async def delete_expired_banned_users() -> None:
     """删除已封禁且过期的用户
     删除那些已经被封禁且订阅过期的用户，以释放系统资源。
@@ -77,6 +102,7 @@ async def delete_expired_banned_users() -> None:
         finally:
             await session.close()
 
+@scheduled_job('cron', hour=23, minute=0, id='settle_scores', replace_existing=True)
 async def settle_scores() -> None:
     """结算用户积分"""
     if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
@@ -132,7 +158,7 @@ async def settle_scores() -> None:
             await session.rollback()
             await session.close()
 
-
+@scheduled_job('cron', hour=1, minute=0, id='cleanup_inactive_users', replace_existing=True)
 async def cleanup_inactive_users() -> None:
     """清理不在群组内的成员账户和数据"""
     if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false") != "true":
@@ -167,10 +193,12 @@ async def cleanup_inactive_users() -> None:
         finally:
             await session.close()
 
+@scheduled_job('cron', hour=3, minute=0, id='cleanup_api_cache', replace_existing=True)
 async def cleanup_api_cache_task() -> None:
     """清理过期的 API 缓存"""
     await CacheService.cleanup_expired()
 
+@scheduled_job('cron', hour=4, minute=0, id='auto_backup_db', replace_existing=True)
 async def auto_backup_db() -> None:
     """自动备份数据库"""
     await backup_database()
