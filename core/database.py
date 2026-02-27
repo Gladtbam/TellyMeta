@@ -1,9 +1,12 @@
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from pathlib import Path
+import sqlite3
 
+import aiosqlite
 from fastapi import HTTPException
 from loguru import logger
-from sqlalchemy import event, MetaData
+from sqlalchemy import MetaData, event
 from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
                                     create_async_engine)
 from sqlalchemy.orm import DeclarativeBase
@@ -32,6 +35,7 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA foreign_keys=ON;")
     cursor.close()
 
 naming_convention = {
@@ -70,3 +74,28 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()   # 关闭会话
+
+async def backup_database() -> None:
+    """备份数据库"""
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    backup_file = backup_dir / f"tellymeta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    db_path = DATA_DIR / "tellymeta.db"
+
+    try:
+        async with aiosqlite.connect(db_path) as src_db:
+            async with aiosqlite.connect(backup_file) as dst_db:
+                await src_db.backup(dst_db)
+        logger.info("数据库备份成功: {}", backup_file.name)
+    except (sqlite3.Error, OSError) as e:
+        logger.exception("备份数据库时出错: {}", e)
+        return
+
+    for file in backup_dir.iterdir():
+        try:
+            if file.is_file() and file.name.endswith(".db") and file.stat().st_mtime < datetime.now().timestamp() - 86400 * 7:
+                file.unlink()
+                logger.info("删除过期备份文件: {}", file.name)
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            logger.exception("删除过期备份文件时出错: {}", e)

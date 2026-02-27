@@ -22,7 +22,8 @@ from core.config import get_settings
 from core.database import DATABASE_URL, Base, async_engine, async_session
 from core.initialization import (check_required_settings, check_sqlite_version,
                                  initialize_admin)
-from core.scheduler_jobs import (ban_expired_users, cleanup_api_cache_task,
+from core.scheduler_jobs import (auto_backup_db, ban_expired_users,
+                                 cleanup_api_cache_task,
                                  cleanup_inactive_users,
                                  delete_expired_banned_users, settle_scores)
 from core.telegram_manager import TelethonClientWarper
@@ -211,6 +212,14 @@ async def lifespan(app: FastAPI):
         'cron',
         hour=3, minute=0,
         id='cleanup_api_cache',
+        replace_existing=True
+    )
+
+    app.state.scheduler.add_job(
+        auto_backup_db,
+        'cron',
+        hour=4, minute=0,
+        id='auto_backup_db',
         replace_existing=True
     )
 

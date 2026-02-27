@@ -59,7 +59,11 @@ class ServerInstance(Base):
     notify_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Jellyfin/Emby 相关配置
-    registration_mode: Mapped[str] = mapped_column(String(32), default=RegistrationMode.DEFAULT, server_default=text("'default'"))
+    registration_mode: Mapped[str] = mapped_column(
+        String(32),
+        default=RegistrationMode.DEFAULT,
+        server_default=text("'default'")
+    )
     registration_count_limit: Mapped[int] = mapped_column(Integer, default=0, server_default=text('0'))
     registration_time_limit: Mapped[str] = mapped_column(String(32), default="0", server_default=text("'0'"))
     registration_expiry_days: Mapped[int] = mapped_column(Integer, default=30, server_default=text('30'))
@@ -81,7 +85,11 @@ class MediaUser(Base):
     __tablename__ = 'media_user'
 
     id: Mapped[int] = mapped_column(BigInteger, ForeignKey('telegram_users.id'), primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), primary_key=True)
+    server_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey('server_instances.id', ondelete='CASCADE'),
+        primary_key=True
+    )
     media_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     media_name: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -98,7 +106,11 @@ class ActiveCode(Base):
     __tablename__ = 'active_codes'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
+    server_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey('server_instances.id', ondelete='CASCADE'),
+        nullable=False
+    )
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False)
@@ -130,8 +142,16 @@ class LibraryBinding(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     library_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    arr_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
-    media_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
+    arr_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey('server_instances.id', ondelete='CASCADE'),
+        nullable=False
+    )
+    media_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey('server_instances.id', ondelete='CASCADE'),
+        nullable=False
+    )
     quality_profile_id: Mapped[int] = mapped_column(Integer, nullable=False)
     root_folder: Mapped[str] = mapped_column(String(512), nullable=False)
 

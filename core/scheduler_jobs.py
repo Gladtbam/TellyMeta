@@ -4,7 +4,7 @@ from httpx import HTTPError
 from loguru import logger
 
 from core.config import get_settings
-from core.database import async_session
+from core.database import async_session, backup_database
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
@@ -170,3 +170,7 @@ async def cleanup_inactive_users() -> None:
 async def cleanup_api_cache_task() -> None:
     """清理过期的 API 缓存"""
     await CacheService.cleanup_expired()
+
+async def auto_backup_db() -> None:
+    """自动备份数据库"""
+    await backup_database()
