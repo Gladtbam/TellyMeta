@@ -350,8 +350,9 @@ class AccountService:
         if not code or code.used_at or code.expires_at < datetime.now():
             return Result(False, "无效的注册码或续期码，请检查后重试。")
 
-        if not code.server_id:
-            return Result(False, "该激活码数据异常 (未关联服务器)，无法使用。")
+        server = await self.server_repo.get_by_id(code.server_id)
+        if not server:
+            return Result(False, "该激活码对应的服务器已失效或被删除，无法使用。")
 
         if code.type == 'signup':
             result = await self.register(user_id, username, code.server_id)

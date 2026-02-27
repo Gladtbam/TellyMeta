@@ -98,14 +98,15 @@ class ActiveCode(Base):
     __tablename__ = 'active_codes'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=True)
+    server_id: Mapped[int] = mapped_column(Integer, ForeignKey('server_instances.id'), nullable=False)
     code: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
 
-    server: Mapped[ServerInstance | None] = relationship()
+    server: Mapped[ServerInstance] = relationship()
+
 class PendingVerification(Base):
     """待验证用户模型"""
     __tablename__ = 'pending_verifications'
