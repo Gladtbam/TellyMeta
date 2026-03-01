@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import textwrap
 from datetime import datetime, timedelta
 from random import randint, sample
@@ -7,8 +8,9 @@ from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from telethon import Button
+from telethon import Button, errors
 
 from bot.utils import generate_captcha
 from core.config import get_settings
@@ -103,12 +105,8 @@ class VerificationService:
             return Result(success=False, message="验证码错误，请重新加入群组重试。")
 
         # 删除定时任务
-        try:
+        with contextlib.suppress(JobLookupError):
             self.scheduler.remove_job(challenge.scheduler_job_id)
-        except JobLookupError:
-            pass
-        except Exception as e:
-            logger.warning("移除定时任务失败: {}", e)
 
         # 删除验证记录
         await self.verification_repo.delete(user_id)
@@ -123,12 +121,8 @@ class VerificationService:
         if not challenge:
             return Result(success=False, message=f"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。")
         await kick_unverified_user(user_id, is_ban=is_ban)
-        try:
+        with contextlib.suppress(JobLookupError):
             self.scheduler.remove_job(challenge.scheduler_job_id)
-        except JobLookupError:
-            pass
-        except Exception as e:
-            logger.warning("移除定时任务失败: {}", e)
 
         return Result(success=True, message=f"[{user_name}](tg://user?id={user_id})已被移出群组。")
 
@@ -144,8 +138,8 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
                 await client.ban_user(user_id)
             else:
                 await client.kick_participant(user_id)
-        except Exception as e:
-            logger.exception("移出未验证用户 {} 失败: {}", user_id, e)
+        except (errors.RPCError, ValueError) as e:
+            logger.warning("移出未验证用户 {} 失败: {}", user_id, e)
 
         async with session_factory() as session:
             try:
@@ -156,8 +150,8 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
                 logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
 
                 await verification_repo.delete(user_id)
-            except Exception as e:
+            except SQLAlchemyError as e:
                 await session.rollback()
-                logger.exception("移出未验证用户 {} 失败: {}", user_id, e)
+                logger.error("移出未验证用户 {} 失败: {}", user_id, e)
             finally:
-                await session.close()   # 关闭会话
+                await session.close()

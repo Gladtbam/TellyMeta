@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import json
 import re
 import textwrap
@@ -6,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from fastapi import FastAPI
-from httpx import AsyncClient, HTTPError
+from httpx import AsyncClient, HTTPError, RequestError
 from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -57,13 +58,11 @@ class AccountService:
                 status = f"(剩{srv.registration_count_limit}名额)"
             elif srv.registration_mode == RegistrationMode.TIME:
                 # 简单检查是否过期
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     ts = float(srv.registration_time_limit)
                     if datetime.now().timestamp() > ts:
                         continue # 已过期不显示
                     status = "(限时)"
-                except (ValueError, TypeError):
-                    pass
             elif srv.registration_mode == RegistrationMode.EXTERNAL:
                 status = "(验证注册)"
 
@@ -129,7 +128,7 @@ class AccountService:
                             return Result(True, "验证通过")
                         else:
                             return Result(False, "验证失败 (解析未通过)。")
-                    except Exception as e:
+                    except (NameError, TypeError, ValueError, SyntaxError, AttributeError) as e:
                         logger.error(f"外部验证解析代码执行错误: {e}")
                         return Result(False, f"验证解析出错: {e}")
                 else:
@@ -137,9 +136,9 @@ class AccountService:
                         return Result(True, "验证通过")
                     else:
                         return Result(False, f"验证失败 (Status: {response.status_code})。")
-        except Exception as e:
+        except RequestError as e:
             logger.error("外部验证错误：{}", e)
-            return Result(False, f"验证请求发生错误: {str(e)}")
+            return Result(False, f"验证请求发生网络错误: {str(e)}")
 
     async def register(
         self,

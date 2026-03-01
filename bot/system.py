@@ -3,6 +3,7 @@ import contextlib
 import textwrap
 from typing import Any
 
+from apscheduler.jobstores.base import JobLookupError
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,7 +124,7 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
         verification_service = VerificationService(app, session)
         challenge = await verification_service.verification_repo.get(user_id)
         if challenge:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(JobLookupError):
                 verification_service.scheduler.remove_job(challenge.scheduler_job_id)
             await verification_service.verification_repo.delete(user_id)
 

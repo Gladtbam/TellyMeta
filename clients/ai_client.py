@@ -3,7 +3,7 @@ import textwrap
 from contextlib import asynccontextmanager
 
 from loguru import logger
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
 
 from clients.base_client import RateLimiter
 
@@ -116,6 +116,6 @@ class AIClientWarper:
 
                 logger.warning("翻译未返回有效的中文文本：{}", response_text)
                 return text
-            except Exception as e:
+            except OpenAIError as e:
                 logger.error("AI 翻译期间出错：{}", e)
                 return text

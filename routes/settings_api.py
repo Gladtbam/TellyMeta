@@ -1,3 +1,4 @@
+import contextlib
 import json
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -33,12 +34,10 @@ def mask_server_data(server: ServerInstance) -> dict:
     pm = data.get("path_mappings")
     mappings_list = []
     if isinstance(pm, str) and pm.strip():
-        try:
+        with contextlib.suppress(json.JSONDecodeError):
             pm_dict = json.loads(pm)
             for remote, local in pm_dict.items():
                 mappings_list.append({"remote": remote, "local": local})
-        except json.JSONDecodeError:
-            pass
     data["path_mappings"] = mappings_list
     return data
 

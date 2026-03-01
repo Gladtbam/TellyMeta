@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import io
 import operator
 from random import choice, randint
@@ -135,12 +136,10 @@ async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | Non
 
     if task_cancel in done:
         # 用户点击了取消按钮
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             event = task_cancel.result()
             await event.answer("已取消")
             await safe_delete(event) # 删除提示消息
-        except Exception:
-            pass
         return None
 
     if task_response in done:
@@ -152,7 +151,7 @@ async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | Non
                 await conv.send_message(f"检测到新命令 {msg.text.split()[0]}，当前会话已结束。")
                 return None
             return msg.text.strip() if msg.text else None
-        except Exception:
+        except (asyncio.CancelledError, ValueError):
             return None
 
     return None

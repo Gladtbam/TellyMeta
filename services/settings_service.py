@@ -1,3 +1,4 @@
+import contextlib
 import json
 
 import httpx
@@ -90,10 +91,8 @@ class SettingsServices:
         client = None
         mappings = {}
         if server.path_mappings:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 mappings = json.loads(server.path_mappings)
-            except json.JSONDecodeError:
-                pass
 
         if server.server_type == ServerType.EMBY:
             client = EmbyClient(

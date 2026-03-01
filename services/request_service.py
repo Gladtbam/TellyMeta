@@ -2,6 +2,7 @@ import base64
 from typing import Any
 
 from fastapi import FastAPI
+from httpx import HTTPError
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button
@@ -95,7 +96,7 @@ class RequestService:
                         title = tvdb_resp.data.name
                     if tvdb_resp.data.overview:
                         overview = tvdb_resp.data.overview
-            except Exception as e:
+            except (HTTPError, ValueError, TypeError) as e:
                 logger.debug(f"TVDB 查找失败 ({tvdb_id}): {e}")
 
         if not overview and tmdb_id and self.tmdb_client:
@@ -103,7 +104,7 @@ class RequestService:
                 tmdb_info = await self.tmdb_client.get_tv_series_details(tmdb_id)
                 if tmdb_info and tmdb_info.overview:
                     overview = tmdb_info.overview
-            except Exception as e:
+            except (HTTPError, ValueError, TypeError) as e:
                 logger.debug(f"TMDB TV 查找失败 ({tmdb_id}): {e}")
 
         return title, overview
@@ -124,7 +125,7 @@ class RequestService:
                         title = tmdb_movie.title
                     if tmdb_movie.overview:
                         overview = tmdb_movie.overview
-            except Exception as e:
+            except (HTTPError, ValueError, TypeError) as e:
                 logger.debug(f"TMDB Movie 查找失败 ({tmdb_id}): {e}")
 
         return title, overview

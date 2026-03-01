@@ -50,7 +50,7 @@ class SubtitleService:
                 return await self._handle_series(user_id, media_id, file_path)
             elif media_type == 'tmdb':
                 return await self._handle_movie(user_id, media_id, file_path)
-        except Exception as e:
+        except (OSError, ValueError, TypeError) as e:
             logger.exception(f"处理字幕时发生系统错误: {e}")
             return Result(False, f"处理过程中发生系统错误: {str(e)}")
 
@@ -238,7 +238,7 @@ class SubtitleService:
                             errors.append(error)
                         else:
                             files_processed += 1
-                    except Exception as e:
+                    except (OSError, ValueError) as e:
                         errors.append(f"处理文件 {file} 时出错: {str(e)}")
 
             if files_processed == 0 and not errors:

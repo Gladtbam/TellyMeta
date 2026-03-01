@@ -277,7 +277,7 @@ async def handle_series_add_metadata(
 
                 if count > 0:
                     logger.info("已补全剧集 {} 的 {} 个现有文件 NFO", payload.series.title, count)
-        except Exception as e:
+        except OSError as e:
             logger.error("为新剧集生成单集 NFO 失败: {}", e)
 
 async def create_movie_nfo(nfo_path: Path, tmdb_id: int, tmdb: TmdbClient | None, is_override: bool = True) -> None:
@@ -331,7 +331,7 @@ async def create_movie_nfo_from_resource(
             for file in folder_path.iterdir():
                 if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS:
                     await create_movie_nfo(file.with_suffix('.nfo'), movie.tmdbId, tmdb)
-        except Exception as e:
+        except OSError as e:
             logger.error("为电影生成 NFO 失败: {}", e)
 
 async def rebuild_radarr_metadata_task(
