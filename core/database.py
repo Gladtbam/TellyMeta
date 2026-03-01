@@ -80,7 +80,7 @@ async def backup_database() -> None:
     backup_dir = DATA_DIR / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    backup_file = backup_dir / f"tellymeta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    backup_file = backup_dir / f"tellymeta_{datetime.now().strftime('%Y%m%d')}.db"
     db_path = DATA_DIR / "tellymeta.db"
 
     try:
