@@ -151,14 +151,10 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
             try:
                 user_service = UserService(app, session)
                 verification_repo = VerificationRepository(session)
-                challenge = await verification_repo.get(user_id)
-                if challenge:
-                    await verification_repo.delete(user_id)
 
                 await user_service.delete_account(user_id, 'tg')
                 logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
 
-                # 删除验证记录
                 await verification_repo.delete(user_id)
             except Exception as e:
                 await session.rollback()

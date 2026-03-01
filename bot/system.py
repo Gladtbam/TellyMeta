@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import textwrap
 from typing import Any
 
@@ -118,6 +119,14 @@ async def user_join_handler(app: FastAPI, event: events.ChatAction.Event, sessio
 
     if event.user_left or event.user_kicked:
         logger.info("用户 {} 离开", user_id)
+
+        verification_service = VerificationService(app, session)
+        challenge = await verification_service.verification_repo.get(user_id)
+        if challenge:
+            with contextlib.suppress(Exception):
+                verification_service.scheduler.remove_job(challenge.scheduler_job_id)
+            await verification_service.verification_repo.delete(user_id)
+
         user_service = UserService(app, session)
         await user_service.delete_account(user_id, 'both')
 
