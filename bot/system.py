@@ -61,13 +61,15 @@ async def help_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
     /help - [私聊]帮助
     /checkin - 签到
     /signup - 注册, 仅开放注册时使用
-    /me - [私聊]查看 Emby 账户 和 个人 信息(包含其它工具)
     /code - [私聊]使用注册码注册, 或者使用续期码续期。例: /code 123
     /del - [管理员]删除 Emby 账户, 需回复一个用户
     /warn - [管理员]警告用户, 需回复一个用户
     /info - [管理员]查看用户信息
     /settle - [管理员]手动结算积分
     /change - [管理员]手动修改积分, 正数加负数减
+    /kick - [管理员]踢出用户, 需回复一个用户
+    /ban - [管理员]封禁用户, 需回复一个用户
+    /chat_id - 获取当前群组ID, 需在群组中使用
     """)
 
     if event.is_private:
@@ -188,7 +190,7 @@ async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) 
     """
     known_commands = [
         'start', 'help', 'info', 'chat_id', 'del', 'code',
-        'checkin', 'warn', 'change', 'settle', 'signup', 'settings',
+        'checkin', 'warn', 'change', 'settle', 'signup',
         'kick', 'ban', 'cancel'
     ]
     try:
