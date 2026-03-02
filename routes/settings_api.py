@@ -16,7 +16,7 @@ from models.orm import ServerInstance, ServerType
 from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
                             NsfwLibraryDto, ServerCreate, ServerDto,
                             ServerUpdate, SystemConfigResponse, ToggleResponse,
-                            TopicDto)
+                            TopicsResponse)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.settings_service import SettingsServices
@@ -98,12 +98,15 @@ async def toggle_admin(request: Request, user_id: int, session: AsyncSession = D
         raise HTTPException(status_code=400, detail=result.message)
     return {"success": True, "message": result.message}
 
-@router.get("/topics", dependencies=[Depends(validate_admin_access)], response_model=list[TopicDto])
+@router.get("/topics", dependencies=[Depends(validate_admin_access)], response_model=TopicsResponse)
 async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
     """获取主题列表"""
     service = SettingsServices(request.app, session)
-    topic_map = await service.client.get_topic_map()
-    return [{"id": k, "name": v} for k, v in topic_map.items()]
+    topic_map = await service.client.get_group_topics()
+    return {
+        "is_forum": topic_map["is_forum"],
+        "topics": [{"id": k, "name": v} for k, v in topic_map["topics"].items()]
+    }
 
 # --- Server Management APIs ---
 

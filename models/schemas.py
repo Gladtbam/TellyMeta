@@ -156,6 +156,11 @@ class TopicDto(BaseModel):
     id: int
     name: str
 
+class TopicsResponse(BaseModel):
+    """群组话题响应"""
+    is_forum: bool
+    topics: list[TopicDto]
+
 # --- Request Models (求片相关) ---
 
 class RequestLibraryDto(BaseModel):

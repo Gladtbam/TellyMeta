@@ -10,6 +10,7 @@ from bot.decorators import (provide_db_session, require_admin,
 from bot.utils import safe_reply, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from repositories.server_repo import ServerRepository
 from services.score_service import ScoreService
 from services.user_service import UserService
 from services.verification_service import VerificationService
@@ -172,3 +173,39 @@ async def ban_handler(app: FastAPI, event: Any, session: AsyncSession, target_us
     else:
         await safe_respond(event, "无法处理此事件类型。")
         return
+
+@TelethonClientWarper.handler(events.NewMessage(
+    pattern=fr'^/bind({settings.telegram_bot_name})?\s+(\d+)\s+(notify|request)$',
+    incoming=True
+    ))
+@provide_db_session
+@require_admin
+async def bind_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+    """话题绑定处理器
+    /bind <server_id> <notify|request>
+    """
+    server_id = int(event.pattern_match.group(2)) # type: ignore
+    bind_type = event.pattern_match.group(3) # type: ignore
+
+    topic_id = None
+    if getattr(event.message, 'reply_to', None) and event.message.reply_to.forum_topic:
+        topic_id = event.message.reply_to.reply_to_msg_id
+    else:
+        await safe_reply(event, "❌ 请在论坛的具体**话题（Topic）内部**发送此绑定命令。")
+        return
+
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        await safe_reply(event, "❌ 找不到对应的服务器。")
+        return
+
+    msg_type = None
+    if bind_type == "notify":
+        await server_repo.update_notify_config(server_id, notify_topic_id=topic_id)
+        msg_type = "常规通知"
+    elif bind_type == "request":
+        await server_repo.update_notify_config(server_id, request_notify_topic_id=topic_id)
+        msg_type = "求片通知"
+
+    await safe_reply(event, f"✅ 成功将 **{server.name}** 的 **{msg_type}** 绑定到当前话题！(ID: `{topic_id}`)")

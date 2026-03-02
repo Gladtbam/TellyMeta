@@ -16,9 +16,9 @@ from telethon.events.common import EventBuilder
 from telethon.tl import functions
 from telethon.tl.types import (Channel, ChannelParticipantCreator,
                                ChannelParticipantsAdmins, Chat,
-                               ChatBannedRights, ForumTopic, ForumTopicDeleted,
-                               KeyboardButtonCallback, Message, User)
-from telethon.tl.types.messages import ChatFull, ForumTopics
+                               ChatBannedRights, KeyboardButtonCallback,
+                               Message, User)
+from telethon.tl.types.messages import ChatFull
 
 from core.config import get_settings
 
@@ -155,66 +155,34 @@ class TelethonClientWarper:
             logger.error("无法获取 {} 的管理员：{}", self.chat_id, e)
             return admin_ids
 
-    async def get_group_topics(self) -> functions.List[ForumTopicDeleted | ForumTopic] | int:
+    async def get_group_topics(self) -> dict[str, Any]:
         """获取群组的所有话题"""
+        mapping = {}
+        is_forum = False
+
         if not self.client.is_connected():
             await self.connect()
         try:
             channel = await self.client.get_entity(self.chat_id)
             if isinstance(channel, Channel) and channel.forum:
-                topics: ForumTopics = await self.client(functions.messages.GetForumTopicsRequest(
-                    peer=channel, # type: ignore
-                    offset_date=None,
-                    offset_id=0,
-                    offset_topic=0,
-                    limit=100
-                ))
-                return topics.topics
+                is_forum = True
+                mapping[self.chat_id] = "💬 主群组 (使用指令绑定话题)"
 
             if isinstance(channel, Channel) and channel.megagroup :
-                logger.info("频道 ID：{} 是超级群组，不支持话题。", self.chat_id)
                 full_channel: ChatFull = await self.client(
                     functions.channels.GetFullChannelRequest(channel=channel) # type: ignore
                 )
                 linked_chat_id = getattr(full_channel.full_chat, 'linked_chat_id', None)
                 if linked_chat_id:
-                    return int(f"-100{linked_chat_id}")
-                return self.chat_id
+                    mapping[int(f"-100{linked_chat_id}")] = "📢 关联频道"
+                mapping[self.chat_id] = "💬 当前群组"
 
-            if isinstance(channel, Chat):
-                logger.info("聊天 ID：{} 是聊天，不支持主题。", self.chat_id)
-                return self.chat_id
-            return self.chat_id
-        except ChannelInvalidError as e:
-            logger.error("频道 ID：{} 无效，无法获取主题：{}", self.chat_id, e)
-            return self.chat_id
-        except ChannelPublicGroupNaError as e:
-            logger.error("频道 ID：{} 不可用，无法获取主题：{}", self.chat_id, e)
-            return self.chat_id
-        except TimeoutError as e:
-            logger.error("请求频道 ID：{} 时超时，无法获取主题：{}", self.chat_id, e)
-            return self.chat_id
-
-    async def get_topic_map(self) -> dict[int, str]:
-        """获取话题/频道 ID 到名称的映射
-        
-        逻辑：
-        1. 话题群组：返回 {topic_id: topic_title}
-        2. 超级群组(已绑定频道)：返回 {channel_id: "关联频道", chat_id: "当前群组"}
-        3. 普通/超级群组(未绑定)：返回 {chat_id: "当前群组"}
-        """
-        data = await self.get_group_topics()
-        mapping = {}
-
-        if isinstance(data, list):
-            for t in data:
-                if isinstance(t, ForumTopic):
-                    mapping[t.id] = t.title
-        elif isinstance(data, int):
-            if data != self.chat_id:
-                mapping[data] = "📢 关联频道"
+            else:
+                mapping[self.chat_id] = "💬 当前群组"
+        except (ChannelInvalidError, ChannelPublicGroupNaError, TimeoutError) as e:
+            logger.error("频道 ID：{} 无效，无法获取群组信息：{}", self.chat_id, e)
             mapping[self.chat_id] = "💬 当前群组"
-        return mapping
+        return {"is_forum": is_forum, "topics": mapping}
 
     async def get_participant(self, user_id: int) -> User | None:
         """获取指定用户在频道/群组中的参与者信息

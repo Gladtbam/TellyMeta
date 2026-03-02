@@ -509,17 +509,13 @@
                 </div>
 
                 <div id="tab-content-advanced" class="tab-content">
-                    <div class="form-group">
+                    <div class="form-group" id="notify-topic-group">
                         <label class="form-label">常规通知频道</label>
-                        <select class="form-select" id="srv-notify-topic">
-                            <option value="0">未设置</option>
-                        </select>
+                        <div id="notify-topic-wrapper"></div>
                     </div>
                     <div class="form-group" id="req-topic-group">
                         <label class="form-label">求片通知频道</label>
-                        <select class="form-select" id="srv-req-topic">
-                            <option value="0">未设置</option>
-                        </select>
+                        <div id="req-topic-wrapper"></div>
                     </div>
                     <div id="sonarr-actions"
                         style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
@@ -599,7 +595,25 @@
             window.location.href = 'miniapp.html';
         });
 
-        let topicList = [], currentServerId = null;
+        let currentServerId = null;
+        let topicData = { is_forum: false, topics: [] };
+
+        function copyCommand(text) {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => {
+                    tg.showAlert('✅ 指令已复制！\n请回到群组，进入目标话题内粘贴并发送。');
+                });
+            } else {
+                // 兼容部分旧版浏览器
+                const el = document.createElement('textarea');
+                el.value = text;
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+                tg.showAlert('✅ 指令已复制！\n请回到群组，进入目标话题内粘贴并发送。');
+            }
+        }
 
         async function api(endpoint, method = 'GET', body = null) {
             const options = { method, headers: { 'X-Telegram-Init-Data': tg.initData, 'Content-Type': 'application/json' } };
@@ -615,7 +629,7 @@
             const [sys, admins, servers, topics] = await Promise.allSettled([
                 api('/system'), api('/admins'), api('/servers'), api('/topics')
             ]);
-            if (topics.status === 'fulfilled') topicList = topics.value;
+            if (topics.status === 'fulfilled') topicData = topics.value;
             if (sys.status === 'fulfilled') {
                 for (const [k, v] of Object.entries(sys.value)) document.getElementById(`toggle-${k.split('_')[1]}`).checked = v;
             }
@@ -646,6 +660,10 @@
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
+
+            fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
+            fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
+
             document.getElementById('srv-tabs').style.display = 'none';
             switchTab('basic');
             openModal('server-modal', '添加服务器');
@@ -664,8 +682,8 @@
             const webhookPath = `/webhook/${s.server_type}?token=${s.webhook_token}`;
             document.getElementById('srv-webhook').value = origin + webhookPath;
 
-            fillTopicSelect('srv-notify-topic', s.notify_topic_id);
-            fillTopicSelect('srv-req-topic', s.request_notify_topic_id);
+            fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', s.notify_topic_id, s.id, 'notify');
+            fillTopicSelect('req-topic-wrapper', 'srv-req-topic', s.request_notify_topic_id, s.id, 'request')
 
             const isMedia = ['emby', 'jellyfin'].includes(s.server_type);
             document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
@@ -864,12 +882,16 @@
         // --- Save Server ---
         async function handleServerSubmit(e) {
             e.preventDefault();
+
+            const notifyTopicEl = document.getElementById('srv-notify-topic');
+            const notifyId = notifyTopicEl ? (parseInt(notifyTopicEl.value) || 0) : 0;
+
             const payload = {
                 name: document.getElementById('srv-name').value,
                 url: document.getElementById('srv-url').value,
                 api_key: document.getElementById('srv-key').value,
                 is_enabled: document.getElementById('srv-enabled').checked,
-                notify_topic_id: parseInt(document.getElementById('srv-notify-topic').value) || 0,
+                notify_topic_id: notifyId,
             };
 
             const type = document.getElementById('srv-type').value;
@@ -911,10 +933,31 @@
         }
 
         // Helpers
-        function fillTopicSelect(id, val) {
-            const sel = document.getElementById(id);
-            sel.innerHTML = '<option value="0">未设置</option>';
-            topicList.forEach(t => sel.add(new Option(t.name, t.id, false, t.id == val)));
+        function fillTopicSelect(wrapperId, inputId, val, serverId, bindType) {
+            const wrapper = document.getElementById(wrapperId);
+            if (!wrapper) return;
+
+            if (topicData.is_forum) {
+                // 论坛模式：显示 Input 框并提供绑定指令
+                wrapper.innerHTML = `
+                    <input type="number" class="form-input" id="${inputId}" value="${val || 0}" placeholder="话题ID (建议使用下方指令绑定)">
+                    <div class="section-hint" style="margin: 8px 0 0 0; color: var(--link-color);">
+                        💡 论坛模式：请点击下方指令复制，并前往目标话题内发送以自动绑定：<br>
+                        <code onclick="copyCommand('/bind ${serverId} ${bindType}')" style="background:var(--secondary-bg-color); padding:6px 10px; border-radius:6px; display:inline-block; margin-top:8px; cursor:pointer; user-select:none; border: 1px solid var(--link-color);">
+                            /bind ${serverId} ${bindType}
+                        </code>
+                    </div>
+                `;
+            } else {
+                // 普通群组模式：下拉选择
+                let html = `<select class="form-select" id="${inputId}"><option value="0">未设置</option>`;
+                topicData.topics.forEach(t => {
+                    const selected = t.id == val ? 'selected' : '';
+                    html += `<option value="${t.id}" ${selected}>${t.name}</option>`;
+                });
+                html += `</select>`;
+                wrapper.innerHTML = html;
+            }
         }
         function openModal(id, title = null) {
             if (title) document.getElementById('modal-title').innerText = title;
