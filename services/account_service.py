@@ -273,7 +273,7 @@ class AccountService:
 
         try:
             all_libs = await client.get_libraries() or []
-        except Exception as e:
+        except HTTPError as e:
             logger.error("在策略应用期间无法获取服务器 {} 的库：{}", server.id, e)
             return
 
