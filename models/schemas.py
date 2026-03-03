@@ -196,6 +196,7 @@ class MediaAccountDto(BaseModel):
     is_banned: bool
     allow_subtitle_upload: bool = True
     allow_request: bool = True
+    tos: str | None = None
 
 class UserInfoDto(BaseModel):
     """用户信息聚合"""

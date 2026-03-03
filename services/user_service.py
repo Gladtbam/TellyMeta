@@ -173,7 +173,8 @@ class UserService:
                     "media_name": mu.media_name,
                     "expires_at": mu.expires_at,
                     "allow_subtitle_upload": server.allow_subtitle_upload if server else False,
-                    "allow_request": server.allow_request if server else False
+                    "allow_request": server.allow_request if server else False,
+                    "tos": server.tos if server else None
                 })
 
         return {

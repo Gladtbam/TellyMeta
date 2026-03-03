@@ -57,7 +57,8 @@ async def get_my_info(
                     expires_at=item["expires_at"],
                     is_banned=item["is_banned"],
                     allow_subtitle_upload=item.get("allow_subtitle_upload"),
-                    allow_request=item.get("allow_request")
+                    allow_request=item.get("allow_request"),
+                    tos=item.get("tos")
                 ) for item in media_accounts_data
             ]
         )
