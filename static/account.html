@@ -188,6 +188,11 @@
                     <span class="action-text">求片</span>
                     <span class="action-arrow">›</span>
                 </div>
+                <div class="action-item destructive" onclick="deleteAccount()">
+                    <span class="action-icon">🗑️</span>
+                    <span class="action-text">注销账户</span>
+                    <span class="action-arrow">›</span>
+                </div>
             </div>
         </div>
     </div>
@@ -471,6 +476,37 @@
 
         function goToRequest() {
             window.location.href = `request.html?server_id=${serverId}`;
+        }
+
+        async function deleteAccount() {
+            if (!confirm("⚠️ 警告：注销后将彻底删除您在该服务器上的所有播放记录、收藏和账号数据，且操作不可逆！\n\n确认要继续注销吗？")) return;
+
+            try {
+                tg.MainButton.text = "正在注销...";
+                tg.MainButton.show();
+                tg.MainButton.showProgress();
+
+                const res = await fetch(`/api/miniapp/accounts/${serverId}`, {
+                    method: 'DELETE',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+
+                if (data.success) {
+                    tg.showAlert(data.message, () => {
+                        window.location.href = 'miniapp.html';
+                    });
+                } else {
+                    tg.showAlert(data.detail || data.message || "注销失败");
+                }
+            } catch (e) {
+                tg.MainButton.hideProgress();
+                tg.MainButton.hide();
+                tg.showAlert(`请求错误: ${e.message}`);
+            }
         }
 
         fetchAccountInfo();

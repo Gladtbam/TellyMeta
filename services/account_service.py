@@ -467,3 +467,25 @@ class AccountService:
             """))
         except HTTPError:
             return Result(False, "请稍后重试或寻求管理员帮助")
+
+    async def delete_account(self, user_id: int, server_id: int) -> Result:
+        """删除账户
+        Args:
+            user_id (int): 用户的 Telegram ID
+        """
+        media_user = await self.media_repo.get_by_id(user_id, server_id)
+        if media_user is None:
+            return Result(False, "未找到该账户")
+
+        client = self.media_clients.get(server_id)
+        if not client:
+            return Result(False, "服务器连接失败。")
+
+        try:
+            await client.delete_user(media_user.media_id)
+        except HTTPError:
+            logger.error("删除账户失败: user_id={}, server_id={}", user_id, server_id)
+            return Result(False, "账户删除失败，请联系管理员。")
+
+        await self.media_repo.delete(media_user)
+        return Result(True, "账户已成功删除。")

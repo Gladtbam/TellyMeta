@@ -26,7 +26,7 @@ async def get_my_info(
     request: Request,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
-):
+) -> UserInfoDto:
     """获取当前 MiniApp 用户信息"""
     service = UserService(request.app, session)
     telegram_repo = TelegramRepository(session)
@@ -72,7 +72,7 @@ async def toggle_account_nsfw(
     server_id: int,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
-):
+) -> dict[str, bool | str]:
     """切换账户 NSFW 状态"""
     service = AccountService(request.app, session)
     result = await service.toggle_nsfw_policy(user_id, server_id)
@@ -87,7 +87,7 @@ async def reset_account_password(
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-):
+) -> dict[str, bool | str]:
     """重置账户密码"""
     service = AccountService(request.app, session)
     result = await service.forget_password(user_id, server_id)
@@ -104,7 +104,7 @@ async def renew_account(
     server_id: int,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
-):
+) -> dict[str, bool | str]:
     """续期账户"""
     service = AccountService(request.app, session)
     result = await service.renew(user_id, server_id, use_score=True)
@@ -120,7 +120,7 @@ async def generate_account_code(
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-):
+) -> dict[str, bool | str]:
     """生成邀请码（注册码/续期码）"""
     if code_type not in ('signup', 'renew'):
         return {"success": False, "message": "无效的码类型"}
@@ -135,6 +135,20 @@ async def generate_account_code(
 
     return {"success": False, "message": result.message}
 
+@router.delete("/accounts/{server_id}", response_model=ToggleResponse)
+async def delete_account(
+    request: Request,
+    server_id: int,
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, bool | str]:
+    """删除账户绑定"""
+    service = AccountService(request.app, session)
+    result = await service.delete_account(user_id, server_id)
+    if not result.success:
+        return {"success": False, "message": result.message}
+    return {"success": True, "message": result.message}
+
 @router.post("/tools/{server_id}/upload_subtitle", response_model=ToggleResponse)
 async def trigger_upload_subtitle(
     server_id: int,
@@ -143,7 +157,7 @@ async def trigger_upload_subtitle(
     client: TelethonClientWarper = Depends(get_telethon_client),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
-):
+) -> dict[str, bool | str]:
     """触发上传字幕流程"""
     server_repo = ServerRepository(session)
     server = await server_repo.get_by_id(server_id)
@@ -207,7 +221,7 @@ async def submit_request(
     payload: RequestSubmitDto,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
-):
+) -> dict[str, bool | str]:
     """提交求片请求"""
     server_repo = ServerRepository(session)
     server = await server_repo.get_by_id(server_id)
