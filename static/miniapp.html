@@ -157,7 +157,6 @@
             /* 默认隐藏 */
         }
 
-
         .action-btn {
             background: transparent;
             border: 1px solid var(--button-color);
@@ -177,6 +176,98 @@
         .nsfw-btn {
             border-color: var(--destructive-text-color);
             color: var(--destructive-text-color);
+        }
+
+        .signup-btn {
+            background: var(--button-color);
+            color: var(--button-text-color);
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-size: 15px;
+            cursor: pointer;
+            width: 100%;
+            text-align: center;
+            font-weight: 500;
+            transition: opacity 0.15s;
+        }
+
+        .signup-btn:active {
+            opacity: 0.6;
+        }
+
+        .signup-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .signup-btn-secondary {
+            background: transparent;
+            color: var(--hint-color);
+            border: 1px solid var(--hint-color);
+        }
+
+        .status-tag {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .status-tag.open {
+            color: #34c759;
+            background: rgba(52, 199, 89, 0.1);
+        }
+
+        .status-tag.closed {
+            color: var(--hint-color);
+            background: var(--secondary-bg-color);
+        }
+
+        .status-tag.score {
+            color: var(--link-color);
+            background: rgba(36, 129, 204, 0.1);
+        }
+
+        .reason-text {
+            font-size: 13px;
+            color: var(--hint-color);
+            padding: 8px 16px 12px;
+            text-align: center;
+        }
+
+        .tos-text {
+            font-size: 13px;
+            color: var(--hint-color);
+            padding: 8px 16px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            border-top: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .external-input-wrap {
+            padding: 8px 16px 12px;
+        }
+
+        .external-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--hint-color);
+            border-radius: 8px;
+            font-size: 15px;
+            background: var(--bg-color);
+            color: var(--text-color);
+            box-sizing: border-box;
+            outline: none;
+        }
+
+        .external-input:focus {
+            border-color: var(--button-color);
+        }
+
+        .external-input::placeholder {
+            color: var(--hint-color);
         }
     </style>
 </head>
@@ -254,6 +345,8 @@
             document.getElementById('user-id').innerText = `ID: ${user.id}`;
         }
 
+        let _appData = null;
+
         async function fetchMe() {
             try {
                 const res = await fetch('/api/miniapp/me', {
@@ -266,6 +359,7 @@
                 }
 
                 const data = await res.json();
+                _appData = data;
                 render(data);
             } catch (e) {
                 document.getElementById('media-list').innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
@@ -292,45 +386,172 @@
             const list = document.getElementById('media-list');
             list.innerHTML = '';
 
-            if (!data.media_accounts || data.media_accounts.length === 0) {
-                list.innerHTML = '<div class="card"><div class="item" style="justify-content:center; color:var(--hint-color)">暂无绑定的媒体账户</div></div>';
-                return;
+            // 已注册的媒体账户
+            if (data.media_accounts && data.media_accounts.length > 0) {
+                data.media_accounts.forEach(acc => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+
+                    const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+                    let expiry = "未知";
+                    if (acc.expires_at) {
+                        const d = new Date(acc.expires_at);
+                        expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+                    }
+
+                    card.innerHTML = `
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
+                                <span class="item-subtitle">${acc.server_url}</span>
+                            </div>
+                            <span style="font-size:13px; color:${statusColor}">${acc.status_text}</span>
+                        </div>
+                        <div class="item">
+                            <div class="item-content"><span class="item-subtitle">媒体用户名</span></div>
+                            <span class="item-value" style="font-size:15px">${acc.media_name}</span>
+                        </div>
+                        <div class="item">
+                            <div class="item-content"><span class="item-subtitle">有效期至</span></div>
+                            <span class="item-value" style="font-size:15px">${expiry}</span>
+                        </div>
+                        <div class="item" style="cursor:pointer" onclick="window.location.href='account.html?server_id=${acc.server_id}'">
+                            <div class="item-content"><span class="item-subtitle">操作</span></div>
+                            <span class="item-value" style="font-size:15px; color:var(--link-color)">管理 ›</span>
+                        </div>
+                     `;
+                    list.appendChild(card);
+                });
             }
 
-            data.media_accounts.forEach(acc => {
-                const card = document.createElement('div');
-                card.className = 'card';
+            // 可注册的服务器
+            const availableServers = data.available_servers || [];
+            if (availableServers.length > 0) {
+                const sectionTitle = document.createElement('div');
+                sectionTitle.className = 'section-title';
+                sectionTitle.textContent = '可注册的媒体服务';
+                list.appendChild(sectionTitle);
 
-                const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
-                let expiry = "未知";
-                if (acc.expires_at) {
-                    const d = new Date(acc.expires_at);
-                    expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
-                }
+                availableServers.forEach(srv => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.id = `signup-card-${srv.server_id}`;
 
-                card.innerHTML = `
-                    <div class="item">
-                        <div class="item-content">
-                            <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
-                            <span class="item-subtitle">${acc.server_url}</span>
+                    // 状态标签样式
+                    let tagClass = 'closed';
+                    if (srv.can_register) {
+                        tagClass = srv.registration_mode === 'default' ? 'score' : 'open';
+                    }
+
+                    let cardHTML = `
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title">${srv.server_name} <span class="tag-type">${srv.server_type}</span></span>
+                            </div>
+                            <span class="status-tag ${tagClass}">${srv.status_label}</span>
                         </div>
-                        <span style="font-size:13px; color:${statusColor}">${acc.status_text}</span>
-                    </div>
-                    <div class="item">
-                        <div class="item-content"><span class="item-subtitle">媒体用户名</span></div>
-                        <span class="item-value" style="font-size:15px">${acc.media_name}</span>
-                    </div>
-                    <div class="item">
-                        <div class="item-content"><span class="item-subtitle">有效期至</span></div>
-                        <span class="item-value" style="font-size:15px">${expiry}</span>
-                    </div>
-                    <div class="item" style="cursor:pointer" onclick="window.location.href='account.html?server_id=${acc.server_id}'">
-                        <div class="item-content"><span class="item-subtitle">操作</span></div>
-                        <span class="item-value" style="font-size:15px; color:var(--link-color)">管理 ›</span>
-                    </div>
-                 `;
-                list.appendChild(card);
-            });
+                    `;
+
+                    if (srv.tos) {
+                        cardHTML += `<div class="tos-text">📜 用户协议\n\n${escapeHtml(srv.tos)}</div>`;
+                    }
+
+                    if (srv.can_register) {
+                        // 前置条件检查：群组成员 + 用户名
+                        if (!data.is_group_member) {
+                            cardHTML += `<div class="reason-text">⚠️ 请先加入群组后再注册</div>`;
+                        } else if (!data.has_username) {
+                            cardHTML += `<div class="reason-text">⚠️ 请先设置 Telegram 用户名</div>`;
+                        } else {
+                            if (srv.has_external_verification) {
+                                cardHTML += `
+                                    <div class="external-input-wrap">
+                                        <input type="text" class="external-input" id="verify-input-${srv.server_id}"
+                                               placeholder="请输入验证字符串（验证码/邀请链接后缀）">
+                                    </div>
+                                `;
+                            }
+
+                            cardHTML += `
+                                <div style="padding: 8px 16px 14px;">
+                                    <button class="signup-btn" id="signup-btn-${srv.server_id}"
+                                            onclick="doSignup(${srv.server_id}, ${srv.has_external_verification})">
+                                        ${srv.tos ? '同意协议并注册' : '立即注册'}
+                                    </button>
+                                </div>
+                            `;
+                        }
+                    } else {
+                        if (srv.reason) {
+                            cardHTML += `<div class="reason-text">${srv.reason}</div>`;
+                        }
+                    }
+
+                    card.innerHTML = cardHTML;
+                    list.appendChild(card);
+                });
+            }
+
+            if ((!data.media_accounts || data.media_accounts.length === 0) && availableServers.length === 0) {
+                list.innerHTML = '<div class="card"><div class="item" style="justify-content:center; color:var(--hint-color)">暂无可用的媒体服务器</div></div>';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function doSignup(serverId, hasExternalVerification) {
+            const btn = document.getElementById(`signup-btn-${serverId}`);
+            if (!btn) return;
+
+            let verificationInput = '';
+            if (hasExternalVerification) {
+                const input = document.getElementById(`verify-input-${serverId}`);
+                if (input) {
+                    verificationInput = input.value.trim();
+                }
+                if (!verificationInput) {
+                    tg.showAlert('请输入验证字符串');
+                    return;
+                }
+            }
+
+            if (!confirm('确认要注册该服务器的账户吗？')) return;
+
+            btn.disabled = true;
+            btn.textContent = '正在注册...';
+
+            try {
+                const params = new URLSearchParams();
+                if (verificationInput) {
+                    params.set('verification_input', verificationInput);
+                }
+                const qs = params.toString() ? `?${params.toString()}` : '';
+
+                const res = await fetch(`/api/miniapp/signup/${serverId}${qs}`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    tg.showAlert(data.message, () => {
+                        fetchMe();
+                    });
+                } else {
+                    tg.showAlert(data.detail || data.message || '注册失败');
+                    btn.disabled = false;
+                    btn.textContent = '立即注册';
+                }
+            } catch (e) {
+                tg.showAlert(`请求错误: ${e.message}`);
+                btn.disabled = false;
+                btn.textContent = '立即注册';
+            }
         }
 
         function goToSettings() {

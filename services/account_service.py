@@ -1,5 +1,4 @@
 import base64
-import contextlib
 import json
 import re
 import textwrap
@@ -11,7 +10,6 @@ from httpx import AsyncClient, HTTPError, RequestError
 from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
-from telethon import Button
 
 from core.config import get_settings
 from models.orm import RegistrationMode, ServerInstance, ServerType
@@ -34,43 +32,6 @@ class AccountService:
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients
-
-    async def get_register_servers_keyboard(self) -> Result:
-        """获取可注册的服务器列表键盘"""
-        servers = await self.server_repo.get_all_enabled()
-        # 筛选出允许注册的服务器 (非 CLOSE 模式 且 启用)
-        available_servers: list[ServerInstance] = []
-        for srv in servers:
-            if srv.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
-                continue
-            if srv.registration_mode == RegistrationMode.CLOSE:
-                continue
-            available_servers.append(srv)
-
-        if not available_servers:
-            return Result(False, "当前没有任何服务器开放注册。")
-
-        keyboard = []
-        for srv in available_servers:
-            # 检查名额
-            status = ""
-            if srv.registration_mode == RegistrationMode.COUNT:
-                status = f"(剩{srv.registration_count_limit}名额)"
-            elif srv.registration_mode == RegistrationMode.TIME:
-                # 简单检查是否过期
-                with contextlib.suppress(ValueError, TypeError):
-                    ts = float(srv.registration_time_limit)
-                    if datetime.now().timestamp() > ts:
-                        continue # 已过期不显示
-                    status = "(限时)"
-            elif srv.registration_mode == RegistrationMode.EXTERNAL:
-                status = "(验证注册)"
-
-            keyboard.append([
-                Button.inline(f"{srv.name} {status}", data=f"signup_srv_{srv.id}".encode('utf-8'))
-            ])
-
-        return Result(True, "请选择要注册的服务器：", keyboard=keyboard)
 
     async def verify_external_user(self, server_id: int, user_input: str) -> Result:
         """执行外部验证"""

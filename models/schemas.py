@@ -198,6 +198,19 @@ class MediaAccountDto(BaseModel):
     allow_request: bool = True
     tos: str | None = None
 
+class AvailableServerDto(BaseModel):
+    """可注册的服务器信息（用户尚未注册的）"""
+    server_id: int
+    server_name: str
+    server_type: str
+    server_url: str
+    registration_mode: str
+    can_register: bool = False
+    reason: str = ""
+    status_label: str = ""
+    tos: str | None = None
+    has_external_verification: bool = False
+
 class UserInfoDto(BaseModel):
     """用户信息聚合"""
     id: int
@@ -206,4 +219,7 @@ class UserInfoDto(BaseModel):
     warning_count: int
     renew_score: int
     is_admin: bool = False
+    is_group_member: bool = False
+    has_username: bool = False
     media_accounts: list[MediaAccountDto]
+    available_servers: list[AvailableServerDto] = []

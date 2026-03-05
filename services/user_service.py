@@ -1,6 +1,7 @@
+import contextlib
 import textwrap
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from random import choice, choices, randint
 from typing import Any, Literal
 
@@ -157,11 +158,14 @@ class UserService:
     async def get_user_info_data(self, user_id: int) -> dict:
         """获取结构化用户信息"""
         user = await self.telegram_repo.get_or_create(user_id)
+        renew_score = int(await self.telegram_repo.get_renew_score())
 
         media_accounts = []
+        registered_server_ids: set[int] = set()
         if user.media_users:
             for mu in user.media_users:
                 server = await self.server_repo.get_by_id(mu.server_id)
+                registered_server_ids.add(mu.server_id)
                 media_accounts.append({
                     "media_user": mu,
                     "server": server,
@@ -177,9 +181,72 @@ class UserService:
                     "tos": server.tos if server else None
                 })
 
+        all_enabled = await self.server_repo.get_all_enabled()
+        available_servers = []
+        for srv in all_enabled:
+            if srv.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+                continue
+            if srv.id in registered_server_ids:
+                continue
+
+            mode = srv.registration_mode
+            can_register = False
+            reason = ""
+            status_label = ""
+
+            if mode == RegistrationMode.CLOSE:
+                reason = "该服务器未开放注册"
+                status_label = "已关闭"
+            elif mode == RegistrationMode.OPEN:
+                can_register = True
+                status_label = "开放注册"
+            elif mode == RegistrationMode.COUNT:
+                if srv.registration_count_limit > 0:
+                    can_register = True
+                    status_label = f"剩{srv.registration_count_limit}名额"
+                else:
+                    reason = "注册名额已满"
+                    status_label = "名额已满"
+            elif mode == RegistrationMode.TIME:
+                with contextlib.suppress(ValueError, TypeError):
+                    ts = float(srv.registration_time_limit)
+                    if datetime.now().timestamp() < ts:
+                        can_register = True
+                        status_label = "限时开放"
+                    else:
+                        reason = "开放注册时间已截止"
+                        status_label = "已截止"
+            elif mode == RegistrationMode.EXTERNAL:
+                can_register = True
+                status_label = "验证注册"
+            elif mode == RegistrationMode.DEFAULT:
+                if user.score >= renew_score:
+                    can_register = True
+                    status_label = f"需{renew_score}积分"
+                else:
+                    reason = f"积分不足，注册需要 {renew_score} 积分（当前 {user.score}）"
+                    status_label = f"需{renew_score}积分"
+            else:
+                reason = "未知的注册模式"
+                status_label = "不可用"
+
+            available_servers.append({
+                "server_id": srv.id,
+                "server_name": srv.name,
+                "server_type": srv.server_type.capitalize() if srv.server_type else "Unknown",
+                "server_url": srv.url or "",
+                "registration_mode": mode,
+                "can_register": can_register,
+                "reason": reason,
+                "status_label": status_label,
+                "tos": srv.tos,
+                "has_external_verification": mode == RegistrationMode.EXTERNAL,
+            })
+
         return {
             "user": user,
-            "media_accounts": media_accounts
+            "media_accounts": media_accounts,
+            "available_servers": available_servers,
         }
 
     async def get_user_info(self, user_id: int) -> Result:

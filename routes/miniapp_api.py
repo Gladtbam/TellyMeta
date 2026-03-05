@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.media import run_subtitle_upload_flow
@@ -11,8 +13,10 @@ from core.dependencies import (get_radarr_clients, get_sonarr_clients,
                                get_telethon_client)
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
-from models.schemas import (MediaAccountDto, MediaItemDto, RequestLibraryDto,
-                            RequestSubmitDto, ToggleResponse, UserInfoDto)
+from models.orm import RegistrationMode
+from models.schemas import (AvailableServerDto, MediaAccountDto, MediaItemDto,
+                            RequestLibraryDto, RequestSubmitDto,
+                            ToggleResponse, UserInfoDto)
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
@@ -26,6 +30,7 @@ async def get_my_info(
     request: Request,
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> UserInfoDto:
     """获取当前 MiniApp 用户信息"""
     service = UserService(request.app, session)
@@ -36,8 +41,21 @@ async def get_my_info(
 
         user = data["user"]
         media_accounts_data = data["media_accounts"]
+        available_servers_data = data.get("available_servers", [])
 
         is_admin = user.id in getattr(request.app.state, "admin_ids", set())
+
+        # 检查用户是否在群组中
+        is_group_member = False
+        has_username = False
+
+        with contextlib.suppress(Exception):
+            participant = await client.get_participant(user_id)
+            is_group_member = participant is not None
+
+        with contextlib.suppress(Exception):
+            uname = await client.get_user_name(user_id, need_username=True)
+            has_username = uname not in (None, False)
 
         return UserInfoDto(
             id=user.id,
@@ -46,6 +64,8 @@ async def get_my_info(
             warning_count=user.warning_count,
             renew_score=int(renew_score),
             is_admin=is_admin,
+            is_group_member=is_group_member,
+            has_username=has_username,
             media_accounts=[
                 MediaAccountDto(
                     server_id=item["media_user"].server_id,
@@ -60,11 +80,61 @@ async def get_my_info(
                     allow_request=item.get("allow_request"),
                     tos=item.get("tos")
                 ) for item in media_accounts_data
+            ],
+            available_servers=[
+                AvailableServerDto(**item) for item in available_servers_data
             ]
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.post("/signup/{server_id}", response_model=ToggleResponse)
+async def signup_account(
+    request: Request,
+    server_id: int,
+    verification_input: str = Query(default=""),
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+) -> dict[str, bool | str]:
+    """注册账户"""
+    try:
+        participant = await client.get_participant(user_id)
+        if not participant:
+            return {"success": False, "message": "您必须先加入群组才能注册账户。"}
+    except Exception as e:
+        logger.error(f"验证用户 {user_id} 群组身份失败: {e}")
+        return {"success": False, "message": "验证群组身份时发生错误，请联系管理员。"}
+
+    username = await client.get_user_name(user_id, need_username=True)
+    if not username or username is False:
+        return {"success": False, "message": "请先设置 Telegram 用户名后再注册。"}
+
+    account_service = AccountService(request.app, session)
+
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        return {"success": False, "message": "服务器不存在"}
+
+    if server.registration_mode == RegistrationMode.EXTERNAL:
+        if not verification_input:
+            return {"success": False, "message": "该服务器需要验证字符串，请输入后重试。"}
+
+        verify_result = await account_service.verify_external_user(server.id, verification_input)
+        if not verify_result.success:
+            return {"success": False, "message": verify_result.message}
+
+        result = await account_service.register(user_id, username, server_id, skip_checks=True)
+    else:
+        result = await account_service.register(user_id, username, server_id)
+
+    if result.success:
+        await client.send_message(user_id, result.message, parse_mode='markdown')
+        return {"success": True, "message": "注册成功！详细信息已发送到您的 Telegram 私聊。"}
+
+    return {"success": False, "message": result.message}
 
 @router.post("/accounts/{server_id}/toggle_nsfw", response_model=ToggleResponse)
 async def toggle_account_nsfw(
