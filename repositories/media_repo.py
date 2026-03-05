@@ -73,6 +73,7 @@ class MediaRepository:
             media_user (MediaUser): 需要删除的 Media 用户对象
         """
         await self.session.delete(media_user)
+        await self.session.commit()
 
     async def find_expired_for_ban(self) -> Sequence[MediaUser]:
         """查找所有过期且未被封禁的 Media 用户，并进行封禁
