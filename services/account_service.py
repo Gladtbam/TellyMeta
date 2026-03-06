@@ -1,9 +1,12 @@
 import base64
+import ipaddress
 import json
 import re
+import socket
 import textwrap
 from datetime import datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from httpx import AsyncClient, HTTPError, RequestError
@@ -33,6 +36,64 @@ class AccountService:
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients
 
+    @staticmethod
+    def _is_safe_url(url: str) -> bool:
+        """检查 URL 的目标地址是否安全（非内网/回环/保留地址）"""
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+
+        if not hostname:
+            return False
+
+        if parsed.username is not None or parsed.password is not None:
+            return False
+
+        if parsed.scheme not in ('http', 'https'):
+            return False
+
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return False
+
+        if not addr_infos:
+            return False
+
+        for addr_info in addr_infos:
+            ip = ipaddress.ip_address(addr_info[4][0])
+            if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
+                return False
+
+        return True
+
+    @staticmethod
+    def _matches_prefix(url: str, prefix: str) -> bool:
+        """安全地验证 URL 是否匹配指定前缀。
+        使用 URL 解析而非简单字符串匹配，以防止 host 欺骗。
+
+        匹配规则：
+        1. scheme 和 hostname 必须完全匹配
+        2. 端口必须匹配
+        3. URL 的 path 必须以 prefix 的 path 开头
+        """
+        parsed_url = urlparse(url)
+        parsed_prefix = urlparse(prefix)
+
+        if parsed_url.scheme != parsed_prefix.scheme:
+            return False
+        if (parsed_url.hostname or '').lower() != (parsed_prefix.hostname or '').lower():
+            return False
+
+        if parsed_url.port != parsed_prefix.port:
+            return False
+
+        prefix_path = parsed_prefix.path or '/'
+        url_path = parsed_url.path or '/'
+        if not url_path.startswith(prefix_path):
+            return False
+
+        return True
+
     async def verify_external_user(self, server_id: int, user_input: str) -> Result:
         """执行外部验证"""
         server = await self.server_repo.get_by_id(server_id)
@@ -46,34 +107,37 @@ class AccountService:
 
         if user_input.startswith("http://") or user_input.startswith("https://"):
             for prefix in prefixes:
-                if user_input.startswith(prefix):
+                if self._matches_prefix(user_input, prefix):
                     target_url = user_input
                     break
             if not target_url:
-                pass
-
-        if not target_url:
+                return Result(False, "提供的链接不在允许的验证范围内。")
+        else:
+            # 非 URL 输入不允许包含可能导致 URL 解析异常的特殊字符
+            if any(c in user_input for c in ('@', '\\', '\n', '\r')):
+                return Result(False, "输入包含非法字符。")
             if not prefixes:
                 return Result(False, "服务器未配置有效的验证前缀。")
             target_url = f"{prefixes[0]}{user_input}"
 
+        if not self._is_safe_url(target_url):
+            logger.warning("外部验证被阻止，目标地址不安全: {}", target_url)
+            return Result(False, "验证请求被拒绝：目标地址不允许。")
+
         try:
-            async with AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 response = await client.get(target_url)
 
                 if server.registration_external_parser:
                     env = SandboxedEnvironment()
                     context = {
-                        # 响应对象
                         "response": response, 
                         "r": response,
 
-                        # 工具库 (满足您的复杂需求)
                         "json": json,
                         "base64": base64,
                         "re": re,
 
-                        # 基础类型转换函数
                         "len": len,
                         "int": int,
                         "str": str,
