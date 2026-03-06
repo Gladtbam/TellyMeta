@@ -125,7 +125,10 @@ class AccountService:
             return Result(False, "验证请求被拒绝：目标地址不允许。")
 
         try:
-            async with AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            headers = {
+                "User-Agent": "TellyMeta/1.0"
+            }
+            async with AsyncClient(timeout=10.0, follow_redirects=False, headers=headers) as client:
                 response = await client.get(target_url)
 
                 if server.registration_external_parser:
