@@ -89,6 +89,28 @@ async def get_my_info(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+@router.post("/redeem_code", response_model=ToggleResponse)
+async def redeem_code(
+    request: Request,
+    code: str = Query(...),
+    user_id: int = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+) -> dict[str, bool | str]:
+    """使用兑换码（注册码/续期码）"""
+    username = await client.get_user_name(user_id, need_username=True)
+    if not username or username is False:
+        return {"success": False, "message": "请先设置 Telegram 用户名后再使用兑换码。"}
+
+    account_service = AccountService(request.app, session)
+    result = await account_service.redeem_code(user_id, username, code.strip())
+
+    if result.success:
+        await client.send_message(user_id, result.message, parse_mode='markdown')
+        return {"success": True, "message": "兑换成功！详细信息已发送到您的 Telegram 私聊。"}
+
+    return {"success": False, "message": result.message}
+
 @router.post("/signup/{server_id}", response_model=ToggleResponse)
 async def signup_account(
     request: Request,

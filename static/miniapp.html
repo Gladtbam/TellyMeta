@@ -306,6 +306,18 @@
                 </div>
             </div>
 
+            <div class="section-title">兑换码</div>
+            <div class="card">
+                <div style="padding: 12px 16px;">
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" class="external-input" id="redeem-code-input" placeholder="请输入注册码 / 续期码"
+                            style="flex: 1;">
+                        <button class="signup-btn" id="redeem-code-btn" onclick="redeemCode()"
+                            style="width: auto; padding: 10px 20px; white-space: nowrap;">兑换</button>
+                    </div>
+                </div>
+            </div>
+
             <div class="section-title" id="media-title">媒体账户</div>
             <div id="media-list">
                 <div class="loader">正在加载账户信息...</div>
@@ -551,6 +563,44 @@
                 tg.showAlert(`请求错误: ${e.message}`);
                 btn.disabled = false;
                 btn.textContent = '立即注册';
+            }
+        }
+
+        async function redeemCode() {
+            const input = document.getElementById('redeem-code-input');
+            const btn = document.getElementById('redeem-code-btn');
+            const code = input.value.trim();
+
+            if (!code) {
+                tg.showAlert('请输入兑换码');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = '兑换中...';
+
+            try {
+                const params = new URLSearchParams({ code });
+                const res = await fetch(`/api/miniapp/redeem_code?${params.toString()}`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    input.value = '';
+                    tg.showAlert(data.message, () => {
+                        fetchMe(); // 刷新页面数据
+                    });
+                } else {
+                    tg.showAlert(data.detail || data.message || '兑换失败');
+                }
+            } catch (e) {
+                tg.showAlert(`请求错误: ${e.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '兑换';
             }
         }
 
