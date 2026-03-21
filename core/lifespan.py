@@ -20,8 +20,8 @@ from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.database import DATABASE_URL, async_engine, async_session
-from core.initialization import (check_required_settings, check_sqlite_version,
-                                 initialize_admin)
+from core.initialization import (check_mkvtoolnix, check_required_settings,
+                                 check_sqlite_version, initialize_admin)
 from core.scheduler_jobs import SCHEDULER_JOBS_REGISTRY
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
@@ -44,8 +44,12 @@ async def lifespan(app: FastAPI):
 
     logger.info("启动应用程序生命周期上下文")
 
-    app.state.task_queue = asyncio.Queue()
-    app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
+    if check_mkvtoolnix():
+        app.state.task_queue = asyncio.Queue()
+        app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
+    else:
+        app.state.task_queue = None
+        app.state.mkv_worker = None
     app.state.message_tracker = MessageTrackingState()
 
     if settings.ai_api_key:
@@ -180,11 +184,13 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("关闭应用程序生命周期上下文")
-    app.state.mkv_worker.cancel()
-    try:
-        await app.state.mkv_worker
-    except asyncio.CancelledError:
-        logger.info("MKV 工作线程已取消")
+
+    if app.state.mkv_worker:
+        app.state.mkv_worker.cancel()
+        try:
+            await app.state.mkv_worker
+        except asyncio.CancelledError:
+            logger.info("MKV 工作线程已取消")
 
     if app.state.scheduler.running:
         app.state.scheduler.shutdown(wait=True)

@@ -1,6 +1,6 @@
-import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import textwrap
 
@@ -101,6 +101,16 @@ def check_sqlite_version():
             """))
     else:
         logger.info("SQLite 版本检查通过，当前版本为 {}。", sqlite3.sqlite_version)
+
+def check_mkvtoolnix() -> bool:
+    """检查mkvtoolnix是否安装"""
+    try:
+        subprocess.run(["mkvmerge", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("mkvtoolnix 检查通过。")
+        return True
+    except subprocess.CalledProcessError:
+        logger.error("mkvtoolnix 检查失败。")
+        return False
 
 async def initialize_admin(session: AsyncSession, telethon_client: TelethonClientWarper):
     """初始化管理员用户"""

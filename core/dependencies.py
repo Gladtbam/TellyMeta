@@ -18,11 +18,11 @@ from services.media_service import MediaService
 from services.notification_service import NotificationService
 
 
-def get_task_queue(request: Request) -> asyncio.Queue:
+def get_task_queue(request: Request) -> asyncio.Queue | None:
     """取共享的任务队列实例。"""
     return request.app.state.task_queue
 
-def get_mkv_worker(request: Request) -> asyncio.Task:
+def get_mkv_worker(request: Request) -> asyncio.Task | None:
     """获取 MKV 合并任务的工作线程。"""
     return request.app.state.mkv_worker
 
