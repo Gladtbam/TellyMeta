@@ -11,8 +11,8 @@
 ## ✨ 功能特性
 
 ### 🤖 自动化处理
-* **多实例支持**：同时接管多个 Sonarr/Radarr 和 Emby/Jellyfin 服务端。支持将不同 Telegram 按钮（媒体库）绑定至特定实例，实现请求的精准路由。
-* **智能求片系统**：集成基于对话（Conversation）的交互流程。支持按标题或 ID（TMDB/TVDB）搜索，支持去重检测，一键发起下载请求。**支持与积分系统联动扣费**。
+* **多实例支持**：同时接管多个 Sonarr/Radarr 和 Emby/Jellyfin 服务端。
+* **智能求片系统**：支持按标题或 ID（TMDB/TVDB）搜索，支持去重检测。
 * **AI 翻译与缓存**：集成 OpenAI，自动将 TMDB/TVDB 的元数据翻译为中文。内置 API 缓存机制，显著提升元数据加载速度并节省额度。支持速率限制以防止 API 封禁。
 * **消息通知**：实时推送下载完成、入库通知，采用 Jinja2 沙箱模板系统，支持 HTML 自定义，可展示 HDR/Dolby 等媒体信息。
 * **字幕助手**：支持交互式 Zip 压缩包上传，Bot 自动识别对应的剧集/电影并重命名导入。具备完善的安全检测流程（路径溢出、大小限制）。
@@ -117,6 +117,36 @@ uv run main.py
 python main.py
 ```
 
+#### 5. systemd 服务
+
+```bash
+cat << EOF | sudo tee /etc/systemd/system/tellymeta.service
+[Unit]
+Description=TellyMeta
+After=syslog.target network.target
+
+[Service]
+WorkingDirectory=/opt/TellyMeta
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+User=<建议使用 Emby/Jellyfin 服务用户>
+Group=<建议使用 Emby/Jellyfin 服务用户组>
+UMask=0002
+Restart=on-failure
+RestartSec=5
+Type=simple
+ExecStart=uv run main.py
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now tellymeta
+```
+
 ---
 
 ## ⚙️ 基础配置说明 (.env)
@@ -154,6 +184,29 @@ telegram_webapp_url=https://your-public-domain.com
 ## 🤖 小程序入口设置
 
 Telegram BotFather 选择 `telegram_bot_name` 设置的机器人，点击 `Mini Apps` -> `Menu Button` 或 `Main App` -> `URL` 填入 `telegram_webapp_url/webapp/miniapp.html`。
+
+### Nginx 配置
+
+```
+location / {
+        # 代理到 TellyMeta 的端口 (默认为 5080)
+        # 如果 Nginx 和 TellyMeta 在同一台宿主机，使用 127.0.0.1
+        # 如果在 Docker 网络内部互通，使用容器名 (例如 http://tellymeta:5080)
+        proxy_pass http://127.0.0.1:5080;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
+    }
+```
 ---
 
 ## 📝 指令手册
@@ -190,12 +243,11 @@ TellyMeta 采用纯文件驱动的 Jinja2 模板系统。你可以在 `templates
 * `sonarr_download.j2`: 剧集下载完成
 * `radarr_download.j2`: 电影下载完成
 * `emby_library_new.j2`: 媒体入库通知
-* ...更多事件请查阅文档。
+* ...更多事件请查看 `templates/` 目录。
 
 配置 Sonarr/Radarr/Emby/Jellyfin 的 Webhook 地址为：
-`http://your-tellymeta-ip:5080/webhook/[sonarr|radarr|emby|jellyfin]?token=[YOUR_TOKEN]`
 
-*(Token 可在 小程序 -> 服务器详情中查看。Token 用于增强安全性，防止非法调用)*
+* 小程序 -> 服务器详情中查看。
 
 ## 🤝 贡献
 
