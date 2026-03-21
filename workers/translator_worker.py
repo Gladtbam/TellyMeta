@@ -142,6 +142,9 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
             translated_text = tmdb_overview
 
         # 如果 TMDB 没有数据，使用 AI 翻译
+        if text.endswith('（AI翻译）'):
+            text = text[:-6]
+
         if not translated_text:
             translated_text = await ai_client.translate(field, text)
 
