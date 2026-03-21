@@ -346,26 +346,29 @@
                 return;
             }
 
-            libraries.forEach((lib, idx) => {
+            // Determine default selection before rendering
+            let needSelect = false;
+            if (!currentLib) {
+                currentLib = libraries[0].name;
+                needSelect = true;
+            } else {
+                const exists = libraries.find(l => l.name === currentLib);
+                if (!exists) {
+                    currentLib = libraries[0].name;
+                    needSelect = true;
+                }
+            }
+
+            libraries.forEach((lib) => {
                 const chip = document.createElement('div');
                 chip.className = 'lib-chip' + (currentLib === lib.name ? ' active' : '');
                 chip.innerText = lib.name;
                 chip.onclick = () => selectLib(lib.name);
                 container.appendChild(chip);
-
-                if (idx === 0 && !currentLib) selectLib(lib.name);
             });
 
-            // Validate currentLib
-            if (currentLib) {
-                const exists = libraries.find(l => l.name === currentLib);
-                if (!exists && libraries.length > 0) selectLib(libraries[0].name);
-
-                // Update active
-                Array.from(container.children).forEach(c => {
-                    if (c.innerText === currentLib) c.classList.add('active');
-                    else c.classList.remove('active');
-                });
+            if (needSelect) {
+                document.getElementById('search-results').innerHTML = '<div class="loader">请输入关键词搜索</div>';
             }
         }
 
