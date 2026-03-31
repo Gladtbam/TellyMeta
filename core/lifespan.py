@@ -61,14 +61,18 @@ async def lifespan(app: FastAPI):
             rpm=settings.ai_rpm,
             rpd=settings.ai_rpd,
             tpm=settings.ai_tpm,
-            concurrency=settings.ai_concurrency
+            concurrency=settings.ai_concurrency,
+            proxy=settings.proxy
         )
     else:
         app.state.ai_client = None
 
     if settings.qbittorrent_base_url:
         app.state.qb_client = QbittorrentClient(
-            client=httpx.AsyncClient(base_url=settings.qbittorrent_base_url),
+            client=httpx.AsyncClient(
+                base_url=settings.qbittorrent_base_url,
+                proxy=settings.proxy or None
+            ),
             username=settings.qbittorrent_username,
             password=settings.qbittorrent_password
         )
@@ -79,7 +83,8 @@ async def lifespan(app: FastAPI):
         app.state.tmdb_client = CachedTmdbClient(
             client=httpx.AsyncClient(
                 base_url='https://api.themoviedb.org/3',
-                timeout=httpx.Timeout(10.0, read=30.0)
+                timeout=httpx.Timeout(10.0, read=30.0),
+                proxy=settings.proxy or None
             ),
             api_key=settings.tmdb_api_key
         )
@@ -90,7 +95,8 @@ async def lifespan(app: FastAPI):
         app.state.tvdb_client = CachedTvdbClient(
             client=httpx.AsyncClient(
                 base_url='https://api4.thetvdb.com/v4',
-                timeout=httpx.Timeout(10.0, read=30.0)
+                timeout=httpx.Timeout(10.0, read=30.0),
+                proxy=settings.proxy or None
             ),
             api_key=settings.tvdb_api_key
         )
@@ -128,7 +134,8 @@ async def lifespan(app: FastAPI):
                         app.state.sonarr_clients[server.id] = SonarrClient(
                             client=httpx.AsyncClient(
                                 base_url=server.url,
-                                timeout=httpx.Timeout(10.0, read=30.0)
+                                timeout=httpx.Timeout(10.0, read=30.0),
+                                proxy=settings.proxy or None
                                 ),
                             api_key=server.api_key,
                             server_name = server.name,
@@ -140,7 +147,8 @@ async def lifespan(app: FastAPI):
                         app.state.radarr_clients[server.id] = RadarrClient(
                             client=httpx.AsyncClient(
                                 base_url=server.url,
-                                timeout=httpx.Timeout(10.0, read=30.0)
+                                timeout=httpx.Timeout(10.0, read=30.0),
+                                proxy=settings.proxy or None
                                 ),
                             api_key=server.api_key,
                             server_name = server.name,
@@ -152,7 +160,8 @@ async def lifespan(app: FastAPI):
                         app.state.media_clients[server.id] = JellyfinClient(
                             client=httpx.AsyncClient(
                                 base_url=f'{server.url}',
-                                timeout=httpx.Timeout(10.0, read=30.0)
+                                timeout=httpx.Timeout(10.0, read=30.0),
+                                proxy=settings.proxy or None
                                 ),
                             api_key=server.api_key,
                             server_name = server.name,
@@ -162,7 +171,8 @@ async def lifespan(app: FastAPI):
                         app.state.media_clients[server.id] = EmbyClient(
                             client=httpx.AsyncClient(
                                 base_url=f'{server.url}/emby',
-                                timeout=httpx.Timeout(10.0, read=30.0)
+                                timeout=httpx.Timeout(10.0, read=30.0),
+                                proxy=settings.proxy or None
                                 ),
                             api_key=server.api_key,
                             server_name = server.name,

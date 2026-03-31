@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     log_level: str = 'INFO'
     timezone: str = 'Asia/Shanghai'
     port: int = 5080
+    proxy: str = ''
     tmdb_api_key: str = ''
     tvdb_api_key: str = ''
     ai_api_key: str = ''

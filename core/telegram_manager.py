@@ -4,6 +4,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
+import python_socks
 from fastapi import FastAPI
 from loguru import logger
 from telethon import TelegramClient, errors
@@ -32,10 +33,30 @@ class TelethonClientWarper:
 
     def __init__(self, app: FastAPI) -> None:
         self.app = app
+        proxy_dict = None
+        if settings.proxy:
+            try:
+                ptype, host, port, username, password = python_socks.parse_proxy_url(settings.proxy)
+                proxy_dict = {
+                    'proxy_type': ptype.value,
+                    'addr': host,
+                    'port': port,
+                    'username': username,
+                    'password': password,
+                    'rdns': True
+                }
+            except Exception as e:
+                logger.error("无法解析代理URL {}: {}", settings.proxy, e)
+
+        kwargs = {}
+        if proxy_dict:
+            kwargs['proxy'] = proxy_dict
+
         self.client = TelegramClient(
             str( DATA_DIR / "telegram"),
             settings.telegram_api_id,
-            settings.telegram_api_hash
+            settings.telegram_api_hash,
+            **kwargs
         )
         self.chat_id = settings.telegram_chat_id
         self._register_handlers()

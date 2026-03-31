@@ -2,6 +2,7 @@ import asyncio
 import textwrap
 from contextlib import asynccontextmanager
 
+import httpx
 from loguru import logger
 from openai import AsyncOpenAI, OpenAIError
 
@@ -48,11 +49,13 @@ class AIClientWarper:
         rpm: int | None = 60,
         rpd: int | None = None,
         tpm: int | None = None,
-        concurrency: int | None = None
+        concurrency: int | None = None,
+        proxy: str | None = None
     ) -> None:
         self.client = AsyncOpenAI(
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
+            http_client=httpx.AsyncClient(proxy=proxy) if proxy else None
         )
         self.model = model
         self.temperature = temperature

@@ -161,6 +161,9 @@ log_level=INFO
 port=5080
 # 你的时区
 timezone=Asia/Shanghai
+# 代理设置 (可选)
+# 格式: socks5://user:password@host:port / http://user:password@host:port
+proxy=socks5://user:password@host:port
 
 # --- Telegram 配置 (必填) ---
 # 从 https://my.telegram.org 获取
