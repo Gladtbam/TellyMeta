@@ -7,25 +7,25 @@ requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=25.1.0",
     "aiosqlite>=0.21.0",
-    "alembic>=1.18.3",
-    "apscheduler>=3.11.0",
+    "alembic>=1.18.4",
+    "apscheduler>=3.11.2",
     "cryptg>=0.5.2",
-    "fastapi>=0.122.0",
+    "fastapi>=0.135.3",
     "httpx[socks]>=0.28.1",
     "jinja2>=3.1.6",
     "loguru>=0.7.3",
     "openai>=2.31.0",
-    "pillow>=12.0.0",
+    "pillow>=12.2.0",
     "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
+    "pydantic-settings>=2.13.1",
     "python-socks>=2.8.1",
-    "sqlalchemy[asyncio]>=2.0.44",
+    "sqlalchemy[asyncio]>=2.0.49",
     "telethon>=1.43.0",
-    "uvicorn[standard]>=0.38.0",
+    "uvicorn[standard]>=0.44.0",
 ]
 
 [tool.pyright]
-exclude = ["__pycache__"]
+exclude = ["**/__pycache__", "**/.venv", "**/.env", ".git", "**/data", "**/logs"]
 typeCheckingMode = "standard"
 strictDictionaryInference = true
 strictListInference = true
