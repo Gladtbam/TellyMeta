@@ -44,7 +44,7 @@ async def sonarr_webhook(
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
     tvdb_client: TvdbClient | None = Depends(get_tvdb_client),
-    task_queue: asyncio.Queue = Depends(get_task_queue),
+    task_queue: asyncio.Queue | None = Depends(get_task_queue),
     qb_client: QbittorrentClient | None = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
@@ -74,6 +74,7 @@ async def sonarr_webhook(
                 payload.episodeFile.path = mapped_path
             if tmdb_client:
                 asyncio.create_task(create_episode_nfo(payload, tmdb_client, tvdb_client))
+            if task_queue:
             await task_queue.put(Path(payload.episodeFile.path))
 
         if payload.downloadId and qb_client:
@@ -103,7 +104,7 @@ async def radarrarr_webhook(
     server_instance: ServerInstance = Depends(get_server_by_token),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
-    task_queue: asyncio.Queue = Depends(get_task_queue),
+    task_queue: asyncio.Queue | None = Depends(get_task_queue),
     qb_client: QbittorrentClient | None = Depends(get_qb_client),
     notify_service: NotificationService = Depends(get_notification_service)
 ) -> Response:
@@ -118,6 +119,7 @@ async def radarrarr_webhook(
         if payload.movieFile and payload.movieFile.path and 'VCB-Studio' not in payload.movieFile.path:
             if mapped_path := client.to_local_path(payload.movieFile.path):
                 payload.movieFile.path = mapped_path
+            if task_queue:
             await task_queue.put(Path(payload.movieFile.path))
 
         if local_folder_path := client.to_local_path(payload.movieFile.path):
