@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     qbittorrent_base_url: str = ''
     qbittorrent_username: str = ''
     qbittorrent_password: str = ''
+    qbiitorrent_api_key: str = ''
     qbittorrent_torrent_limit: int = 43200
     telegram_api_id: int = 0
     telegram_api_hash: str = ''

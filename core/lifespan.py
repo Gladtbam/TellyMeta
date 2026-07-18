@@ -74,7 +74,8 @@ async def lifespan(app: FastAPI):
                 proxy=settings.proxy or None
             ),
             username=settings.qbittorrent_username,
-            password=settings.qbittorrent_password
+            password=settings.qbittorrent_password,
+            api_key=settings.qbiitorrent_api_key
         )
     else:
         app.state.qb_client = None

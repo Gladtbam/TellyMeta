@@ -8,13 +8,14 @@ from models.qbittorrent import BuildInfo, Preference, TorrentProperties
 
 
 class QbittorrentClient(AuthenticatedClient):
-    def __init__(self, client: httpx.AsyncClient, username: str, password: str):
+    def __init__(self, client: httpx.AsyncClient, username: str | None, password: str | None, api_key: str | None):
         super().__init__(client)
         self.username = username
         self.password = password
+        self.api_key = api_key
 
     async def _login(self) -> None | str:
-        if self.username == 'nologin' and self.password == 'nologin':
+        if self.api_key:
             self._is_logged_in = True
             return
         data = {
@@ -28,17 +29,19 @@ class QbittorrentClient(AuthenticatedClient):
         return response.text  # Returns the session cookie on successful login
 
     async def _apply_auth(self) -> dict:
+        if self.api_key:
+            return { 'Authorization': f'Bearer {self.api_key}' }
         return {}
 
-    async def app_version(self) -> str:
+    async def app_version(self):
         """获取 qBittorrent 的版本信息"""
         response = await self.get("/api/v2/app/version", raw=True)
-        return response.text
+        return tuple(map(int, response.text.strip('vV').split('.')))
 
-    async def app_webapi_version(self) -> str:
+    async def app_webapi_version(self):
         """获取 qBittorrent Web API 的版本信息"""
         response = await self.get("/api/v2/app/webapiVersion", raw=True)
-        return response.text
+        return tuple(map(int, response.text.split('.')))
 
     async def app_build_info(self) -> BuildInfo | None:
         """获取 qBittorrent 的构建信息"""
@@ -120,7 +123,7 @@ class QbittorrentClient(AuthenticatedClient):
         if not all(isinstance(h, str) for h in hashes):
             raise ValueError("torrent 哈希值必须是字符串")
         if not isinstance(limit, int) or limit < 0:
-            raise ValueError("Download limit must be a non-negative integer")
+            raise ValueError("下载限制必须是非负整数")
         params = {'hashes': '|'.join(hashes), 'limit': limit}
         await self.post("/api/v2/torrents/setDownloadLimit", params=params)
 
