@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import textwrap
 
 import aiofiles.tempfile
@@ -20,27 +21,36 @@ from services.subtitle_service import SubtitleService
 settings = get_settings()
 
 
-@TelethonClientWarper.handler(events.CallbackQuery(data=b'req_cancel'))
-async def request_cancel_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
+@TelethonClientWarper.handler(events.CallbackQuery(data=b"req_cancel"))
+async def request_cancel_handler(
+    app: FastAPI, event: events.CallbackQuery.Event
+) -> None:
     """求片-取消处理器"""
     await safe_delete(event)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_ap_(\\d+)_([^_]+)_(\\d+)'))
+
+@TelethonClientWarper.handler(
+    events.CallbackQuery(pattern=b"^req_ap_(\\d+)_([^_]+)_(\\d+)")
+)
 @provide_db_session
 @require_admin
-async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession) -> None:
+async def request_approve_handler(
+    app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession
+) -> None:
     """求片-批准处理器"""
-    media_server_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
-    library_name_base64 = event.pattern_match.group(2).decode('utf-8') # type: ignore
-    media_id = int(event.pattern_match.group(3).decode('utf-8')) # type: ignore
+    media_server_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
+    library_name_base64 = event.pattern_match.group(2).decode("utf-8")  # type: ignore
+    media_id = int(event.pattern_match.group(3).decode("utf-8"))  # type: ignore
 
-    library_name = base64.b64decode(library_name_base64.encode('utf-8')).decode('utf-8')
+    library_name = base64.b64decode(library_name_base64.encode("utf-8")).decode("utf-8")
 
     request_service = RequestService(app, session)
     # Give admin immediate feedback
     await event.answer("正在添加中...", alert=False)
 
-    result = await request_service.handle_approval(media_server_id, library_name, media_id)
+    result = await request_service.handle_approval(
+        media_server_id, library_name, media_id
+    )
 
     if result.success:
         # Edit the message to show approved status and remove buttons
@@ -50,15 +60,17 @@ async def request_approve_handler(app: FastAPI, event: events.CallbackQuery.Even
     else:
         await event.answer(result.message, alert=True)
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'^req_deny_(\\d+)'))
+
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"^req_deny_(\\d+)"))
 @require_admin
 async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
     """求片-拒绝处理器"""
     # user_id = int(event.pattern_match.group(1).decode('utf-8'))
     # Optional: Notify user
-    original_text = (await event.get_message()).text # type: ignore
+    original_text = (await event.get_message()).text  # type: ignore
     new_text = original_text + "\n\n❌ **已拒绝**"
     await event.edit(new_text, buttons=None)
+
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 INTRO_MSG = textwrap.dedent("""
@@ -80,12 +92,13 @@ INTRO_MSG = textwrap.dedent("""
     发送 `/cancel` 或其它指令可退出上传模式。
     """)
 
+
 async def run_subtitle_upload_flow(
     user_id: int,
     telethon_client: TelethonClientWarper,
     session: AsyncSession,
     radarr_clients: dict[int, RadarrClient],
-    sonarr_clients: dict[int, SonarrClient]
+    sonarr_clients: dict[int, SonarrClient],
 ) -> None:
     """运行上传字幕流程 (Conversation)"""
     chat_id = user_id
@@ -101,20 +114,26 @@ async def run_subtitle_upload_flow(
             # Wait for file loop
             while True:
                 response_msg = await conv.get_response()
-                if response_msg.text and response_msg.text.startswith('/'):
+                if response_msg.text and response_msg.text.startswith("/"):
                     await intro_msg.edit("❌ 检测到命令，已取消上传。")
                     return
 
                 if not response_msg.file:
-                    await intro_msg.edit("请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。")
+                    await intro_msg.edit(
+                        "请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。"
+                    )
                     continue
 
-                if not response_msg.file.name.lower().endswith('.zip'):
-                    await intro_msg.edit("❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。")
+                if not response_msg.file.name.lower().endswith(".zip"):
+                    await intro_msg.edit(
+                        "❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。"
+                    )
                     continue
 
                 if response_msg.file.size > MAX_FILE_SIZE:
-                    await intro_msg.edit(f"❌ 文件过大！最大支持 {MAX_FILE_SIZE // 1024 // 1024} MiB，请重新发送。")
+                    await intro_msg.edit(
+                        f"❌ 文件过大！最大支持 {MAX_FILE_SIZE // 1024 // 1024} MiB，请重新发送。"
+                    )
                     continue
 
                 # Valid file found
@@ -129,14 +148,22 @@ async def run_subtitle_upload_flow(
                     await processing_msg.edit("❌ 文件下载失败，请重试。")
                     return
 
-                result = await subtitle_service.handle_file_upload(user_id, file_path, response_msg.file.name)
+                result = await subtitle_service.handle_file_upload(
+                    user_id, file_path, response_msg.file.name
+                )
                 if result.success:
                     await processing_msg.edit(result.message)
                 else:
                     await processing_msg.edit(f"❌ **上传失败**\n\n{result.message}")
 
+            with contextlib.suppress(Exception):
+                await response_msg.delete()
+
     except errors.AlreadyInConversationError:
-        await client.send_message(chat_id, "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。")
+        await client.send_message(
+            chat_id,
+            "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
+        )
     except asyncio.TimeoutError:
         await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
     except Exception as e:
