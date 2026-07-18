@@ -140,10 +140,22 @@ class QbittorrentClient(AuthenticatedClient):
         hashes = [torrent_hash] if isinstance(torrent_hash, str) else torrent_hash
         if not all(isinstance(h, str) for h in hashes):
             raise ValueError("torrent 哈希值必须是字符串")
+
+        if getattr(self, '_app_version', None) is None:
+            self._app_version = await self.app_version()
+
+        app_version = self._app_version
+
         data = {
             'hashes': '|'.join(hashes),
             'ratioLimit': ratio_limit if ratio_limit is not None else '',
             'seedingTimeLimit': seeding_time_limit if seeding_time_limit is not None else '',
             'inactiveSeedingTimeLimit': inactive_seeding_time_limit if inactive_seeding_time_limit is not None else ''
         }
+
+        if app_version >= (5, 2, 0):
+            data.update({
+                'shareLimitsMode': -1,
+                'shareLimitAction': -1
+            })
         await self.post("/api/v2/torrents/setShareLimits", data=data)
