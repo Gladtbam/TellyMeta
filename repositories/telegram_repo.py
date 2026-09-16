@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from statistics import median
 
-from sqlalchemy import select, update
+from sqlalchemy import bindparam, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import TelegramUser
@@ -18,7 +18,7 @@ class TelegramRepository:
             user_id (int): Telegram用户ID
         Returns:
             TelegramUser | None: 如果找到用户则返回用户对象，否则返回None
-         """
+        """
         return await self.session.get(TelegramUser, user_id)
 
     async def __create_by_id(self, user_id: int) -> TelegramUser:
@@ -27,7 +27,7 @@ class TelegramRepository:
             user_id (int): Telegram用户ID
         Returns:
             tuple[TelegramUser, bool]: 返回用户对象和一个布尔值，表示是否创建了新用户
-         """
+        """
         new_user = TelegramUser(id=user_id)
         self.session.add(new_user)
         return new_user
@@ -95,7 +95,9 @@ class TelegramRepository:
         await self.session.refresh(user)
         return user
 
-    async def update_warn_and_score(self, user_id: int, increment: int = 1) -> TelegramUser:
+    async def update_warn_and_score(
+        self, user_id: int, increment: int = 1
+    ) -> TelegramUser:
         """更新用户警告次数
         Args:
             user_id (int): Telegram用户ID
@@ -160,12 +162,17 @@ class TelegramRepository:
         users_to_insert = []
         for user_id, score in score_deltas.items():
             if user_id in existing_user_ids:
-                users_to_update.append({'id': user_id, 'score': score + TelegramUser.score})
+                users_to_update.append({"b_id": user_id, "score_delta": score})
             else:
-                users_to_insert.append({'id': user_id, 'score': score})
+                users_to_insert.append({"id": user_id, "score": score})
 
         if users_to_update:
-            await self.session.execute(update(TelegramUser), users_to_update)
+            update_stmt = (
+                update(TelegramUser)
+                .where(TelegramUser.id == bindparam("b_id"))
+                .values(score=TelegramUser.score + bindparam("score_delta"))
+            )
+            await self.session.execute(update_stmt, users_to_update)
         if users_to_insert:
             self.session.add_all([TelegramUser(**data) for data in users_to_insert])
 
