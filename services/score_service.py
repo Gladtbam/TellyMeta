@@ -13,35 +13,42 @@ class MessageTrackingState:
     consecutive_count: int = 0
     message_counts: dict[int, int] = field(default_factory=dict)
 
+
 @dataclass
 class SettlementResult:
     """结算结果"""
+
     total_score_settled: int
     user_score_changes: dict[int, int] = field(default_factory=dict)
+
 
 class ScoreService:
     def __init__(self, session: AsyncSession, state: MessageTrackingState) -> None:
         self.state = state
         self.telegram_repo = TelegramRepository(session)
 
-    async def process_message(self, user_id: int) -> None | Result:
+    async def process_message(self, user_id: int, admin_ids: list) -> None | Result:
         """处理用户消息，检测是否为刷屏行为。
-        
+
         Args:
             user_id (int): 发送消息的用户ID。
-        
-        Returns:
-            bool: 如果检测到刷屏行为则返回True，否则返回False。
+            admin_ids (list): BOT 管理员列表
         """
         if self.state.last_user_id != user_id:
             self.state.last_user_id = user_id
             self.state.consecutive_count = 1
 
-            self.state.message_counts[user_id] = self.state.message_counts.get(user_id, 0) + 1
+            if user_id in admin_ids:
+                return None
+
+            self.state.message_counts[user_id] = (
+                self.state.message_counts.get(user_id, 0) + 1
+            )
 
             return None
 
-        self.state.consecutive_count += 1
+        if user_id not in admin_ids:
+            self.state.consecutive_count += 1
 
         if self.state.consecutive_count > 5:
             # 重置状态以防止重复处罚
@@ -56,10 +63,13 @@ class ScoreService:
                         
                         当前警告次数: **{updated_user.warning_count}**
                         当前积分: **{updated_user.score}**
-                    """)
+                    """),
                 )
             else:
-                return Result(success=False, message=f"用户 {user_id} 刷屏警告失败，请管理员关注。")
+                return Result(
+                    success=False,
+                    message=f"用户 {user_id} 刷屏警告失败，请管理员关注。",
+                )
 
     def _calculate_distribution(self) -> tuple[dict[int, int], int]:
         """积分计算逻辑: 简单线性模型
@@ -92,6 +102,5 @@ class ScoreService:
         self.state.message_counts.clear()
 
         return SettlementResult(
-            total_score_settled=total_score,
-            user_score_changes=score_deltas
+            total_score_settled=total_score, user_score_changes=score_deltas
         )
