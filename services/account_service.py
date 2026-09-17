@@ -202,6 +202,8 @@ class AccountService:
         Args:
             user_id (int): 用户的 Telegram ID
             username (str): 用户的 Telegram 用户名
+            server_id (int): 注册服务器 id
+            skip_checks (bool): 跳过注册模式检测
         """
         if not username:
             return Result(False, "请先设置 Telegram 用户名，然后再尝试注册。")
@@ -440,7 +442,7 @@ class AccountService:
             return Result(False, "该激活码对应的服务器已失效或被删除，无法使用。")
 
         if code.type == "signup":
-            result = await self.register(user_id, username, code.server_id)
+            result = await self.register(user_id, username, code.server_id, True)
         elif code.type == "renew":
             result = await self.renew(user_id, code.server_id, False)
         else:
