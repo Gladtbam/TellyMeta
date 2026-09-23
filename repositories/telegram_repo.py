@@ -162,15 +162,15 @@ class TelegramRepository:
         users_to_insert = []
         for user_id, score in score_deltas.items():
             if user_id in existing_user_ids:
-                users_to_update.append({"b_id": user_id, "score_delta": score})
+                users_to_update.append({"id": user_id, "score_delta": score})
             else:
                 users_to_insert.append({"id": user_id, "score": score})
 
         if users_to_update:
             update_stmt = (
                 update(TelegramUser)
-                .where(TelegramUser.id == bindparam("b_id"))
                 .values(score=TelegramUser.score + bindparam("score_delta"))
+                .execution_options(synchronize_session=False)
             )
             await self.session.execute(update_stmt, users_to_update)
         if users_to_insert:
