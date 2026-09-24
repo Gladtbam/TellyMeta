@@ -262,6 +262,8 @@ class UserInfoDto(BaseModel):
     """用户信息聚合"""
 
     id: int
+    username: str | None = None
+    full_name: str | None = None
     score: int
     checkin_count: int
     consecutive_checkin_count: int = 0
@@ -272,3 +274,16 @@ class UserInfoDto(BaseModel):
     has_username: bool = False
     media_accounts: list[MediaAccountDto]
     available_servers: list[AvailableServerDto] = []
+
+
+class ChangeScoreDto(BaseModel):
+    """修改积分请求"""
+
+    score_change: int
+
+
+class AdminActionResponse(BaseModel):
+    """管理员操作响应"""
+
+    success: bool
+    message: str

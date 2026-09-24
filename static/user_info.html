@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>用户资料详情</title>
+    <style>
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #fff);
+            --text-color: var(--tg-theme-text-color, #000);
+            --hint-color: var(--tg-theme-hint-color, #999);
+            --link-color: var(--tg-theme-link-color, #2481cc);
+            --button-color: var(--tg-theme-button-color, #2481cc);
+            --button-text-color: var(--tg-theme-button-text-color, #fff);
+            --secondary-bg-color: var(--tg-theme-secondary-bg-color, #f4f4f5);
+            --destructive-text-color: var(--tg-theme-destructive-text-color, #ff3b30);
+            --section-header-text-color: var(--tg-theme-section-header-text-color, #6d6d72);
+        }
+
+        body {
+            background-color: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container {
+            padding: 16px;
+            padding-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: var(--section-header-text-color);
+            text-transform: uppercase;
+            margin: 20px 0 8px 16px;
+        }
+
+        .section-title:first-child {
+            margin-top: 8px;
+        }
+
+        .card {
+            background-color: var(--bg-color);
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .item {
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .item:last-child {
+            border-bottom: none;
+        }
+
+        .item-content {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .item-title {
+            font-size: 16px;
+            font-weight: 400;
+        }
+
+        .item-subtitle {
+            font-size: 13px;
+            color: var(--hint-color);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+
+        .item-value {
+            font-size: 16px;
+            color: var(--hint-color);
+            font-weight: 500;
+        }
+
+        .profile-header {
+            display: flex;
+            align-items: center;
+            padding: 24px 20px;
+            background: var(--bg-color);
+            margin-bottom: 12px;
+            border-bottom: 0.5px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .profile-avatar {
+            width: 58px;
+            height: 58px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            margin-right: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            font-weight: 600;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .profile-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 0;
+        }
+
+        .profile-name {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .profile-id {
+            font-size: 13px;
+            color: var(--hint-color);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .tag-badge {
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-weight: 500;
+            display: inline-block;
+        }
+
+        .tag-admin {
+            color: #ff9500;
+            background: rgba(255, 149, 0, 0.12);
+        }
+
+        .tag-member {
+            color: #34c759;
+            background: rgba(52, 199, 89, 0.12);
+        }
+
+        .tag-not-member {
+            color: var(--hint-color);
+            background: rgba(150, 150, 150, 0.12);
+        }
+
+        .tag-type {
+            font-size: 11px;
+            color: var(--text-color);
+            background: var(--secondary-bg-color);
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        /* 管理操作按钮网格 */
+        .admin-actions-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            padding: 14px 16px;
+        }
+
+        .action-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 11px 12px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: opacity 0.15s, transform 0.05s;
+            user-select: none;
+        }
+
+        .action-btn:active {
+            opacity: 0.7;
+            transform: scale(0.98);
+        }
+
+        .btn-warn {
+            background: rgba(255, 149, 0, 0.12);
+            color: #d97706;
+            border-color: rgba(255, 149, 0, 0.25);
+        }
+
+        .btn-change {
+            background: rgba(36, 129, 204, 0.1);
+            color: var(--button-color);
+            border-color: rgba(36, 129, 204, 0.25);
+        }
+
+        .btn-del {
+            background: rgba(255, 59, 48, 0.1);
+            color: var(--destructive-text-color);
+            border-color: rgba(255, 59, 48, 0.25);
+        }
+
+        .btn-kick {
+            background: rgba(142, 68, 173, 0.1);
+            color: #8e44ad;
+            border-color: rgba(142, 68, 173, 0.25);
+        }
+
+        .btn-ban {
+            grid-column: span 2;
+            background: var(--destructive-text-color);
+            color: #fff;
+            border: none;
+            font-weight: 600;
+            padding: 12px;
+        }
+
+        /* 模态弹窗样式用于修改积分 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.45);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal-box {
+            background: var(--bg-color);
+            border-radius: 14px;
+            width: 100%;
+            max-width: 320px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            animation: modalFadeIn 0.2s ease-out;
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: scale(0.92); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-title {
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .modal-desc {
+            font-size: 13px;
+            color: var(--hint-color);
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 11px 12px;
+            border: 1px solid var(--secondary-bg-color);
+            border-radius: 8px;
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+            font-size: 17px;
+            box-sizing: border-box;
+            outline: none;
+            text-align: center;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .chips-container {
+            display: flex;
+            gap: 6px;
+            justify-content: center;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+        }
+
+        .chip {
+            padding: 5px 12px;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: 500;
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+            cursor: pointer;
+            border: 0.5px solid rgba(0,0,0,0.08);
+            transition: opacity 0.1s;
+        }
+
+        .chip:active {
+            opacity: 0.6;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .modal-btn {
+            flex: 1;
+            padding: 11px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 500;
+            border: none;
+            cursor: pointer;
+        }
+
+        .modal-btn-cancel {
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+        }
+
+        .modal-btn-confirm {
+            background: var(--button-color);
+            color: var(--button-text-color);
+        }
+
+        /* 顶部悬浮 Toast 消息 */
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100px);
+            background: rgba(30, 30, 30, 0.92);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 22px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 2000;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+            transition: transform 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+            max-width: 90%;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .loader {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--hint-color);
+            font-size: 15px;
+        }
+
+        .spinner {
+            border: 3px solid rgba(0, 0, 0, 0.1);
+            border-top: 3px solid var(--button-color);
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-card {
+            background-color: var(--bg-color);
+            border-radius: 12px;
+            padding: 30px 20px;
+            text-align: center;
+            margin: 20px 16px;
+        }
+
+        .error-icon {
+            font-size: 40px;
+            margin-bottom: 12px;
+        }
+
+        .error-text {
+            color: var(--destructive-text-color);
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .error-subtext {
+            color: var(--hint-color);
+            font-size: 13px;
+        }
+
+        .btn-close {
+            background: var(--secondary-bg-color);
+            color: var(--text-color);
+            border: none;
+            border-radius: 10px;
+            padding: 12px 16px;
+            font-size: 15px;
+            font-weight: 500;
+            width: 100%;
+            cursor: pointer;
+            margin-top: 16px;
+            transition: opacity 0.15s;
+        }
+
+        .btn-close:active {
+            opacity: 0.7;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="toast" class="toast">操作成功</div>
+
+    <!-- 修改积分弹窗 -->
+    <div id="change-score-modal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">修改用户积分</div>
+            <div class="modal-desc">输入正数增加积分，负数扣除积分</div>
+            <input type="number" id="score-input" class="modal-input" placeholder="例如: 10 或 -5">
+            <div class="chips-container">
+                <span class="chip" onclick="setScoreChip(10)">+10</span>
+                <span class="chip" onclick="setScoreChip(50)">+50</span>
+                <span class="chip" onclick="setScoreChip(100)">+100</span>
+                <span class="chip" onclick="setScoreChip(-10)">-10</span>
+                <span class="chip" onclick="setScoreChip(-50)">-50</span>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-cancel" onclick="closeChangeScoreModal()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="submitChangeScore()">确认修改</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loader" class="loader">
+        <div class="spinner"></div>
+        <span>正在加载用户详情...</span>
+    </div>
+
+    <div id="error-container" style="display: none;">
+        <div class="error-card">
+            <div class="error-icon" id="error-icon">⚠️</div>
+            <div class="error-text" id="error-text">加载失败</div>
+            <div class="error-subtext" id="error-subtext"></div>
+            <button class="btn-close" onclick="closeWebApp()">关闭</button>
+        </div>
+    </div>
+
+    <div id="main-content" style="display: none;">
+        <div class="profile-header">
+            <div class="profile-avatar" id="avatar">👤</div>
+            <div class="profile-info">
+                <div class="profile-name" id="user-name">用户</div>
+                <div class="profile-id">
+                    <span>ID: <b id="user-id">-</b></span>
+                    <span id="badge-admin" class="tag-badge tag-admin" style="display: none;">管理员</span>
+                    <span id="badge-member" class="tag-badge tag-member" style="display: none;">群成员</span>
+                    <span id="badge-not-member" class="tag-badge tag-not-member" style="display: none;">未加群</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="section-title">管理操作</div>
+            <div class="card">
+                <div class="admin-actions-grid">
+                    <button class="action-btn btn-warn" onclick="handleWarn()">
+                        <span>⚠️ 警告 (+1)</span>
+                    </button>
+                    <button class="action-btn btn-change" onclick="openChangeScoreModal()">
+                        <span>💰 修改积分</span>
+                    </button>
+                    <button class="action-btn btn-del" onclick="handleDel()">
+                        <span>🗑️ 删除账户</span>
+                    </button>
+                    <button class="action-btn btn-kick" onclick="handleKick()">
+                        <span>👢 踢出群组</span>
+                    </button>
+                    <button class="action-btn btn-ban" onclick="handleBan()">
+                        <span>🚫 封禁用户</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="section-title">账户状态</div>
+            <div class="card">
+                <div class="item">
+                    <div class="item-content"><span class="item-title">当前积分</span></div>
+                    <span class="item-value" id="score">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">连续签到</span></div>
+                    <span class="item-value" id="consecutive-checkin">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">累计签到</span></div>
+                    <span class="item-value" id="checkin">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">警告次数</span></div>
+                    <span class="item-value" id="warning">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">续期/注册所需积分</span></div>
+                    <span class="item-value" id="renew-score">-</span>
+                </div>
+            </div>
+
+            <div class="section-title">已绑定的媒体账户</div>
+            <div id="media-list"></div>
+
+            <button class="btn-close" onclick="closeWebApp()">关闭卡片</button>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram?.WebApp;
+
+        function closeWebApp() {
+            if (tg) {
+                tg.close();
+            } else {
+                window.close();
+            }
+        }
+
+        function getTargetUserId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            let uid = urlParams.get('user_id');
+            if (!uid && tg?.initDataUnsafe?.start_param) {
+                uid = tg.initDataUnsafe.start_param;
+            }
+            return uid;
+        }
+
+        function showError(title, message, icon = '⚠️') {
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('main-content').style.display = 'none';
+            document.getElementById('error-container').style.display = 'block';
+            document.getElementById('error-icon').innerText = icon;
+            document.getElementById('error-text').innerText = title;
+            document.getElementById('error-subtext').innerText = message;
+        }
+
+        function showToast(msg, isSuccess = true) {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.style.background = isSuccess ? 'rgba(30, 30, 30, 0.92)' : 'rgba(230, 40, 40, 0.92)';
+            toast.classList.add('show');
+            if (tg?.HapticFeedback) {
+                tg.HapticFeedback.notificationOccurred(isSuccess ? 'success' : 'error');
+            }
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2500);
+        }
+
+        function confirmAction(message, onConfirm) {
+            if (tg && tg.showConfirm) {
+                tg.showConfirm(message, (confirmed) => {
+                    if (confirmed) onConfirm();
+                });
+            } else {
+                if (confirm(message)) {
+                    onConfirm();
+                }
+            }
+        }
+
+        async function postAdminAction(url, body = null) {
+            const initData = tg?.initData || '';
+            const options = {
+                method: 'POST',
+                headers: {
+                    'X-Telegram-Init-Data': initData
+                }
+            };
+            if (body) {
+                options.headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(body);
+            }
+            const response = await fetch(url, options);
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.detail || `请求失败 (${response.status})`);
+            }
+            return data;
+        }
+
+        async function handleWarn() {
+            confirmAction('确定对该用户增加 1 次警告吗？', async () => {
+                try {
+                    const uid = getTargetUserId();
+                    const res = await postAdminAction(`/api/miniapp/admin/user/${uid}/warn`);
+                    showToast(res.message || '已成功警告该用户');
+                    fetchTargetUserData(uid, true);
+                } catch (e) {
+                    showToast(e.message, false);
+                }
+            });
+        }
+
+        function openChangeScoreModal() {
+            document.getElementById('change-score-modal').style.display = 'flex';
+            document.getElementById('score-input').value = '';
+            document.getElementById('score-input').focus();
+        }
+
+        function closeChangeScoreModal() {
+            document.getElementById('change-score-modal').style.display = 'none';
+        }
+
+        function setScoreChip(val) {
+            document.getElementById('score-input').value = val;
+        }
+
+        async function submitChangeScore() {
+            const inputVal = document.getElementById('score-input').value.trim();
+            const num = parseInt(inputVal, 10);
+            if (isNaN(num)) {
+                showToast('请输入有效的整数积分', false);
+                return;
+            }
+            try {
+                const uid = getTargetUserId();
+                const res = await postAdminAction(`/api/miniapp/admin/user/${uid}/change_score`, { score_change: num });
+                closeChangeScoreModal();
+                showToast(res.message || '积分修改成功');
+                fetchTargetUserData(uid, true);
+            } catch (e) {
+                showToast(e.message, false);
+            }
+        }
+
+        async function handleDel() {
+            confirmAction('确定要删除该用户的所有媒体账户吗？此操作不可逆！', async () => {
+                try {
+                    const uid = getTargetUserId();
+                    const res = await postAdminAction(`/api/miniapp/admin/user/${uid}/del`);
+                    showToast(res.message || '账户删除成功');
+                    fetchTargetUserData(uid, true);
+                } catch (e) {
+                    showToast(e.message, false);
+                }
+            });
+        }
+
+        async function handleKick() {
+            confirmAction('确定要踢出该用户并清理其媒体账户吗？', async () => {
+                try {
+                    const uid = getTargetUserId();
+                    const res = await postAdminAction(`/api/miniapp/admin/user/${uid}/kick`);
+                    showToast(res.message || '已踢出用户');
+                    fetchTargetUserData(uid, true);
+                } catch (e) {
+                    showToast(e.message, false);
+                }
+            });
+        }
+
+        async function handleBan() {
+            confirmAction('确定要在群组中封禁该用户吗？此操作将禁止其在群内发言！', async () => {
+                try {
+                    const uid = getTargetUserId();
+                    const res = await postAdminAction(`/api/miniapp/admin/user/${uid}/ban`);
+                    showToast(res.message || '已封禁用户');
+                    fetchTargetUserData(uid, true);
+                } catch (e) {
+                    showToast(e.message, false);
+                }
+            });
+        }
+
+        async function fetchTargetUserData(userId, isRefresh = false) {
+            const initData = tg?.initData || '';
+
+            if (!isRefresh) {
+                document.getElementById('loader').style.display = 'block';
+                document.getElementById('main-content').style.display = 'none';
+            }
+
+            try {
+                const response = await fetch(`/api/miniapp/admin/user/${userId}`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Telegram-Init-Data': initData
+                    }
+                });
+
+                if (response.status === 403) {
+                    showError('权限不足', '仅群管理员可查看及操作目标用户。', '🚫');
+                    return;
+                }
+
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    showError('加载失败', err.detail || `HTTP 错误码: ${response.status}`);
+                    return;
+                }
+
+                const data = await response.json();
+                renderUserInfo(data);
+            } catch (err) {
+                console.error(err);
+                if (!isRefresh) {
+                    showError('网络错误', '无法连接至服务器，请稍后再试。');
+                } else {
+                    showToast('数据刷新失败', false);
+                }
+            }
+        }
+
+        function renderUserInfo(data) {
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('main-content').style.display = 'block';
+
+            // 头部基本信息
+            const displayName = data.full_name || (data.username ? `@${data.username}` : `用户 ${data.id}`);
+            document.getElementById('user-name').innerText = displayName;
+            document.getElementById('user-id').innerText = data.id;
+
+            // 头像文字
+            const initial = displayName.replace('@', '').trim().charAt(0).toUpperCase() || '👤';
+            document.getElementById('avatar').innerText = initial;
+
+            // 身份标签
+            if (data.is_admin) {
+                document.getElementById('badge-admin').style.display = 'inline-block';
+            }
+            if (data.is_group_member) {
+                document.getElementById('badge-member').style.display = 'inline-block';
+                document.getElementById('badge-not-member').style.display = 'none';
+            } else {
+                document.getElementById('badge-not-member').style.display = 'inline-block';
+                document.getElementById('badge-member').style.display = 'none';
+            }
+
+            // 账户状态
+            document.getElementById('score').innerText = data.score;
+            document.getElementById('renew-score').innerText = `${data.renew_score} 分`;
+            document.getElementById('consecutive-checkin').innerText = `${data.consecutive_checkin_count ?? 0} 天`;
+            document.getElementById('checkin').innerText = `${data.checkin_count ?? 0} 天`;
+            document.getElementById('warning').innerText = `${data.warning_count ?? 0} 次`;
+
+            // 媒体账户列表
+            const mediaList = document.getElementById('media-list');
+            mediaList.innerHTML = '';
+
+            if (data.media_accounts && data.media_accounts.length > 0) {
+                data.media_accounts.forEach(acc => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+
+                    const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+                    let expiry = "未知";
+                    if (acc.expires_at) {
+                        const d = new Date(acc.expires_at);
+                        expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+                    }
+
+                    card.innerHTML = `
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
+                                <span class="item-subtitle">账号: <b>${acc.media_name}</b> | 到期: ${expiry}</span>
+                            </div>
+                            <span style="font-size: 13px; font-weight: 500; color: ${statusColor};">${acc.status_text}</span>
+                        </div>
+                    `;
+                    mediaList.appendChild(card);
+                });
+            } else {
+                const emptyCard = document.createElement('div');
+                emptyCard.className = 'card';
+                emptyCard.innerHTML = `
+                    <div class="item" style="justify-content: center; color: var(--hint-color); padding: 18px 16px;">
+                        <span>暂无绑定的媒体账户</span>
+                    </div>
+                `;
+                mediaList.appendChild(emptyCard);
+            }
+        }
+
+        window.onload = function () {
+            if (tg) {
+                tg.ready();
+                tg.expand();
+                if (tg.setHeaderColor) {
+                    tg.setHeaderColor('secondary_bg_color');
+                }
+            }
+
+            const targetUserId = getTargetUserId();
+            if (!targetUserId) {
+                showError('参数错误', '未指定目标用户 ID。');
+                return;
+            }
+
+            fetchTargetUserData(targetUserId);
+        };
+    </script>
+</body>
+
+</html>

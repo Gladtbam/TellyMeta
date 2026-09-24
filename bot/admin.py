@@ -4,10 +4,10 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import events
+from telethon.tl.types import KeyboardButtonWebView
 
-from bot.decorators import (provide_db_session, require_admin,
-                            require_real_reply)
-from bot.utils import safe_reply, safe_respond
+from bot.decorators import provide_db_session, require_admin, require_real_reply
+from bot.utils import safe_reply, safe_reply_keyboard, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.server_repo import ServerRepository
@@ -18,45 +18,81 @@ from services.verification_service import VerificationService
 settings = get_settings()
 
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/info({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
+@TelethonClientWarper.handler(
+    events.NewMessage(pattern=rf"^/info({settings.telegram_bot_name})?$", incoming=True)
+)
 @provide_db_session
 @require_admin
 @require_real_reply
-async def info_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
+async def info_handler(
+    app: FastAPI,
+    event: events.NewMessage.Event,
+    session: AsyncSession,
+    target_user_id: int,
+) -> None:
     """用户信息处理器
     发送用户信息，需回复一个用户
     """
-    user_service = UserService(app, session)
-    result = await user_service.get_user_info(target_user_id)
-    await safe_respond(event, result.message)
+    if settings.telegram_webapp_url:
+        webapp_base = settings.telegram_webapp_url.rstrip("/")
+        card_url = f"{webapp_base}/webapp/user_info.html?user_id={target_user_id}"
+        buttons = [[KeyboardButtonWebView(text="👤 查看用户卡片", url=card_url)]]
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/warn({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
+        client: TelethonClientWarper = app.state.telethon_client
+        target_name = await client.get_user_name(target_user_id) or str(target_user_id)
+
+        await safe_reply_keyboard(
+            event,
+            f"📋 **用户资料卡片**\n\n"
+            f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
+            f"点击下方按钮在弹窗中查看详细信息：",
+            buttons,
+            delete_after=120,
+        )
+    else:
+        user_service = UserService(app, session)
+        result = await user_service.get_user_info(target_user_id)
+        await safe_respond(event, result.message)
+
+
+@TelethonClientWarper.handler(
+    events.NewMessage(pattern=rf"^/warn({settings.telegram_bot_name})?$", incoming=True)
+)
 @provide_db_session
 @require_admin
 @require_real_reply
-async def warn_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
+async def warn_handler(
+    app: FastAPI,
+    event: events.NewMessage.Event,
+    session: AsyncSession,
+    target_user_id: int,
+) -> None:
     """警告处理器
     警告一个用户，需回复一个用户
     """
     user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_warn_and_score(target_user_id)
 
-    await safe_reply(event, f"✅ 用户 [{user.id}](tg://user?id={user.id}) 已被警告，当前警告次数: **{user.warning_count}**。")
+    await safe_reply(
+        event,
+        f"✅ 用户 [{user.id}](tg://user?id={user.id}) 已被警告，当前警告次数: **{user.warning_count}**。",
+    )
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/change({settings.telegram_bot_name})?\s+(-?\d+)$',
-    incoming=True
-    ))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(
+        pattern=rf"^/change({settings.telegram_bot_name})?\s+(-?\d+)$", incoming=True
+    )
+)
 @provide_db_session
 @require_admin
 @require_real_reply
-async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
+async def change_handler(
+    app: FastAPI,
+    event: events.NewMessage.Event,
+    session: AsyncSession,
+    target_user_id: int,
+) -> None:
     """修改积分处理器
     修改一个用户的积分，需回复一个用户并在命令后添加积分数
     """
@@ -69,15 +105,22 @@ async def change_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     user_service = UserService(app, session)
     user = await user_service.telegram_repo.update_score(target_user_id, score_change)
 
-    await safe_reply(event, f"✅ 用户 [{user.id}](tg://user?id={user.id}) 的积分已修改，当前积分: **{user.score}**。")
+    await safe_reply(
+        event,
+        f"✅ 用户 [{user.id}](tg://user?id={user.id}) 的积分已修改，当前积分: **{user.score}**。",
+    )
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/settle({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(
+        pattern=rf"^/settle({settings.telegram_bot_name})?$", incoming=True
+    )
+)
 @provide_db_session
 @require_admin
-async def settle_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+async def settle_handler(
+    app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
+) -> None:
     """积分结算处理器
     手动触发积分结算
     """
@@ -97,37 +140,46 @@ async def settle_handler(app: FastAPI, event: events.NewMessage.Event, session: 
     summary_msg = await client.send_message(settings.telegram_chat_id, summary)
 
     user_details = []
-    for user_id, score_change in result.user_score_changes.items(): # type: ignore
+    for user_id, score_change in result.user_score_changes.items():  # type: ignore
         username = await client.get_user_name(user_id)
-        user_details.append(f"- [{username}](tg://user?id={user_id}): `+{score_change}`")
+        user_details.append(
+            f"- [{username}](tg://user?id={user_id}): `+{score_change}`"
+        )
     final_summary = summary + "\n".join(user_details)
     await client.client.edit_message(summary_msg, final_summary)
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/del({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(pattern=rf"^/del({settings.telegram_bot_name})?$", incoming=True)
+)
 @provide_db_session
 @require_admin
 @require_real_reply
-async def delete_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession, target_user_id: int) -> None:
+async def delete_handler(
+    app: FastAPI,
+    event: events.NewMessage.Event,
+    session: AsyncSession,
+    target_user_id: int,
+) -> None:
     """删除账户处理器
     删除一个用户的 Emby 账户，需回复一个用户
     """
     user_service = UserService(app, session)
-    result = await user_service.delete_account(target_user_id, 'both')
+    result = await user_service.delete_account(target_user_id, "both")
 
     await safe_reply(event, result.message)
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/kick({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'kick_(\\d+)'))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(pattern=rf"^/kick({settings.telegram_bot_name})?$", incoming=True)
+)
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"kick_(\\d+)"))
 @provide_db_session
 @require_admin
 @require_real_reply
-async def kick_handler(app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0) -> None:
+async def kick_handler(
+    app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0
+) -> None:
     """踢出处理器
     踢出一个用户，支持命令和按钮两种触发方式
     """
@@ -136,10 +188,10 @@ async def kick_handler(app: FastAPI, event: Any, session: AsyncSession, target_u
         user_service = UserService(app, session)
         client: TelethonClientWarper = app.state.telethon_client
         await client.kick_and_ban_participant(target_user_id)
-        result = await user_service.delete_account(target_user_id, 'both')
-        await safe_reply(event, '已踢出用户。\n' + result.message)
+        result = await user_service.delete_account(target_user_id, "both")
+        await safe_reply(event, "已踢出用户。\n" + result.message)
     elif isinstance(event, events.CallbackQuery.Event):
-        target_user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+        target_user_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
         verification_service = VerificationService(app, session)
         result = await verification_service.reject_verification(target_user_id)
         await event.edit(result.message)
@@ -147,15 +199,17 @@ async def kick_handler(app: FastAPI, event: Any, session: AsyncSession, target_u
         await safe_respond(event, "无法处理此事件类型。")
         return
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/ban({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b'ban_(\\d+)'))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(pattern=rf"^/ban({settings.telegram_bot_name})?$", incoming=True)
+)
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"ban_(\\d+)"))
 @provide_db_session
 @require_admin
 @require_real_reply
-async def ban_handler(app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0) -> None:
+async def ban_handler(
+    app: FastAPI, event: Any, session: AsyncSession, target_user_id: int = 0
+) -> None:
     """封禁处理器
     封禁一个用户，支持命令和按钮两种触发方式
     """
@@ -164,34 +218,45 @@ async def ban_handler(app: FastAPI, event: Any, session: AsyncSession, target_us
         client: TelethonClientWarper = app.state.telethon_client
         user_name = await client.get_user_name(target_user_id)
         await client.ban_user(target_user_id)
-        await safe_reply(event, f'已封禁用户[{user_name}](tg://user?id={target_user_id})')
+        await safe_reply(
+            event, f"已封禁用户[{user_name}](tg://user?id={target_user_id})"
+        )
     elif isinstance(event, events.CallbackQuery.Event):
-        target_user_id = int(event.pattern_match.group(1).decode('utf-8')) # type: ignore
+        target_user_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
         verification_service = VerificationService(app, session)
-        result = await verification_service.reject_verification(target_user_id, is_ban=True)
+        result = await verification_service.reject_verification(
+            target_user_id, is_ban=True
+        )
         await event.edit(result.message)
     else:
         await safe_respond(event, "无法处理此事件类型。")
         return
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/bind({settings.telegram_bot_name})?\s+(\d+)\s+(notify|request)$',
-    incoming=True
-    ))
+
+@TelethonClientWarper.handler(
+    events.NewMessage(
+        pattern=rf"^/bind({settings.telegram_bot_name})?\s+(\d+)\s+(notify|request)$",
+        incoming=True,
+    )
+)
 @provide_db_session
 @require_admin
-async def bind_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
+async def bind_handler(
+    app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
+) -> None:
     """话题绑定处理器
     /bind <server_id> <notify|request>
     """
-    server_id = int(event.pattern_match.group(2)) # type: ignore
-    bind_type = event.pattern_match.group(3) # type: ignore
+    server_id = int(event.pattern_match.group(2))  # type: ignore
+    bind_type = event.pattern_match.group(3)  # type: ignore
 
     topic_id = None
-    if getattr(event.message, 'reply_to', None) and event.message.reply_to.forum_topic:
+    if getattr(event.message, "reply_to", None) and event.message.reply_to.forum_topic:
         topic_id = event.message.reply_to.reply_to_msg_id
     else:
-        await safe_reply(event, "❌ 请在论坛的具体**话题（Topic）内部**发送此绑定命令。")
+        await safe_reply(
+            event, "❌ 请在论坛的具体**话题（Topic）内部**发送此绑定命令。"
+        )
         return
 
     server_repo = ServerRepository(session)
@@ -205,7 +270,12 @@ async def bind_handler(app: FastAPI, event: events.NewMessage.Event, session: As
         await server_repo.update_notify_config(server_id, notify_topic_id=topic_id)
         msg_type = "常规通知"
     elif bind_type == "request":
-        await server_repo.update_notify_config(server_id, request_notify_topic_id=topic_id)
+        await server_repo.update_notify_config(
+            server_id, request_notify_topic_id=topic_id
+        )
         msg_type = "求片通知"
 
-    await safe_reply(event, f"✅ 成功将 **{server.name}** 的 **{msg_type}** 绑定到当前话题！(ID: `{topic_id}`)")
+    await safe_reply(
+        event,
+        f"✅ 成功将 **{server.name}** 的 **{msg_type}** 绑定到当前话题！(ID: `{topic_id}`)",
+    )

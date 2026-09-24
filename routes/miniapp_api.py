@@ -15,10 +15,12 @@ from core.dependencies import (
     get_telethon_client,
 )
 from core.telegram_manager import TelethonClientWarper
-from core.webapp_auth import get_current_user_id
+from core.webapp_auth import get_current_user_id, validate_admin_access
 from models.orm import RegistrationMode
 from models.schemas import (
+    AdminActionResponse,
     AvailableServerDto,
+    ChangeScoreDto,
     MediaAccountDto,
     MediaItemDto,
     RequestLibraryDto,
@@ -100,6 +102,210 @@ async def get_my_info(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get(
+    "/admin/user/{target_user_id}",
+    response_model=UserInfoDto,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def get_target_user_info_for_admin(
+    request: Request,
+    target_user_id: int,
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+) -> UserInfoDto:
+    """管理员获取指定用户信息"""
+    service = UserService(request.app, session)
+    telegram_repo = TelegramRepository(session)
+    try:
+        data = await service.get_user_info_data(target_user_id)
+        renew_score = await telegram_repo.get_renew_score()
+
+        user = data["user"]
+        media_accounts_data = data["media_accounts"]
+        available_servers_data = data.get("available_servers", [])
+
+        is_admin = user.id in getattr(request.app.state, "admin_ids", set())
+
+        # 检查用户是否在群组中及获取用户名和昵称
+        is_group_member = False
+        uname = None
+        first_name = None
+
+        with contextlib.suppress(Exception):
+            participant = await client.get_participant(target_user_id)
+            is_group_member = participant is not None
+
+        with contextlib.suppress(Exception):
+            u_val = await client.get_user_name(target_user_id, need_username=True)
+            if u_val:
+                uname = str(u_val)
+
+        with contextlib.suppress(Exception):
+            fn_val = await client.get_user_name(target_user_id, need_username=False)
+            if fn_val:
+                first_name = str(fn_val)
+
+        return UserInfoDto(
+            id=user.id,
+            username=uname,
+            full_name=first_name,
+            score=user.score,
+            checkin_count=user.checkin_count,
+            consecutive_checkin_count=user.current_consecutive_checkin_count,
+            warning_count=user.warning_count,
+            renew_score=int(renew_score),
+            is_admin=is_admin,
+            is_group_member=is_group_member,
+            has_username=uname is not None,
+            media_accounts=[
+                MediaAccountDto(
+                    server_id=item["media_user"].server_id,
+                    media_name=item["media_name"],
+                    server_name=item["server_name"],
+                    server_type=item["server_type"],
+                    server_url=item["server_url"],
+                    status_text=item["status_text"],
+                    expires_at=item["expires_at"],
+                    is_banned=item["is_banned"],
+                    allow_subtitle_upload=item.get("allow_subtitle_upload"),
+                    allow_request=item.get("allow_request"),
+                    tos=item.get("tos"),
+                )
+                for item in media_accounts_data
+            ],
+            available_servers=[
+                AvailableServerDto(**item) for item in available_servers_data
+            ],
+        )
+    except Exception as e:
+        logger.exception("获取目标用户信息失败: {}", e)
+        raise HTTPException(status_code=500, detail="获取目标用户信息失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/warn",
+    response_model=AdminActionResponse,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def admin_warn_user(
+    request: Request,
+    target_user_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> AdminActionResponse:
+    """管理员警告目标用户 (+1)"""
+    try:
+        user_service = UserService(request.app, session)
+        user = await user_service.telegram_repo.update_warn_and_score(
+            target_user_id, increment=1
+        )
+        return AdminActionResponse(
+            success=True,
+            message=f"已警告用户，当前警告次数: {user.warning_count} 次",
+        )
+    except Exception as e:
+        logger.exception("警告用户失败: {}", e)
+        raise HTTPException(status_code=500, detail="警告用户操作失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/change_score",
+    response_model=AdminActionResponse,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def admin_change_user_score(
+    request: Request,
+    target_user_id: int,
+    body: ChangeScoreDto,
+    session: AsyncSession = Depends(get_db),
+) -> AdminActionResponse:
+    """管理员修改目标用户积分"""
+    try:
+        user_service = UserService(request.app, session)
+        user = await user_service.telegram_repo.update_score(
+            target_user_id, body.score_change
+        )
+        prefix = "+" if body.score_change > 0 else ""
+        return AdminActionResponse(
+            success=True,
+            message=f"已修改积分 ({prefix}{body.score_change})，当前积分: {user.score}",
+        )
+    except Exception as e:
+        logger.exception("修改积分失败: {}", e)
+        raise HTTPException(status_code=500, detail="修改用户积分失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/del",
+    response_model=AdminActionResponse,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def admin_delete_user_account(
+    request: Request,
+    target_user_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> AdminActionResponse:
+    """管理员删除目标用户的媒体账户"""
+    try:
+        user_service = UserService(request.app, session)
+        result = await user_service.delete_account(target_user_id, "both")
+        return AdminActionResponse(
+            success=result.success,
+            message=result.message or "媒体账户已成功删除",
+        )
+    except Exception as e:
+        logger.exception("删除媒体账户失败: {}", e)
+        raise HTTPException(status_code=500, detail="删除用户媒体账户失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/kick",
+    response_model=AdminActionResponse,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def admin_kick_user(
+    request: Request,
+    target_user_id: int,
+    session: AsyncSession = Depends(get_db),
+    client: TelethonClientWarper = Depends(get_telethon_client),
+) -> AdminActionResponse:
+    """管理员将目标用户踢出群组并删除账户"""
+    try:
+        with contextlib.suppress(Exception):
+            await client.kick_and_ban_participant(target_user_id)
+
+        user_service = UserService(request.app, session)
+        result = await user_service.delete_account(target_user_id, "both")
+        return AdminActionResponse(
+            success=True,
+            message=f"已踢出群组并清理媒体账户。{result.message}",
+        )
+    except Exception as e:
+        logger.exception("踢出用户失败: {}", e)
+        raise HTTPException(status_code=500, detail="踢出用户操作失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/ban",
+    response_model=AdminActionResponse,
+    dependencies=[Depends(validate_admin_access)],
+)
+async def admin_ban_user(
+    request: Request,
+    target_user_id: int,
+    client: TelethonClientWarper = Depends(get_telethon_client),
+) -> AdminActionResponse:
+    """管理员在群组中封禁目标用户"""
+    try:
+        await client.ban_user(target_user_id)
+        return AdminActionResponse(
+            success=True,
+            message=f"已成功封禁该用户（ID: {target_user_id}）",
+        )
+    except Exception as e:
+        logger.exception("封禁用户失败: {}", e)
+        raise HTTPException(status_code=500, detail="封禁用户操作失败") from e
 
 
 @router.post("/redeem_code", response_model=ToggleResponse)
