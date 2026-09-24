@@ -294,6 +294,10 @@
                 </div>
                 <div class="item">
                     <div class="item-content"><span class="item-title">连续签到</span></div>
+                    <span class="item-value" id="consecutive-checkin">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">累计签到</span></div>
                     <span class="item-value" id="checkin">-</span>
                 </div>
                 <div class="item">
@@ -392,7 +396,12 @@
 
             document.getElementById('score').innerText = data.score;
             document.getElementById('renew-score').innerText = data.renew_score;
-            document.getElementById('checkin').innerText = `${data.checkin_count} 天`;
+            if (document.getElementById('consecutive-checkin')) {
+                document.getElementById('consecutive-checkin').innerText = `${data.consecutive_checkin_count ?? 0} 天`;
+            }
+            if (document.getElementById('checkin')) {
+                document.getElementById('checkin').innerText = `${data.checkin_count} 天`;
+            }
             document.getElementById('warning').innerText = data.warning_count;
 
             const list = document.getElementById('media-list');

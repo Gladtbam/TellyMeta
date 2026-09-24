@@ -83,11 +83,17 @@ class TelegramRepository:
         await self.session.refresh(user)
         return user
 
-    async def update_checkin(self, user_id: int, score_reward: int) -> TelegramUser:
+    async def update_checkin(
+        self, user_id: int, score_reward: int, is_consecutive: bool = False
+    ) -> TelegramUser:
         """处理用户签到逻辑"""
         user = await self.get_or_create(user_id)
 
         user.checkin_count += 1
+        if is_consecutive:
+            user.consecutive_checkin_count = (user.consecutive_checkin_count or 0) + 1
+        else:
+            user.consecutive_checkin_count = 1
         user.score += score_reward
         user.last_checkin = datetime.now()
 

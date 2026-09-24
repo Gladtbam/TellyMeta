@@ -9,14 +9,23 @@ from bot.media import run_subtitle_upload_flow
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.database import get_db
-from core.dependencies import (get_radarr_clients, get_sonarr_clients,
-                               get_telethon_client)
+from core.dependencies import (
+    get_radarr_clients,
+    get_sonarr_clients,
+    get_telethon_client,
+)
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import get_current_user_id
 from models.orm import RegistrationMode
-from models.schemas import (AvailableServerDto, MediaAccountDto, MediaItemDto,
-                            RequestLibraryDto, RequestSubmitDto,
-                            ToggleResponse, UserInfoDto)
+from models.schemas import (
+    AvailableServerDto,
+    MediaAccountDto,
+    MediaItemDto,
+    RequestLibraryDto,
+    RequestSubmitDto,
+    ToggleResponse,
+    UserInfoDto,
+)
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
@@ -24,6 +33,7 @@ from services.request_service import RequestService
 from services.user_service import UserService
 
 router = APIRouter(prefix="/api/miniapp", tags=["miniapp"])
+
 
 @router.get("/me", response_model=UserInfoDto)
 async def get_my_info(
@@ -61,6 +71,7 @@ async def get_my_info(
             id=user.id,
             score=user.score,
             checkin_count=user.checkin_count,
+            consecutive_checkin_count=user.current_consecutive_checkin_count,
             warning_count=user.warning_count,
             renew_score=int(renew_score),
             is_admin=is_admin,
@@ -78,16 +89,18 @@ async def get_my_info(
                     is_banned=item["is_banned"],
                     allow_subtitle_upload=item.get("allow_subtitle_upload"),
                     allow_request=item.get("allow_request"),
-                    tos=item.get("tos")
-                ) for item in media_accounts_data
+                    tos=item.get("tos"),
+                )
+                for item in media_accounts_data
             ],
             available_servers=[
                 AvailableServerDto(**item) for item in available_servers_data
-            ]
+            ],
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
 
 @router.post("/redeem_code", response_model=ToggleResponse)
 async def redeem_code(
@@ -106,10 +119,14 @@ async def redeem_code(
     result = await account_service.redeem_code(user_id, username, code.strip())
 
     if result.success:
-        await client.send_message(user_id, result.message, parse_mode='markdown')
-        return {"success": True, "message": "兑换成功！详细信息已发送到您的 Telegram 私聊。"}
+        await client.send_message(user_id, result.message, parse_mode="markdown")
+        return {
+            "success": True,
+            "message": "兑换成功！详细信息已发送到您的 Telegram 私聊。",
+        }
 
     return {"success": False, "message": result.message}
+
 
 @router.post("/signup/{server_id}", response_model=ToggleResponse)
 async def signup_account(
@@ -142,21 +159,32 @@ async def signup_account(
 
     if server.registration_mode == RegistrationMode.EXTERNAL:
         if not verification_input:
-            return {"success": False, "message": "该服务器需要验证字符串，请输入后重试。"}
+            return {
+                "success": False,
+                "message": "该服务器需要验证字符串，请输入后重试。",
+            }
 
-        verify_result = await account_service.verify_external_user(server.id, verification_input)
+        verify_result = await account_service.verify_external_user(
+            server.id, verification_input
+        )
         if not verify_result.success:
             return {"success": False, "message": verify_result.message}
 
-        result = await account_service.register(user_id, username, server_id, skip_checks=True)
+        result = await account_service.register(
+            user_id, username, server_id, skip_checks=True
+        )
     else:
         result = await account_service.register(user_id, username, server_id)
 
     if result.success:
-        await client.send_message(user_id, result.message, parse_mode='markdown')
-        return {"success": True, "message": "注册成功！详细信息已发送到您的 Telegram 私聊。"}
+        await client.send_message(user_id, result.message, parse_mode="markdown")
+        return {
+            "success": True,
+            "message": "注册成功！详细信息已发送到您的 Telegram 私聊。",
+        }
 
     return {"success": False, "message": result.message}
+
 
 @router.post("/accounts/{server_id}/toggle_nsfw", response_model=ToggleResponse)
 async def toggle_account_nsfw(
@@ -172,6 +200,7 @@ async def toggle_account_nsfw(
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
 
+
 @router.post("/accounts/{server_id}/reset_password", response_model=ToggleResponse)
 async def reset_account_password(
     request: Request,
@@ -186,9 +215,13 @@ async def reset_account_password(
     if not result.success:
         return {"success": False, "message": result.message}
 
-    await client.send_message(user_id, result.message, parse_mode='markdown')
+    await client.send_message(user_id, result.message, parse_mode="markdown")
 
-    return {"success": True, "message": "密码重置成功，新密码已发送到您的 Telegram 私聊。"}
+    return {
+        "success": True,
+        "message": "密码重置成功，新密码已发送到您的 Telegram 私聊。",
+    }
+
 
 @router.post("/accounts/{server_id}/renew", response_model=ToggleResponse)
 async def renew_account(
@@ -204,6 +237,7 @@ async def renew_account(
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
 
+
 @router.post("/accounts/{server_id}/generate_code", response_model=ToggleResponse)
 async def generate_account_code(
     request: Request,
@@ -214,7 +248,7 @@ async def generate_account_code(
     client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> dict[str, bool | str]:
     """生成邀请码（注册码/续期码）"""
-    if code_type not in ('signup', 'renew'):
+    if code_type not in ("signup", "renew"):
         return {"success": False, "message": "无效的码类型"}
 
     service = AccountService(request.app, session)
@@ -222,10 +256,14 @@ async def generate_account_code(
 
     if result.success:
         # 将生成的码发送到用户私聊
-        await client.send_message(user_id, result.message, parse_mode='markdown')
-        return {"success": True, "message": "邀请码已生成，详情已发送到您的 Telegram 私聊。"}
+        await client.send_message(user_id, result.message, parse_mode="markdown")
+        return {
+            "success": True,
+            "message": "邀请码已生成，详情已发送到您的 Telegram 私聊。",
+        }
 
     return {"success": False, "message": result.message}
+
 
 @router.delete("/accounts/{server_id}", response_model=ToggleResponse)
 async def delete_account(
@@ -240,6 +278,7 @@ async def delete_account(
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
+
 
 @router.post("/tools/{server_id}/upload_subtitle", response_model=ToggleResponse)
 async def trigger_upload_subtitle(
@@ -263,12 +302,20 @@ async def trigger_upload_subtitle(
     if not radarr_clients and not sonarr_clients:
         return {"success": False, "message": "媒体服务器未配置"}
 
-    asyncio.create_task(run_subtitle_upload_flow(user_id, client, session, radarr_clients, sonarr_clients))
+    asyncio.create_task(
+        run_subtitle_upload_flow(
+            user_id, client, session, radarr_clients, sonarr_clients
+        )
+    )
     return {"success": True, "message": "请返回 Telegram 聊天窗口，查看上传指引。"}
+
 
 # --- Request API (求片) ---
 
-@router.get("/tools/{server_id}/request/libraries", response_model=list[RequestLibraryDto])
+
+@router.get(
+    "/tools/{server_id}/request/libraries", response_model=list[RequestLibraryDto]
+)
 async def get_request_libraries(
     request: Request,
     server_id: int,
@@ -285,6 +332,7 @@ async def get_request_libraries(
 
     service = RequestService(request.app, session)
     return await service.get_requestable_libraries(server_id)
+
 
 @router.get("/tools/{server_id}/request/search", response_model=list[MediaItemDto])
 async def search_media(
@@ -306,6 +354,7 @@ async def search_media(
     service = RequestService(request.app, session)
     return await service.search_media_items(server_id, library, query)
 
+
 @router.post("/tools/{server_id}/request/submit", response_model=ToggleResponse)
 async def submit_request(
     request: Request,
@@ -324,7 +373,9 @@ async def submit_request(
         return {"success": False, "message": "该服务器未开启求片功能"}
 
     service = RequestService(request.app, session)
-    result = await service.submit_request_api(user_id, server_id, payload.library_name, payload.media_id)
+    result = await service.submit_request_api(
+        user_id, server_id, payload.library_name, payload.media_id
+    )
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}

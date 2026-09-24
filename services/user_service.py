@@ -59,11 +59,17 @@ class UserService:
             is_consecutive = False
         bonus = 2 if is_consecutive else 0
 
-        if (user.checkin_count + 1) % 7 != 0:
+        consecutive_checkin_count = (
+            (user.consecutive_checkin_count + 1) if is_consecutive else 1
+        )
+
+        if consecutive_checkin_count % 7 != 0:
             base_score = randint(1, 3)
             final_score = base_score + bonus
 
-            update_user = await self.telegram_repo.update_checkin(user_id, final_score)
+            update_user = await self.telegram_repo.update_checkin(
+                user_id, final_score, is_consecutive=is_consecutive
+            )
             if update_user:
                 msg = f"✅ 签到成功！[您](tg://user?id={user_id})获得了 **{final_score}** 积分。"
                 if is_consecutive:
@@ -98,7 +104,9 @@ class UserService:
             ]
 
             if not candidate_servers:
-                await self.telegram_repo.update_checkin(user.id, 5)
+                await self.telegram_repo.update_checkin(
+                    user.id, 5, is_consecutive=is_consecutive
+                )
                 return Result(
                     success=True,
                     message="签到成功！获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
@@ -106,7 +114,9 @@ class UserService:
 
             target_server = choice(candidate_servers)
             if not target_server.id:
-                await self.telegram_repo.update_checkin(user.id, 5)
+                await self.telegram_repo.update_checkin(
+                    user.id, 5, is_consecutive=is_consecutive
+                )
                 return Result(
                     success=True,
                     message="签到成功！获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
@@ -118,7 +128,9 @@ class UserService:
             code = await self.code_repo.create(
                 code_type, target_server.code_expiry_days, target_server.id
             )
-            await self.telegram_repo.update_checkin(user.id, 0)
+            await self.telegram_repo.update_checkin(
+                user.id, 0, is_consecutive=is_consecutive
+            )
 
             return Result(
                 success=True,
@@ -143,7 +155,9 @@ class UserService:
                         server.name if server else str(mu.server_id)
                     )
 
-                await self.telegram_repo.update_checkin(user.id, 0)
+                await self.telegram_repo.update_checkin(
+                    user.id, 0, is_consecutive=is_consecutive
+                )
                 server_str = ", ".join(extended_servers)
                 return Result(
                     success=True,
@@ -151,7 +165,9 @@ class UserService:
                 )
 
             score = int(current_renew_score / 30 * days)
-            await self.telegram_repo.update_checkin(user.id, score)
+            await self.telegram_repo.update_checkin(
+                user.id, score, is_consecutive=is_consecutive
+            )
             return Result(
                 success=True,
                 message=f"🎉 **恭喜中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！",
@@ -163,7 +179,9 @@ class UserService:
         if result == "double":
             base = abs(randint(2, 4)) * 2
             total = base + bonus
-            await self.telegram_repo.update_checkin(user.id, total)
+            await self.telegram_repo.update_checkin(
+                user.id, total, is_consecutive=is_consecutive
+            )
             msg = f"🎉 **恭喜！** 签到积分翻倍，[您](tg://user?id={user.id})获得了 **{total}** 积分。"
             if is_consecutive:
                 msg += f"\n(基础 {base} + 连签 {bonus})"
@@ -171,7 +189,9 @@ class UserService:
 
         # 保底逻辑
         total = 1 + bonus
-        await self.telegram_repo.update_checkin(user.id, total)
+        await self.telegram_repo.update_checkin(
+            user.id, total, is_consecutive=is_consecutive
+        )
         msg = f"签到成功！[您](tg://user?id={user.id})获得了保底 **{total}** 积分。"
         if is_consecutive:
             msg += f"\n(基础 1 + 连签 {bonus})"
@@ -298,7 +318,8 @@ class UserService:
 
             **Telegram ID**: `{user.id}`
             **积分**: `{user.score}`
-            **签到**: `{user.checkin_count}` 天
+            **连续签到**: `{user.current_consecutive_checkin_count}` 天
+            **累计签到**: `{user.checkin_count}` 天
             **警告**: `{user.warning_count}` 次
         """)
 
