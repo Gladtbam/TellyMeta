@@ -12,13 +12,16 @@ from services.user_service import UserService
 settings = get_settings()
 
 
-@TelethonClientWarper.handler(events.NewMessage(
-    pattern=fr'^/checkin({settings.telegram_bot_name})?$',
-    incoming=True
-    ))
+@TelethonClientWarper.handler(
+    events.NewMessage(
+        pattern=rf"^/checkin({settings.telegram_bot_name})?$", incoming=True
+    )
+)
 @provide_db_session
-async def checkin_handler(app: FastAPI, event: events.NewMessage.Event, session: AsyncSession) -> None:
-    """签到处理器"""  
+async def checkin_handler(
+    app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
+) -> None:
+    """签到处理器"""
     if event.chat_id != settings.telegram_chat_id:
         await safe_reply(event, "请在群组内签到。")
         return
@@ -27,12 +30,18 @@ async def checkin_handler(app: FastAPI, event: events.NewMessage.Event, session:
         await safe_reply(event, "签到功能已关闭。")
         return
 
-    user_id = event.sender_id
-    user_service = UserService(app, session)
-    result = await user_service.perform_checkin(user_id)
+    client: TelethonClientWarper = app.state.telethon_client
 
-    await safe_reply(event, result.message)
+    user_id = event.sender_id
+    username = await client.get_user_name(user_id)
+
+    user_service = UserService(app, session)
+    result = await user_service.perform_checkin(user_id, username)
+
+    if result.success:
+        await event.reply(result.message, parse_mode="markdown")
+    else:
+        await safe_reply(event, result.message)
 
     if result.private_message:
-        client: TelethonClientWarper = app.state.telethon_client
         await client.send_message(user_id, str(result.private_message))

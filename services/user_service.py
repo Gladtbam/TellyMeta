@@ -40,7 +40,9 @@ class UserService:
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients or {}
 
-    async def perform_checkin(self, user_id: int) -> Result:
+    async def perform_checkin(
+        self, user_id: int, username: str | None | Literal[False]
+    ) -> Result:
         """用户签到"""
         user = await self.telegram_repo.get_or_create(user_id)
 
@@ -71,17 +73,20 @@ class UserService:
                 user_id, final_score, is_consecutive=is_consecutive
             )
             if update_user:
-                msg = f"✅ 签到成功！[您](tg://user?id={user_id})获得了 **{final_score}** 积分。"
+                msg = f"✅ 签到成功！[{username}](tg://user?id={user_id})获得了 **{final_score}** 积分。"
                 if is_consecutive:
                     msg += f"\n(基础 {base_score} + 连签 {bonus})"
                 return Result(success=True, message=msg)
             else:
                 return Result(success=False, message="签到失败，请稍后再试。")
         else:
-            return await self._perform_lucky_checkin(user, is_consecutive)
+            return await self._perform_lucky_checkin(user, username, is_consecutive)
 
     async def _perform_lucky_checkin(
-        self, user: TelegramUser, is_consecutive: bool
+        self,
+        user: TelegramUser,
+        username: str | None | Literal[False],
+        is_consecutive: bool,
     ) -> Result:
         """幸运签到逻辑"""
         options = ["fullcode", "halfcode", "weekcode", "daycode", "double"]
@@ -109,7 +114,7 @@ class UserService:
                 )
                 return Result(
                     success=True,
-                    message="签到成功！获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
+                    message=f"签到成功！[{username}](tg://user?id={user.id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
                 )
 
             target_server = choice(candidate_servers)
@@ -119,7 +124,7 @@ class UserService:
                 )
                 return Result(
                     success=True,
-                    message="签到成功！获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
+                    message=f"签到成功！[{username}](tg://user?id={user.id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。",
                 )
 
             code_type = choice(["renew", "signup"])
@@ -134,7 +139,7 @@ class UserService:
 
             return Result(
                 success=True,
-                message=f"🎉 **恭喜抽中大奖！** {target_server.name} 的 {code_name}已通过私信发送给[您](tg://user?id={user.id})。",
+                message=f"🎉 **恭喜[{username}](tg://user?id={user.id})抽中大奖！** {target_server.name} 的 {code_name}已通过私信发送给您。",
                 private_message=f"🎁 签到大奖！\n服务器: {target_server.name}\n类型: {code_name}\n代码: `{code.code}`\n请妥善保管！",
             )
 
@@ -161,7 +166,7 @@ class UserService:
                 server_str = ", ".join(extended_servers)
                 return Result(
                     success=True,
-                    message=f"🎉 **恭喜中奖！** [您](tg://user?id={user.id})的媒体账户 ({server_str}) 已自动延长 **{days}** 天有效期！",
+                    message=f"🎉 **恭喜[{username}](tg://user?id={user.id})中奖！** 您的媒体账户 ({server_str}) 已自动延长 **{days}** 天有效期！",
                 )
 
             score = int(current_renew_score / 30 * days)
@@ -170,7 +175,7 @@ class UserService:
             )
             return Result(
                 success=True,
-                message=f"🎉 **恭喜中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！",
+                message=f"🎉 **恭喜[{username}](tg://user?id={user.id})中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！",
             )
 
         # 检查连签 (lucky 同样享受连签加成，但如果是 flip/code 类奖励则不加积分)
@@ -182,7 +187,7 @@ class UserService:
             await self.telegram_repo.update_checkin(
                 user.id, total, is_consecutive=is_consecutive
             )
-            msg = f"🎉 **恭喜！** 签到积分翻倍，[您](tg://user?id={user.id})获得了 **{total}** 积分。"
+            msg = f"🎉 **恭喜！** [{username}](tg://user?id={user.id})签到积分翻倍，您获得了 **{total}** 积分。"
             if is_consecutive:
                 msg += f"\n(基础 {base} + 连签 {bonus})"
             return Result(success=True, message=msg)
@@ -192,7 +197,7 @@ class UserService:
         await self.telegram_repo.update_checkin(
             user.id, total, is_consecutive=is_consecutive
         )
-        msg = f"签到成功！[您](tg://user?id={user.id})获得了保底 **{total}** 积分。"
+        msg = f"签到成功！[{username}](tg://user?id={user.id})获得了保底 **{total}** 积分。"
         if is_consecutive:
             msg += f"\n(基础 1 + 连签 {bonus})"
         return Result(success=True, message=msg)
