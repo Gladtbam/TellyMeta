@@ -3,7 +3,8 @@ from typing import Any
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import events
+from loguru import logger
+from telethon import Button, events
 from telethon.tl.types import KeyboardButtonWebView
 
 from bot.decorators import provide_db_session, require_admin, require_real_reply
@@ -33,22 +34,59 @@ async def info_handler(
     """用户信息处理器
     发送用户信息，需回复一个用户
     """
+    admin_id = event.sender_id
+    client: TelethonClientWarper = app.state.telethon_client
+    target_name = await client.get_user_name(target_user_id) or str(target_user_id)
+
     if settings.telegram_webapp_url:
         webapp_base = settings.telegram_webapp_url.rstrip("/")
         card_url = f"{webapp_base}/webapp/user_info.html?user_id={target_user_id}"
-        buttons = [[KeyboardButtonWebView(text="👤 查看用户卡片", url=card_url)]]
+        web_app_buttons = [[KeyboardButtonWebView(text="👤 查看用户卡片", url=card_url)]]
 
-        client: TelethonClientWarper = app.state.telethon_client
-        target_name = await client.get_user_name(target_user_id) or str(target_user_id)
+        # 如果当前就是在私聊中，Telegram 允许直接发送 KeyboardButtonWebView 按钮
+        if event.is_private:
+            await safe_reply_keyboard(
+                event,
+                f"📋 **用户资料卡片**\n\n"
+                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
+                f"点击下方按钮在弹窗中查看详细信息：",
+                web_app_buttons,
+                delete_after=120,
+            )
+            return
 
-        await safe_reply_keyboard(
-            event,
-            f"📋 **用户资料卡片**\n\n"
-            f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
-            f"点击下方按钮在弹窗中查看详细信息：",
-            buttons,
-            delete_after=120,
-        )
+        # 如果在群组中，由于 Telegram API 限制群聊消息不能附带 KeyboardButtonWebView，将卡片发送到管理员私聊
+        try:
+            await client.send_message(
+                admin_id,
+                f"📋 **用户资料卡片**\n\n"
+                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
+                f"请点击下方按钮打开卡片并执行管理操作：",
+                buttons=web_app_buttons,
+            )
+
+            clean_bot_name = settings.telegram_bot_name.lstrip("@")
+            group_buttons = (
+                [[Button.url("💬 前往私聊查看", f"https://t.me/{clean_bot_name}")]]
+                if clean_bot_name
+                else None
+            )
+
+            msg = f"🔍 已将用户 [{target_name}](tg://user?id={target_user_id}) 的信息卡片发送至您的私聊，请查收。"
+            if group_buttons:
+                await safe_reply_keyboard(event, msg, group_buttons, delete_after=30)
+            else:
+                await safe_reply(event, msg, delete_after=30)
+
+        except Exception as e:
+            logger.warning("未能向管理员发送私聊消息（可能未私聊启动过机器人）: {}", e)
+            user_service = UserService(app, session)
+            result = await user_service.get_user_info(target_user_id)
+            await safe_reply(
+                event,
+                f"⚠️ 无法向您发送私聊卡片（请先私聊机器人发送 /start）。已降级为群内文本展示：\n\n{result.message}",
+                delete_after=60,
+            )
     else:
         user_service = UserService(app, session)
         result = await user_service.get_user_info(target_user_id)
