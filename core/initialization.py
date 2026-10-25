@@ -109,7 +109,16 @@ def check_mkvtoolnix() -> bool:
         logger.info("mkvtoolnix 检查通过。")
         return True
     except subprocess.CalledProcessError:
-        logger.error("mkvtoolnix 检查失败。")
+        logger.error("mkvtoolnix 检查失败：命令执行返回非零状态。")
+        return False
+    except FileNotFoundError:
+        logger.error("mkvtoolnix 检查失败：未找到 mkvmerge 命令，请确认是否已安装。")
+        return False
+    except PermissionError:
+        logger.error("mkvtoolnix 检查失败：没有执行 mkvmerge 的权限 (Permission denied)。")
+        return False
+    except Exception as e:
+        logger.error(f"mkvtoolnix 检查时发生未知异常：{e}")
         return False
 
 async def initialize_admin(session: AsyncSession, telethon_client: TelethonClientWarper):
