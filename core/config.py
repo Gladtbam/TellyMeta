@@ -87,8 +87,6 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Shanghai"
     port: int = 5080
     proxy: str = ""
-    tmdb_api_key: str = ""
-    tvdb_api_key: str = ""
     telegram_api_id: int = 0
     telegram_api_hash: str = ""
     telegram_bot_token: str = ""

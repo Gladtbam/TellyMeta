@@ -23,6 +23,7 @@ from models.schemas import (
     BindingUpdate,
     LibraryDto,
     LlmConfigUpdateDto,
+    MetadataConfigUpdateDto,
     MkvConfigUpdateDto,
     NsfwLibraryDto,
     ServerCreate,
@@ -81,6 +82,7 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
     """获取系统配置"""
     repo = ConfigRepository(session)
     llm_cfg = await repo.get_llm_config()
+    meta_cfg = await repo.get_metadata_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -111,6 +113,30 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
         "ai_rpd": llm_cfg["ai_rpd"],
         "ai_tpm": llm_cfg["ai_tpm"],
         "ai_concurrency": llm_cfg["ai_concurrency"],
+        "tmdb_api_key_masked": "******" if meta_cfg["tmdb_api_key"] else "",
+        "tvdb_api_key_masked": "******" if meta_cfg["tvdb_api_key"] else "",
+    }
+
+
+@router.post(
+    "/system/metadata",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_metadata_config_endpoint(
+    request: Request,
+    payload: MetadataConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新 TMDB/TVDB 元数据 API Key 并热重载客户端"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_metadata_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "metadata_config",
+        "message": result.message,
     }
 
 

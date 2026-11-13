@@ -61,31 +61,9 @@ async def lifespan(app: FastAPI):
     app.state.message_tracker = MessageTrackingState()
 
     app.state.ai_client = None
+    app.state.tmdb_client = None
+    app.state.tvdb_client = None
     app.state.qb_clients = {}  # dict[int, QbittorrentClient]
-
-    if settings.tmdb_api_key:
-        app.state.tmdb_client = CachedTmdbClient(
-            client=httpx2.AsyncClient(
-                base_url="https://api.themoviedb.org/3",
-                timeout=httpx2.Timeout(10.0, read=30.0),
-                proxy=settings.proxy or None,
-            ),
-            api_key=settings.tmdb_api_key,
-        )
-    else:
-        app.state.tmdb_client = None
-
-    if settings.tvdb_api_key:
-        app.state.tvdb_client = CachedTvdbClient(
-            client=httpx2.AsyncClient(
-                base_url="https://api4.thetvdb.com/v4",
-                timeout=httpx2.Timeout(10.0, read=30.0),
-                proxy=settings.proxy or None,
-            ),
-            api_key=settings.tvdb_api_key,
-        )
-    else:
-        app.state.tvdb_client = None
 
     app.state.db_engine = async_engine
     app.state.telethon_client = TelethonClientWarper(app)
@@ -105,7 +83,9 @@ async def lifespan(app: FastAPI):
             admin_ids = await initialize_admin(session, app.state.telethon_client)
             app.state.admin_ids = set(admin_ids)
             await ConfigRepository.load_all_to_cache(session)
-            await SettingsServices(app, session).reload_ai_client()
+            settings_service = SettingsServices(app, session)
+            await settings_service.reload_ai_client()
+            await settings_service.reload_metadata_clients()
 
             servers = await ServerRepository(session).get_all_enabled()
             for server in servers:
@@ -213,6 +193,9 @@ async def lifespan(app: FastAPI):
     ai_client: AIClientWarper | None = getattr(app.state, "ai_client", None)
     if ai_client:
         await ai_client.close()
+    tmdb_client: CachedTmdbClient | None = getattr(app.state, "tmdb_client", None)
+    if tmdb_client:
+        await tmdb_client.close()
     tvdb_client: CachedTvdbClient | None = getattr(app.state, "tvdb_client", None)
     if tvdb_client:
         await tvdb_client.close()

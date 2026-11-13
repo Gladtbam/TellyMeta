@@ -8,6 +8,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.ai_client import AIClientWarper
+from clients.cached_tmdb_client import CachedTmdbClient
+from clients.cached_tvdb_client import CachedTvdbClient
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.qb_client import QbittorrentClient
@@ -22,6 +24,7 @@ from models.schemas import (
     BindingDto,
     LibraryDto,
     LlmConfigUpdateDto,
+    MetadataConfigUpdateDto,
     NsfwLibraryDto,
     QualityProfileDto,
     RootFolderDto,
@@ -79,6 +82,76 @@ class SettingsServices:
 
         self.app.state.ai_client = None
         return None
+
+    async def reload_metadata_clients(
+        self,
+    ) -> tuple[CachedTmdbClient | None, CachedTvdbClient | None]:
+        """根据数据库配置热重载全局 TMDB 与 TVDB 客户端。
+
+        Returns:
+            ``(tmdb_client, tvdb_client)`` 元组；未配置对应 Key 时对应项为 ``None``。
+        """
+        old_tmdb: CachedTmdbClient | None = getattr(self.app.state, "tmdb_client", None)
+        if old_tmdb is not None:
+            with contextlib.suppress(Exception):
+                await old_tmdb.close()
+
+        old_tvdb: CachedTvdbClient | None = getattr(self.app.state, "tvdb_client", None)
+        if old_tvdb is not None:
+            with contextlib.suppress(Exception):
+                await old_tvdb.close()
+
+        meta_cfg = await self.config_repo.get_metadata_config()
+        tmdb_client: CachedTmdbClient | None = None
+        tvdb_client: CachedTvdbClient | None = None
+
+        if meta_cfg["tmdb_api_key"]:
+            tmdb_client = CachedTmdbClient(
+                client=httpx2.AsyncClient(
+                    base_url="https://api.themoviedb.org/3",
+                    timeout=httpx2.Timeout(10.0, read=30.0),
+                    proxy=settings.proxy or None,
+                ),
+                api_key=meta_cfg["tmdb_api_key"],
+            )
+
+        if meta_cfg["tvdb_api_key"]:
+            tvdb_client = CachedTvdbClient(
+                client=httpx2.AsyncClient(
+                    base_url="https://api4.thetvdb.com/v4",
+                    timeout=httpx2.Timeout(10.0, read=30.0),
+                    proxy=settings.proxy or None,
+                ),
+                api_key=meta_cfg["tvdb_api_key"],
+            )
+
+        self.app.state.tmdb_client = tmdb_client
+        self.app.state.tvdb_client = tvdb_client
+        return tmdb_client, tvdb_client
+
+    async def update_metadata_config(self, payload: MetadataConfigUpdateDto) -> Result:
+        """保存 Mini App 提交的 TMDB/TVDB API Key 并热重载客户端。
+
+        Args:
+            payload: TMDB/TVDB API Key 更新请求体。
+
+        Returns:
+            操作结果。
+        """
+        tmdb_key = payload.tmdb_api_key.strip()
+        tvdb_key = payload.tvdb_api_key.strip()
+
+        if tmdb_key != "******":
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TMDB_API_KEY, tmdb_key
+            )
+        if tvdb_key != "******":
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TVDB_API_KEY, tvdb_key
+            )
+
+        await self.reload_metadata_clients()
+        return Result(success=True, message="TMDB/TVDB 元数据配置已保存并生效")
 
     @property
     def sonarr_clients(self) -> dict[int, SonarrClient]:

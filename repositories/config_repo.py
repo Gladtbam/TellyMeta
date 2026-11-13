@@ -24,6 +24,8 @@ class ConfigRepository:
     KEY_AI_RPD = "system:ai_rpd"
     KEY_AI_TPM = "system:ai_tpm"
     KEY_AI_CONCURRENCY = "system:ai_concurrency"
+    KEY_TMDB_API_KEY = "system:tmdb_api_key"
+    KEY_TVDB_API_KEY = "system:tvdb_api_key"
 
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
@@ -66,6 +68,8 @@ class ConfigRepository:
             cls.KEY_AI_RPD: "",
             cls.KEY_AI_TPM: "",
             cls.KEY_AI_CONCURRENCY: "1",
+            cls.KEY_TMDB_API_KEY: "",
+            cls.KEY_TVDB_API_KEY: "",
         }
 
         new_items = []
@@ -170,4 +174,17 @@ class ConfigRepository:
             "ai_rpd": rpd,
             "ai_tpm": tpm,
             "ai_concurrency": concurrency,
+        }
+
+    async def get_metadata_config(self) -> dict[str, str]:
+        """读取数据库中的 TMDB 与 TVDB API Key 配置。
+
+        Returns:
+            包含 ``tmdb_api_key`` 与 ``tvdb_api_key`` 字符串的字典。
+        """
+        tmdb_key = (await self.get_settings(self.KEY_TMDB_API_KEY, "") or "").strip()
+        tvdb_key = (await self.get_settings(self.KEY_TVDB_API_KEY, "") or "").strip()
+        return {
+            "tmdb_api_key": tmdb_key,
+            "tvdb_api_key": tvdb_key,
         }

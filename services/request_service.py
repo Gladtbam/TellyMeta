@@ -107,26 +107,31 @@ class RequestService:
         tvdb_id = getattr(item, "tvdbId", None)
         tmdb_id = getattr(item, "tmdbId", None)
 
-        if tvdb_id and self.tvdb_client:
+        # TMDB 优先级高于 TVDB：优先使用 TMDB 补充剧集标题与简介
+        if tmdb_id and self.tmdb_client:
+            try:
+                tmdb_info = await self.tmdb_client.get_tv_series_details(tmdb_id)
+                if tmdb_info:
+                    if tmdb_info.name:
+                        title = tmdb_info.name
+                    if tmdb_info.overview:
+                        overview = tmdb_info.overview
+            except (HTTPError, ValueError, TypeError) as e:
+                logger.debug(f"TMDB TV 查找失败 ({tmdb_id}): {e}")
+
+        # 仅当 TMDB 未命中或缺少字段时回退到 TVDB
+        if (title == default_title or not overview) and tvdb_id and self.tvdb_client:
             try:
                 tvdb_resp = await self.tvdb_client.series_translations(
                     tvdb_id, language="zho"
                 )
                 if tvdb_resp and isinstance(tvdb_resp.data, TvdbData):
-                    if tvdb_resp.data.name:
+                    if title == default_title and tvdb_resp.data.name:
                         title = tvdb_resp.data.name
-                    if tvdb_resp.data.overview:
+                    if not overview and tvdb_resp.data.overview:
                         overview = tvdb_resp.data.overview
             except (HTTPError, ValueError, TypeError) as e:
                 logger.debug(f"TVDB 查找失败 ({tvdb_id}): {e}")
-
-        if not overview and tmdb_id and self.tmdb_client:
-            try:
-                tmdb_info = await self.tmdb_client.get_tv_series_details(tmdb_id)
-                if tmdb_info and tmdb_info.overview:
-                    overview = tmdb_info.overview
-            except (HTTPError, ValueError, TypeError) as e:
-                logger.debug(f"TMDB TV 查找失败 ({tmdb_id}): {e}")
 
         return title, overview
 

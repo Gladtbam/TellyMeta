@@ -180,6 +180,8 @@ class SystemConfigResponse(BaseModel):
     ai_rpd: int | None = None
     ai_tpm: int | None = None
     ai_concurrency: int = 1
+    tmdb_api_key_masked: str = ""
+    tvdb_api_key_masked: str = ""
 
 
 class MkvConfigUpdateDto(BaseModel):
@@ -199,6 +201,13 @@ class LlmConfigUpdateDto(BaseModel):
     ai_rpd: int | None = None
     ai_tpm: int | None = None
     ai_concurrency: int = 1
+
+
+class MetadataConfigUpdateDto(BaseModel):
+    """TMDB / TVDB 元数据 API Key 更新请求"""
+
+    tmdb_api_key: str = ""
+    tvdb_api_key: str = ""
 
 
 class ToggleResponse(BaseModel):

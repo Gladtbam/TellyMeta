@@ -414,7 +414,7 @@
                     <div class="form-group" style="margin-bottom:0">
                         <label class="form-label">AI API Key</label>
                         <input type="password" id="llm-api-key" class="form-input"
-                            placeholder="输入 API Key（保持 ****** 则不修改）">
+                            placeholder="输入 API Key">
                     </div>
                     <div class="form-group" style="margin-bottom:0">
                         <label class="form-label">AI Model</label>
@@ -444,6 +444,24 @@
                     </div>
                     <button type="button" class="btn btn-primary" style="margin-top:0"
                         onclick="saveLlmConfig()">保存 LLM 配置</button>
+                </div>
+                <div class="item" style="flex-direction:column; align-items:stretch; gap:8px;">
+                    <div class="item-content">
+                        <span class="item-title">元数据 API (TMDB / TVDB)</span>
+                        <span class="item-subtitle">两者均可选，同时配置时 TMDB 优先级高于 TVDB</span>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">TMDB API Key</label>
+                        <input type="password" id="tmdb-api-key" class="form-input"
+                            placeholder="输入 TMDB API Key">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">TVDB API Key</label>
+                        <input type="password" id="tvdb-api-key" class="form-input"
+                            placeholder="输入 TVDB API Key">
+                    </div>
+                    <button type="button" class="btn btn-primary" style="margin-top:0"
+                        onclick="saveMetadataConfig()">保存元数据配置</button>
                 </div>
             </div>
         </div>
@@ -743,6 +761,9 @@
                 document.getElementById('llm-rpd').value = s.ai_rpd ?? '';
                 document.getElementById('llm-tpm').value = s.ai_tpm ?? '';
                 updateLlmConfigVisibility(llmEnabled);
+
+                document.getElementById('tmdb-api-key').value = s.tmdb_api_key_masked || '';
+                document.getElementById('tvdb-api-key').value = s.tvdb_api_key_masked || '';
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
@@ -788,6 +809,21 @@
                 document.getElementById('llm-api-key').value = '******';
             }
             tg.showAlert('✅ ' + (res.message || 'LLM 翻译配置已保存'));
+        }
+
+        async function saveMetadataConfig() {
+            const payload = {
+                tmdb_api_key: document.getElementById('tmdb-api-key').value.trim(),
+                tvdb_api_key: document.getElementById('tvdb-api-key').value.trim()
+            };
+            const res = await api('/system/metadata', 'POST', payload);
+            if (payload.tmdb_api_key && payload.tmdb_api_key !== '******') {
+                document.getElementById('tmdb-api-key').value = '******';
+            }
+            if (payload.tvdb_api_key && payload.tvdb_api_key !== '******') {
+                document.getElementById('tvdb-api-key').value = '******';
+            }
+            tg.showAlert('✅ ' + (res.message || 'TMDB/TVDB 元数据配置已保存'));
         }
 
         function renderAdmins(data) {
