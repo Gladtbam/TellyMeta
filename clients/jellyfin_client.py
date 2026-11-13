@@ -232,7 +232,7 @@ class JellyfinClient(
             is_ban (bool): 如果为 True 则封禁用户，否则解封用户。
         """
         user = await self.get_user_info(user_id)
-        if user is not None:
+        if user is not None and user.Policy is not None:
             policy = user.Policy.model_copy(update={"IsDisabled": is_ban}).model_dump()
             await self.update_policy(user_id, policy)
         else:
@@ -313,5 +313,5 @@ class JellyfinClient(
             for item in items:
                 yield item
             start_index += len(items)
-            if start_index >= response.TotalRecordCount:
+            if start_index >= (response.TotalRecordCount or 0):
                 break

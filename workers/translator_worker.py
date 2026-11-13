@@ -17,13 +17,14 @@ async def _get_tmdb_episode_info(
     item: BaseItem, tmdb_client: TmdbClient, media_client: MediaService
 ) -> TmdbEpisode | None:
     """Helper: 获取单集的 TMDB 信息，包含复杂的 ID 关联和回退逻辑"""
-    tvdb_id = item.ProviderIds.get("Tvdb") or item.ProviderIds.get("TVDB")
+    provider_ids = item.ProviderIds or {}
+    tvdb_id = provider_ids.get("Tvdb") or provider_ids.get("TVDB")
     if tvdb_id:
         tmdb_find = await tmdb_client.find_info_by_external_id("tvdb_id", tvdb_id)
         if tmdb_find and tmdb_find.tv_episode_results:
             return tmdb_find.tv_episode_results[0]
 
-    imdb_id = item.ProviderIds.get("Imdb") or item.ProviderIds.get("IMDB")
+    imdb_id = provider_ids.get("Imdb") or provider_ids.get("IMDB")
     if imdb_id:
         tmdb_find = await tmdb_client.find_info_by_external_id("imdb_id", imdb_id)
         if tmdb_find and tmdb_find.tv_episode_results:
@@ -32,7 +33,7 @@ async def _get_tmdb_episode_info(
     if not item.SeriesId:
         return None
 
-    series_info: BaseItem | None = await media_client.get_item_info(item.SeriesId)
+    series_info: BaseItem | None = await media_client.get_item_info(str(item.SeriesId))
     if not series_info:
         return None
 
@@ -115,7 +116,8 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
 
     # 电影或剧集处理 (Movie / Series) # Radarr 能够提供足够的中文元数据，因此跳过Movie
     else:
-        imdb_id = item.ProviderIds.get("Imdb") or item.ProviderIds.get("IMDB")
+        provider_ids = item.ProviderIds or {}
+        imdb_id = provider_ids.get("Imdb") or provider_ids.get("IMDB")
         if imdb_id and tmdb_client:
             tmdb_find_res = await tmdb_client.find_info_by_external_id(
                 "imdb_id", imdb_id

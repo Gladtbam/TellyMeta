@@ -9,12 +9,12 @@ from pydantic import TypeAdapter
 from clients.base_client import AuthenticatedClient
 from models.emby import (
     BaseItemDto,
-    BaseItemDtoQueryResult,
-    DevicesDeviceInfo,
-    LibraryMediaFolder,
+    DeviceInfo,
+    MediaFolder,
     PublicSystemInfo,
-    QueryResult_VirtualFolderInfo,
-    SessionInfoDto,
+    QueryResultBaseItemDto,
+    QueryResultVirtualFolderInfo,
+    SessionInfo,
     UserDto,
     UserPolicy,
     VirtualFolderInfo,
@@ -25,9 +25,7 @@ from services.media_service import MediaService
 
 class EmbyClient(
     AuthenticatedClient,
-    MediaService[
-        UserDto, BaseItemDto, VirtualFolderInfo, DevicesDeviceInfo, PublicSystemInfo
-    ],
+    MediaService[UserDto, BaseItemDto, VirtualFolderInfo, DeviceInfo, PublicSystemInfo],
 ):
     """Emby 客户端
     用于与 Emby 媒体服务器交互。
@@ -75,31 +73,32 @@ class EmbyClient(
 
         response = await self.post(url, json=payload, response_model=UserDto)
 
-        if response is not None:
+        if response is not None and response.Id:
+            user_id = response.Id
             logger.info("创建用户 {} 成功", name)
             try:
-                pw = await self.post_password(response.Id)
+                pw = await self.post_password(user_id)
             except (httpx2.HTTPError, ValueError):
                 logger.error(
                     "用户 {} 密码设置异常，尝试清理已创建的 Emby 账户 {}",
                     name,
-                    response.Id,
+                    user_id,
                 )
                 try:
-                    await self.delete_user(response.Id)
+                    await self.delete_user(user_id)
                 except (httpx2.HTTPError, ValueError) as cleanup_err:
-                    logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
+                    logger.error("清理 Emby 账户 {} 失败: {}", user_id, cleanup_err)
                 raise
             if not pw:
                 logger.error(
                     "用户 {} 密码设置失败，尝试清理已创建的 Emby 账户 {}",
                     name,
-                    response.Id,
+                    user_id,
                 )
                 try:
-                    await self.delete_user(response.Id)
+                    await self.delete_user(user_id)
                 except (httpx2.HTTPError, ValueError) as cleanup_err:
-                    logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
+                    logger.error("清理 Emby 账户 {} 失败: {}", user_id, cleanup_err)
                 return None, None
             return response, pw
 
@@ -175,7 +174,7 @@ class EmbyClient(
         }
 
         response = await self.get(
-            url, params=params, response_model=BaseItemDtoQueryResult
+            url, params=params, response_model=QueryResultBaseItemDto
         )
         if response is None or response.TotalRecordCount == 0 or not response.Items:
             logger.warning("获取 Emby 项目 {} 信息失败: {}", item_id, response)
@@ -237,7 +236,7 @@ class EmbyClient(
             is_ban (bool): 如果为 True 则封禁用户，否则解封用户。
         """
         user: UserDto | None = await self.get_user_info(user_id)
-        if user is not None:
+        if user is not None and user.Policy is not None:
             policy = user.Policy.model_copy(update={"IsDisabled": is_ban}).model_dump()
             await self.update_policy(user_id, policy)
         else:
@@ -249,7 +248,7 @@ class EmbyClient(
         url = "/Sessions"
         response = await self.get(
             url,
-            parser=lambda data: TypeAdapter(list[SessionInfoDto]).validate_python(data),
+            parser=lambda data: TypeAdapter(list[SessionInfo]).validate_python(data),
         )
         if response is None:
             return 0
@@ -261,33 +260,29 @@ class EmbyClient(
             list[VirtualFolderInfo] | None: 返回媒体库信息的列表，如果查询失败则返回 None。
         """
         url = "/Library/VirtualFolders/Query"
-        response = await self.get(url, response_model=QueryResult_VirtualFolderInfo)
+        response = await self.get(url, response_model=QueryResultVirtualFolderInfo)
         if response is None:
             return None
         return response.Items
 
-    async def get_selectable_media_folders(self) -> list[LibraryMediaFolder] | None:
+    async def get_selectable_media_folders(self) -> list[MediaFolder] | None:
         """获取 Emby 媒体文件夹"""
         url = "/Library/SelectableMediaFolders"
         return await self.get(
             url,
-            parser=lambda data: TypeAdapter(list[LibraryMediaFolder]).validate_python(
-                data
-            ),
+            parser=lambda data: TypeAdapter(list[MediaFolder]).validate_python(data),
         )
 
-    async def get_user_id_by_device_id(
-        self, device_id: str
-    ) -> DevicesDeviceInfo | None:
+    async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfo | None:
         """通过设备 ID 获取用户 ID
         Args:
             device_id (str): Emby 用户设备 ID
         Returns:
-            DevicesDeviceInfo | None
+            DeviceInfo | None
         """
         url = "/Devices/Info"
         params = {"Id": device_id}
-        return await self.get(url, params=params, response_model=DevicesDeviceInfo)
+        return await self.get(url, params=params, response_model=DeviceInfo)
 
     async def get_system_info_public(self) -> PublicSystemInfo | None:
         """获取 Emby 公开信息"""
@@ -309,7 +304,7 @@ class EmbyClient(
                 "Limit": page_size,
             }
             response = await self.get(
-                url, params=params, response_model=BaseItemDtoQueryResult
+                url, params=params, response_model=QueryResultBaseItemDto
             )
             if response is None:
                 break
@@ -319,5 +314,5 @@ class EmbyClient(
             for item in items:
                 yield item
             start_index += len(items)
-            if start_index >= response.TotalRecordCount:
+            if start_index >= (response.TotalRecordCount or 0):
                 break

@@ -1,0 +1,70 @@
+name: Sync OpenAPI Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 要同步的服务（all 或单个服务名）
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - radarr
+          - sonarr
+          - jellyfin
+          - emby
+  schedule:
+    # 每周一 UTC 04:00 自动检查上游 OpenAPI 模型变更
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-models:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Generate OpenAPI models
+        run: |
+          if [ "${{ github.event.inputs.service || 'all' }}" = "all" ]; then
+            SERVICES="radarr sonarr jellyfin emby"
+          else
+            SERVICES="${{ github.event.inputs.service }}"
+          fi
+          for svc in $SERVICES; do
+            echo "=== Syncing $svc ==="
+            python -m scripts.generate_openapi_models "$svc"
+          done
+
+      - name: Verify generated Python syntax
+        run: |
+          python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in pathlib.Path('models').glob('*.py')]"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(models): 同步上游 OpenAPI 数据模型"
+          branch: chore/sync-openapi-models
+          delete-branch: true
+          title: "chore(models): 同步上游 OpenAPI 数据模型"
+          body: |
+            由 `Sync OpenAPI Models` 工作流自动生成，使用 `scripts/generate_openapi_models.py` 按项目实际调用端点裁剪并更新 `models/*.py`。
+
+            - 生成范围：`radarr` / `sonarr` / `jellyfin` / `emby` REST API 模型
+            - Webhook 模型：`models/*_webhook.py` 保持手写维护，不受本工作流影响
+          labels: |
+            dependencies
+            automated

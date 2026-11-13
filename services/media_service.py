@@ -2,19 +2,27 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, Generic
 
-from models.emby import LibraryMediaFolder
-from models.protocols import (BaseItem, BaseItemT_co, DeviceInfoT, LibraryT, PublicSystemInfoT,
-                              UserT)
+from models.emby import MediaFolder
+from models.protocols import (
+    BaseItem,
+    BaseItemT_co,
+    DeviceInfoT,
+    LibraryT,
+    PublicSystemInfoT,
+    UserT,
+)
 
 
-class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, PublicSystemInfoT]):
+class MediaService(
+    ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, PublicSystemInfoT]
+):
     """定义媒体服务的抽象基类"""
 
     server_name: str = "Unknown"
     notify_topic_id: int | None = None
 
     @abstractmethod
-    async def create(self, name:str) -> tuple[UserT | None, str | None]:
+    async def create(self, name: str) -> tuple[UserT | None, str | None]:
         """创建用户"""
         raise NotImplementedError
 
@@ -24,7 +32,9 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, Publ
         raise NotImplementedError
 
     @abstractmethod
-    async def update_policy(self, user_id: str, policy: dict[str, Any], is_none: bool = False) -> None:
+    async def update_policy(
+        self, user_id: str, policy: dict[str, Any], is_none: bool = False
+    ) -> None:
         """更新用户策略"""
         raise NotImplementedError
 
@@ -64,7 +74,7 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, Publ
         raise NotImplementedError
 
     @abstractmethod
-    async def get_selectable_media_folders(self) -> list[LibraryMediaFolder] | None:
+    async def get_selectable_media_folders(self) -> list[MediaFolder] | None:
         """获取 Emby 媒体文件夹
         仅 Emby
         """
@@ -72,7 +82,7 @@ class MediaService(ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, Publ
 
     @abstractmethod
     async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfoT | None:
-        """"通过设备 ID 获取用户 ID"""
+        """ "通过设备 ID 获取用户 ID"""
         raise NotImplementedError
 
     @abstractmethod

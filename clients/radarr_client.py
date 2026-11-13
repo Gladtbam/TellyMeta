@@ -6,8 +6,11 @@ from pydantic import TypeAdapter
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
 from models.radarr import (
+    AddMovieMethod,
     AddMovieOptions,
+    MonitorTypes,
     MovieResource,
+    MovieStatusType,
     QualityProfileResource,
     RootFolderResource,
 )
@@ -119,13 +122,13 @@ class RadarrClient(AuthenticatedClient):
         """
         url = "/api/v3/movie"
         movie_resource.monitored = True
-        movie_resource.minimumAvailability = "released"
+        movie_resource.minimumAvailability = MovieStatusType.released
         movie_resource.addOptions = AddMovieOptions(
             ignoreEpisodesWithFiles=False,
             ignoreEpisodesWithoutFiles=False,
-            monitor="movieOnly",
+            monitor=MonitorTypes.movieOnly,
             searchForMovie=True,
-            addMethod="manual",
+            addMethod=AddMovieMethod.manual,
         )
         return await self.post(
             url,

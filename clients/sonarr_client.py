@@ -5,8 +5,14 @@ from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
 from core.config import get_settings
-from models.radarr import QualityProfileResource, RootFolderResource
-from models.sonarr import AddSeriesOptions, EpisodeResource, SeriesResource
+from models.sonarr import (
+    AddSeriesOptions,
+    EpisodeResource,
+    MonitorTypes,
+    QualityProfileResource,
+    RootFolderResource,
+    SeriesResource,
+)
 
 setting = get_settings()
 
@@ -135,7 +141,7 @@ class SonarrClient(AuthenticatedClient):
         series_resource.addOptions = AddSeriesOptions(
             ignoreEpisodesWithFiles=True,
             ignoreEpisodesWithoutFiles=False,
-            monitor="all",
+            monitor=MonitorTypes.all,
             searchForMissingEpisodes=True,
             searchForCutoffUnmetEpisodes=False,
         )

@@ -19,7 +19,7 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.scheduler_jobs import apply_ops_schedules
 from core.telegram_manager import TelethonClientWarper
-from models.emby import LibraryMediaFolder
+from models.emby import MediaFolder
 from models.orm import ServerInstance, ServerType
 from models.schemas import (
     ArrServerDto,
@@ -378,11 +378,15 @@ class SettingsServices:
         profiles = await client.get_quality_profiles() or []
         folders = await client.get_root_folders() or []
 
-        p_dtos = [QualityProfileDto(id=p.id, name=p.name) for p in profiles]
+        p_dtos = [
+            QualityProfileDto(id=p.id, name=p.name)
+            for p in profiles
+            if p.id is not None
+        ]
         f_dtos = [
             RootFolderDto(id=f.id, path=f.path, freeSpace=f.freeSpace)
             for f in folders
-            if f.path
+            if f.path and f.id is not None
         ]
 
         return p_dtos, f_dtos
@@ -754,7 +758,7 @@ class SettingsServices:
             else set()
         )
 
-        sub_folders: list[LibraryMediaFolder] | None = None
+        sub_folders: list[MediaFolder] | None = None
 
         if is_emby:
             sub_folders = await client.get_selectable_media_folders()
@@ -774,7 +778,7 @@ class SettingsServices:
                 for folder in sub_folders:
                     if folder.Guid == lib_id:
                         nsfw_sub_ids.update(
-                            f"{lib_id}_{sub.Id}" for sub in folder.SubFolders
+                            f"{lib_id}_{sub.Id}" for sub in (folder.SubFolders or [])
                         )
             action = "添加"
 

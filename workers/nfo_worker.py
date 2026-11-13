@@ -13,14 +13,13 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.template_manager import template_manager
-from models.radarr import (
-    MovieResource,
+from models.radarr import MovieResource
+from models.radarr_webhook import (
     RadarrWebhookAddedPayload,
     RadarrWebhookDownloadPayload,
 )
-from models.sonarr import (
-    EpisodeResource,
-    SeriesResource,
+from models.sonarr import EpisodeResource, SeriesResource
+from models.sonarr_webhook import (
     SonarrEpisode,
     SonarrSeries,
     SonarrWebhookDownloadPayload,
@@ -122,7 +121,7 @@ async def _get_episode_context(
     tvdb_data: TvdbData | None = None
     tvdb_ext_data: TvdbEpisodesData | None = None
 
-    if tvdb:
+    if tvdb and tvdb_id is not None:
         trans_payload = await tvdb.episodes_translations(tvdb_id)
         if trans_payload and isinstance(trans_payload.data, TvdbData):
             tvdb_data = trans_payload.data
@@ -132,11 +131,12 @@ async def _get_episode_context(
 
     # TMDB
     tmdb_ep: TmdbEpisode | None = None
-    tmdb_find = await tmdb.find_info_by_external_id("tvdb_id", str(tvdb_id))
-    if tmdb_find and tmdb_find.tv_episode_results:
-        tmdb_ep = tmdb_find.tv_episode_results[0]
+    if tvdb_id is not None:
+        tmdb_find = await tmdb.find_info_by_external_id("tvdb_id", str(tvdb_id))
+        if tmdb_find and tmdb_find.tv_episode_results:
+            tmdb_ep = tmdb_find.tv_episode_results[0]
 
-    if not tmdb_ep and series_tmdb_id > 0:
+    if not tmdb_ep and series_tmdb_id > 0 and season_num is not None:
         target_air_date = (tvdb_ext_data.aired if tvdb_ext_data else None) or air_date
 
         if target_air_date:
@@ -196,8 +196,16 @@ async def create_series_nfo_from_resource(
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    tvdb_payload = await tvdb.series_translations(series.tvdbId) if tvdb else None
-    tmdb_payload = await tmdb.get_tv_series_details(series.tmdbId)
+    tvdb_payload = (
+        await tvdb.series_translations(series.tvdbId)
+        if tvdb and series.tvdbId is not None
+        else None
+    )
+    tmdb_payload = (
+        await tmdb.get_tv_series_details(series.tmdbId)
+        if series.tmdbId is not None
+        else None
+    )
 
     context = {
         "title": getattr(tvdb_payload, "name", None)
@@ -235,7 +243,7 @@ async def create_episode_nfo_from_resource(
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    context = await _get_episode_context(tmdb, tvdb, series.tmdbId, episode)
+    context = await _get_episode_context(tmdb, tvdb, series.tmdbId or 0, episode)
     await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
 
 
@@ -397,7 +405,7 @@ async def create_movie_nfo_from_resource(
     movie: MovieResource, tmdb: TmdbClient
 ) -> None:
     """从资源创建电影 NFO"""
-    if not movie.path:
+    if not movie.path or movie.tmdbId is None:
         return
     folder_path = Path(movie.path)
     async with _temporary_ignore_file(folder_path):

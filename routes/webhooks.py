@@ -30,12 +30,12 @@ from models.emby_webhook import EmbyPayload, LibraryDeletedEvent, LibraryNewEven
 from models.events import NotificationEvent
 from models.jellyfin_webhook import JellyfinPayload, NotificationType
 from models.orm import ServerInstance
-from models.radarr import (
+from models.radarr_webhook import (
     RadarrPayload,
     RadarrWebhookAddedPayload,
     RadarrWebhookDownloadPayload,
 )
-from models.sonarr import (
+from models.sonarr_webhook import (
     SonarrPayload,
     SonarrWebhookDownloadPayload,
     SonarrWebhookSeriesAddPayload,

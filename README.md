@@ -318,6 +318,33 @@ TellyMeta 采用纯文件驱动的 Jinja2 模板系统。你可以在 `templates
 
 * 小程序 -> 服务器详情中查看。
 
+## 🔌 上游 API 版本与模型维护
+
+TellyMeta 对接的媒体服务器 REST API 模型（`models/radarr.py`、`models/sonarr.py`、`models/jellyfin.py`、`models/emby.py`）由 [scripts/generate_openapi_models.py](scripts/generate_openapi_models.py) 基于各服务官方 OpenAPI 文档按需裁剪并自动生成；各服务的 Webhook 回调模型则独立保存在 `models/*_webhook.py` 中手写维护。
+
+### 当前适配的 API 版本
+
+| 服务 | OpenAPI 标题 | 当前适配版本 | OpenAPI 规范 | 上游文档来源 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Radarr** | `Radarr` | `3.0.0` (API v3) | `3.0.4` | [Radarr openapi.json](https://raw.githubusercontent.com/Radarr/Radarr/develop/src/Radarr.Api.V3/openapi.json) |
+| **Sonarr** | `Sonarr` | `3.0.0` (API v3) | `3.0.1` | [Sonarr openapi.json](https://raw.githubusercontent.com/Sonarr/Sonarr/main/src/Sonarr.Api.V3/openapi.json) |
+| **Jellyfin** | `Jellyfin API` | `12.4.0` (Stable) | `3.0.4` | [Jellyfin openapi-stable.json](https://api.jellyfin.org/openapi/jellyfin-openapi-stable.json) |
+| **Emby** | `Emby Server REST API` | `4.10.2.0` | `3.0.1` | [Emby openapi_v3.json](https://raw.githubusercontent.com/MediaBrowser/Emby.SDK/refs/heads/master/Resources/OpenApi/openapi_v3.json) |
+
+### 模型同步与自动化
+
+* **自动同步 (GitHub Actions)**：仓库配置了 [.github/workflows/sync-openapi-models.yml](.github/workflows/sync-openapi-models.yml)，每周自动检测上游 OpenAPI 变更并创建更新 PR，也支持在 Actions 页面手动触发（可选全部或单个服务）。
+* **本地手动更新**（需可用 `uvx` 或 `datamodel-codegen`）：
+  ```bash
+  # 使用内置官方 OpenAPI 地址一键更新指定服务模型
+  uv run python -m scripts.generate_openapi_models radarr
+  uv run python -m scripts.generate_openapi_models sonarr
+  uv run python -m scripts.generate_openapi_models jellyfin
+  uv run python -m scripts.generate_openapi_models emby
+  ```
+
+---
+
 ## 🤝 贡献
 
 欢迎提交 Pull Request 或 Issue 来改进这个项目！
