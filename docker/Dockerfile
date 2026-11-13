@@ -37,9 +37,9 @@ COPY --from=builder /app/.venv /app/.venv
 
 COPY . .
 
-RUN mkdir -p /app/data /app/logs
+RUN mkdir -p /var/lib/tellymeta /var/log/tellymeta
 
-VOLUME ["/app/data", "/app/logs"]
+VOLUME ["/var/lib/tellymeta", "/var/log/tellymeta"]
 
 EXPOSE 5080
 

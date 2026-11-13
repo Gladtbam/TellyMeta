@@ -30,11 +30,11 @@ from telethon.tl.types import (
 )
 from telethon.tl.types.messages import ChatFull
 
-from core.config import get_settings
+from core.config import get_data_dir, get_settings
 
 settings = get_settings()
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 

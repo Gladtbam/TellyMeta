@@ -8,8 +8,8 @@ services:
       - "5080:5080"
 
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./data:/var/lib/tellymeta
+      - ./logs:/var/log/tellymeta
     
     # 环境变量配置
     # 建议使用 .env 文件，也可以直接在这里定义

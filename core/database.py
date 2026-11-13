@@ -9,9 +9,9 @@ from sqlalchemy import MetaData, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-from core.config import get_settings
+from core.config import get_data_dir, get_settings
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 

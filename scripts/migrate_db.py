@@ -1,12 +1,12 @@
 """SQLite 与 PostgreSQL 双向数据迁移脚本。
 
 用法示例:
-    # 将默认 SQLite (data/tellymeta.db) 迁移到 .env 中配置的 PostgreSQL
+    # 将默认 SQLite 迁移到 .env 中配置的 PostgreSQL
     uv run python -m scripts.migrate_db
 
     # 显式指定源库与目标库（支持 SQLite 文件路径或完整 URL）
     uv run python -m scripts.migrate_db \\
-        --source data/tellymeta.db \\
+        --source /var/lib/tellymeta/tellymeta.db \\
         --target postgresql+asyncpg://user:pass@127.0.0.1:5432/tellymeta
 
     # 清空目标库已有数据后重新迁移
@@ -214,7 +214,7 @@ def main() -> None:
     parser.add_argument(
         "--source",
         default=None,
-        help="源数据库 URL 或 SQLite 文件路径（默认 data/tellymeta.db）",
+        help="源数据库 URL 或 SQLite 文件路径（默认使用系统标准数据目录下的 tellymeta.db）",
     )
     parser.add_argument(
         "--target",

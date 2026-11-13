@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -6,12 +7,59 @@ from pathlib import Path
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-LOGS_DIR = Path(__file__).parent.parent / "logs"
+
+def get_data_dir() -> Path:
+    """获取数据目录（优先使用配置项，否则按操作系统标准路径解析）"""
+    configured = (get_settings().data_dir or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if os.name == "nt":
+        base = Path(
+            os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+        )
+        return base / "TellyMeta" / "data"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "TellyMeta"
+    if (
+        hasattr(os, "geteuid")
+        and os.geteuid() == 0
+        and not os.environ.get("XDG_DATA_HOME")
+    ):
+        return Path("/var/lib/tellymeta")
+    xdg_data = Path(
+        os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    )
+    return xdg_data / "tellymeta"
+
+
+def get_logs_dir() -> Path:
+    """获取日志目录（优先使用配置项，否则按操作系统标准路径解析）"""
+    configured = (get_settings().log_dir or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if os.name == "nt":
+        base = Path(
+            os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+        )
+        return base / "TellyMeta" / "logs"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "TellyMeta"
+    if (
+        hasattr(os, "geteuid")
+        and os.geteuid() == 0
+        and not os.environ.get("XDG_STATE_HOME")
+    ):
+        return Path("/var/log/tellymeta")
+    xdg_state = Path(
+        os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    )
+    return xdg_state / "tellymeta" / "logs"
 
 
 def setup_logging():
     settings = get_settings()
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    logs_dir = get_logs_dir()
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
 
@@ -31,7 +79,7 @@ def setup_logging():
     )
 
     logger.add(
-        LOGS_DIR / "tellymeta.log",
+        logs_dir / "tellymeta.log",
         level=settings.log_level.upper(),
         filter=console_filter,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
@@ -94,6 +142,8 @@ class Settings(BaseSettings):
     telegram_chat_id: int = 0
     telegram_webapp_url: str = ""
     database_url: str = ""
+    data_dir: str = ""
+    log_dir: str = ""
 
 
 @lru_cache
