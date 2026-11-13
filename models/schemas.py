@@ -170,6 +170,7 @@ class SystemConfigResponse(BaseModel):
     enable_verification: bool
     enable_cleanup_inactive_users: bool
     enable_mkv_process: bool = True
+    mkvtoolnix_available: bool = False
     mkv_exclude_keywords: str
     enable_llm_translate: bool = False
     ai_api_key_masked: str = ""

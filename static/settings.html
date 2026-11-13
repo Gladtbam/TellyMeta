@@ -238,6 +238,11 @@
             transform: translateX(20px);
         }
 
+        .switch input:disabled+.slider {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
         /* 按钮样式 */
         .btn {
             background-color: var(--bg-color);
@@ -382,7 +387,10 @@
                             class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content"><span class="item-title">自动清理 MKV 冗余字幕</span></div><label class="switch"><input
+                    <div class="item-content">
+                        <span class="item-title">自动清理 MKV 冗余字幕</span>
+                        <span class="item-subtitle" id="mkv-unavailable-hint" style="display:none;">未检测到 mkvtoolnix，开关已禁用</span>
+                    </div><label class="switch"><input
                             type="checkbox" id="toggle-mkv-process"
                             onchange="toggleSystem('enable_mkv_process')"><span
                             class="slider"></span></label>
@@ -745,8 +753,14 @@
                 document.getElementById('toggle-points').checked = !!s.enable_points;
                 document.getElementById('toggle-verification').checked = !!s.enable_verification;
                 document.getElementById('toggle-cleanup').checked = !!s.enable_cleanup_inactive_users;
-                const mkvEnabled = s.enable_mkv_process !== false;
-                document.getElementById('toggle-mkv-process').checked = mkvEnabled;
+                // 未检测到 mkvtoolnix 时禁用开关并隐藏排除关键词设置
+                const mkvAvailable = !!s.mkvtoolnix_available;
+                const mkvEnabled = mkvAvailable && s.enable_mkv_process !== false;
+                const mkvToggle = document.getElementById('toggle-mkv-process');
+                mkvToggle.disabled = !mkvAvailable;
+                mkvToggle.checked = mkvEnabled;
+                const mkvHint = document.getElementById('mkv-unavailable-hint');
+                if (mkvHint) mkvHint.style.display = mkvAvailable ? 'none' : 'block';
                 document.getElementById('mkv-exclude-keywords').value = s.mkv_exclude_keywords || '';
                 updateMkvExcludeVisibility(mkvEnabled);
 

@@ -50,7 +50,10 @@ async def lifespan(app: FastAPI):
 
     logger.info("启动应用程序生命周期上下文")
 
-    if check_mkvtoolnix():
+    # 启动时检测 mkvtoolnix 可用性并记录状态，供管理面板开关控制使用
+    mkvtoolnix_available = check_mkvtoolnix()
+    app.state.mkvtoolnix_available = mkvtoolnix_available
+    if mkvtoolnix_available:
         app.state.task_queue = asyncio.Queue()
         app.state.mkv_worker = asyncio.create_task(
             mkv_merge_task(app.state.task_queue, app_state=app.state)

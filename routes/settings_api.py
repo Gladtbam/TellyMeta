@@ -73,12 +73,22 @@ SYSTEM_KEY_MAP = {
 }
 
 
+def _is_mkvtoolnix_available(app) -> bool:
+    """判断当前运行环境是否已检测到 mkvtoolnix（优先读取启动时缓存的状态）"""
+    state = getattr(app, "state", None)
+    if state is None:
+        return False
+    if hasattr(state, "mkvtoolnix_available"):
+        return bool(state.mkvtoolnix_available)
+    return getattr(state, "task_queue", None) is not None
+
+
 @router.get(
     "/system",
     dependencies=[Depends(validate_admin_access)],
     response_model=SystemConfigResponse,
 )
-async def get_system_config(session: AsyncSession = Depends(get_db)):
+async def get_system_config(request: Request, session: AsyncSession = Depends(get_db)):
     """获取系统配置"""
     repo = ConfigRepository(session)
     llm_cfg = await repo.get_llm_config()
@@ -100,6 +110,7 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
             ConfigRepository.KEY_ENABLE_MKV_PROCESS, "true"
         )
         == "true",
+        "mkvtoolnix_available": _is_mkvtoolnix_available(request.app),
         "mkv_exclude_keywords": await repo.get_settings(
             ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, ""
         )
@@ -196,6 +207,12 @@ async def toggle_system_setting_endpoint(
     db_key = SYSTEM_KEY_MAP.get(key)
     if not db_key:
         raise HTTPException(status_code=400, detail=f"Invalid key: {key}")
+    # 未检测到 mkvtoolnix 时禁止切换 MKV 自动处理开关
+    if key == "enable_mkv_process" and not _is_mkvtoolnix_available(request.app):
+        raise HTTPException(
+            status_code=400,
+            detail="未检测到 mkvtoolnix (mkvmerge)，无法操作 MKV 自动处理开关",
+        )
     service = SettingsServices(request.app, session)
     result = await service.toggle_system_setting(db_key)
     if not result.success:
