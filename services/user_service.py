@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import get_settings
 from models.orm import RegistrationMode, ServerType, TelegramUser
 from repositories.code_repo import CodeRepository
+from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -36,6 +37,7 @@ class UserService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.session = session
         self.telegram_repo = TelegramRepository(session)
+        self.config_repo = ConfigRepository(session)
         self.media_repo = MediaRepository(session)
         self.code_repo = CodeRepository(session)
         self.server_repo = ServerRepository(session)
@@ -60,14 +62,23 @@ class UserService:
             is_consecutive = last_date == (today - timedelta(days=1))
         else:
             is_consecutive = False
-        bonus = 2 if is_consecutive else 0
+        points_cfg = await self.config_repo.get_points_config()
+        bonus = (
+            int(points_cfg["points_checkin_consecutive_bonus"]) if is_consecutive else 0
+        )
 
         consecutive_checkin_count = (
             (user.consecutive_checkin_count + 1) if is_consecutive else 1
         )
+        lucky_interval = int(points_cfg["points_checkin_lucky_interval"])
+        is_lucky = (
+            lucky_interval > 0 and consecutive_checkin_count % lucky_interval == 0
+        )
 
-        if consecutive_checkin_count % 7 != 0:
-            base_score = randint(1, 3)
+        if not is_lucky:
+            checkin_min = int(points_cfg["points_checkin_min"])
+            checkin_max = max(checkin_min, int(points_cfg["points_checkin_max"]))
+            base_score = randint(checkin_min, checkin_max)
             final_score = base_score + bonus
 
             update_user = await self.telegram_repo.update_checkin(

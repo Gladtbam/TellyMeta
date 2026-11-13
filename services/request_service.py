@@ -1,4 +1,3 @@
-import base64
 from datetime import datetime
 from typing import Any
 
@@ -26,7 +25,6 @@ from repositories.media_repo import MediaRepository
 from repositories.request_repo import RequestRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
-from services import media_service
 from services.notification_service import NotificationService
 from services.user_service import Result
 
@@ -688,9 +686,12 @@ class RequestService:
         ]
 
     async def get_request_cost(self) -> int:
-        """获取求片消耗积分"""
+        """获取求片消耗积分（支持按续费积分比例或固定积分）"""
+        points_cfg = await self.config_repo.get_points_config()
+        if points_cfg["points_request_mode"] == "fixed":
+            return int(points_cfg["points_request_fixed"])
         renew_score = await self.telegram_repo.get_renew_score()
-        return int(renew_score * 0.1)
+        return int(renew_score * float(points_cfg["points_request_ratio"]))
 
     async def get_requestable_libraries(self, media_server_id: int) -> list[dict]:
         """API: 获取可求片的库列表（按 Emby/Jellyfin 实例筛选）"""

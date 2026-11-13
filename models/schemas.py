@@ -183,6 +183,37 @@ class SystemConfigResponse(BaseModel):
     ai_concurrency: int = 1
     tmdb_api_key_masked: str = ""
     tvdb_api_key_masked: str = ""
+    points_renew_mode: str = "median"
+    points_renew_fixed: int = 100
+    points_renew_min: int = 100
+    points_renew_max: int = 1000
+    points_request_mode: str = "ratio"
+    points_request_ratio: float = 0.1
+    points_request_fixed: int = 10
+    points_checkin_min: int = 1
+    points_checkin_max: int = 3
+    points_checkin_consecutive_bonus: int = 2
+    points_checkin_lucky_interval: int = 7
+    points_message_daily_cap: int = 20
+    points_spam_threshold: int = 5
+
+
+class PointsConfigUpdateDto(BaseModel):
+    """积分、签到与定价规则配置更新请求"""
+
+    points_renew_mode: str = "median"
+    points_renew_fixed: int = 100
+    points_renew_min: int = 100
+    points_renew_max: int = 1000
+    points_request_mode: str = "ratio"
+    points_request_ratio: float = 0.1
+    points_request_fixed: int = 10
+    points_checkin_min: int = 1
+    points_checkin_max: int = 3
+    points_checkin_consecutive_bonus: int = 2
+    points_checkin_lucky_interval: int = 7
+    points_message_daily_cap: int = 20
+    points_spam_threshold: int = 5
 
 
 class MkvConfigUpdateDto(BaseModel):

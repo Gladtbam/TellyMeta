@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
+from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 from services.user_service import Result
 
@@ -25,6 +26,7 @@ class SettlementResult:
 class ScoreService:
     def __init__(self, session: AsyncSession, state: MessageTrackingState) -> None:
         self.state = state
+        self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)
 
     async def process_message(
@@ -53,7 +55,9 @@ class ScoreService:
         if user_id not in admin_ids:
             self.state.consecutive_count += 1
 
-        if self.state.consecutive_count > 5:
+        points_cfg = await self.config_repo.get_points_config()
+        spam_threshold = int(points_cfg["points_spam_threshold"])
+        if spam_threshold > 0 and self.state.consecutive_count > spam_threshold:
             # 重置状态以防止重复处罚
             self.state.consecutive_count = 0
 
@@ -77,14 +81,16 @@ class ScoreService:
     def _calculate_distribution(self) -> tuple[dict[int, int], int]:
         """积分计算逻辑: 简单线性模型
         每条消息 = 1 积分
-        单次结算每人上限 = 20 积分
+        单次结算每人上限 = 可配置的 points_message_daily_cap（默认 20 积分）
         """
+        points_cfg = ConfigRepository.get_points_config_from_cache()
+        daily_cap = int(points_cfg["points_message_daily_cap"])
         user_deltas = {}
         total_deltas = 0
 
         for user_id, count in self.state.message_counts.items():
-            # 简单限流: 超过20条也只算20分
-            score = min(count, 20)
+            # 简单限流: 超过上限也只算上限积分
+            score = min(count, daily_cap)
             if score > 0:
                 user_deltas[user_id] = score
                 total_deltas += score

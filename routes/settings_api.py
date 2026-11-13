@@ -26,6 +26,7 @@ from models.schemas import (
     MetadataConfigUpdateDto,
     MkvConfigUpdateDto,
     NsfwLibraryDto,
+    PointsConfigUpdateDto,
     ServerCreate,
     ServerDto,
     ServerUpdate,
@@ -93,6 +94,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
     repo = ConfigRepository(session)
     llm_cfg = await repo.get_llm_config()
     meta_cfg = await repo.get_metadata_config()
+    points_cfg = await repo.get_points_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -126,6 +128,29 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         "ai_concurrency": llm_cfg["ai_concurrency"],
         "tmdb_api_key_masked": "******" if meta_cfg["tmdb_api_key"] else "",
         "tvdb_api_key_masked": "******" if meta_cfg["tvdb_api_key"] else "",
+        **points_cfg,
+    }
+
+
+@router.post(
+    "/system/points",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_points_config_endpoint(
+    request: Request,
+    payload: PointsConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新积分、签到与定价规则配置"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_points_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "points_config",
+        "message": result.message,
     }
 
 

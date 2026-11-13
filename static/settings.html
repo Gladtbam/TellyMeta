@@ -118,6 +118,20 @@
             padding-bottom: 100px;
         }
 
+        .config-link {
+            color: var(--link-color);
+            font-size: 13px;
+            margin-right: 10px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .item-arrow {
+            color: var(--hint-color);
+            font-size: 18px;
+            margin-left: 8px;
+        }
+
         .section-title {
             font-size: 13px;
             color: var(--section-header-text-color);
@@ -370,7 +384,12 @@
         <div class="section">
             <div class="card">
                 <div class="item">
-                    <div class="item-content"><span class="item-title">积分/签到功能</span></div><label class="switch"><input
+                    <div class="item-content" style="cursor:pointer;" onclick="openModal('points-modal')">
+                        <span class="item-title">积分 / 签到功能</span>
+                        <span class="item-subtitle" id="points-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="points-config-btn" onclick="openModal('points-modal')">配置 ›</span>
+                    <label class="switch"><input
                             type="checkbox" id="toggle-points" onchange="toggleSystem('enable_points')"><span
                             class="slider"></span></label>
                 </div>
@@ -387,90 +406,197 @@
                             class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content">
+                    <div class="item-content" style="cursor:pointer;" onclick="openMkvModalIfEnabled()">
                         <span class="item-title">自动清理 MKV 冗余字幕</span>
-                        <span class="item-subtitle" id="mkv-unavailable-hint" style="display:none;">未检测到 mkvtoolnix，开关已禁用</span>
-                    </div><label class="switch"><input
+                        <span class="item-subtitle" id="mkv-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="mkv-config-btn" onclick="openMkvModalIfEnabled()">排除词 ›</span>
+                    <label class="switch"><input
                             type="checkbox" id="toggle-mkv-process"
                             onchange="toggleSystem('enable_mkv_process')"><span
                             class="slider"></span></label>
                 </div>
-                <div class="item" id="mkv-exclude-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-                    <div class="item-content">
-                        <span class="item-title">MKV 处理排除关键词</span>
-                        <span class="item-subtitle">路径包含任一关键词时跳过清理（逗号或换行分隔）</span>
-                    </div>
-                    <textarea id="mkv-exclude-keywords" class="form-input" rows="2"
-                        placeholder="例如: VCB-Studio, Remux"></textarea>
-                    <button type="button" class="btn btn-primary" style="margin-top:0"
-                        onclick="saveMkvExcludeKeywords()">保存排除关键词</button>
-                </div>
                 <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">启用 LLM 元数据翻译</span>
-                        <span class="item-subtitle">开启后可使用兼容 OpenAI 的模型自动翻译媒体简介与标题</span>
-                    </div><label class="switch"><input type="checkbox" id="toggle-llm-translate"
+                    <div class="item-content" style="cursor:pointer;" onclick="openModal('llm-modal')">
+                        <span class="item-title">LLM 元数据翻译</span>
+                        <span class="item-subtitle" id="llm-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="llm-config-btn" onclick="openModal('llm-modal')">配置 ›</span>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-llm-translate"
                             onchange="toggleSystem('enable_llm_translate')"><span class="slider"></span></label>
                 </div>
-                <div class="item" id="llm-config-row"
-                    style="display:none; flex-direction:column; align-items:stretch; gap:8px;">
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">AI Base URL</label>
-                        <input type="url" id="llm-base-url" class="form-input"
-                            placeholder="https://api.openai.com/v1">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">AI API Key</label>
-                        <input type="password" id="llm-api-key" class="form-input"
-                            placeholder="输入 API Key">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">AI Model</label>
-                        <input type="text" id="llm-model" class="form-input" placeholder="gpt-4o-mini">
-                    </div>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                        <div class="form-group" style="margin-bottom:0">
-                            <label class="form-label">Temperature</label>
-                            <input type="number" step="0.1" min="0" max="2" id="llm-temperature" class="form-input">
-                        </div>
-                        <div class="form-group" style="margin-bottom:0">
-                            <label class="form-label">并发数 (Concurrency)</label>
-                            <input type="number" min="1" id="llm-concurrency" class="form-input">
-                        </div>
-                        <div class="form-group" style="margin-bottom:0">
-                            <label class="form-label">RPM (每分钟请求)</label>
-                            <input type="number" min="1" id="llm-rpm" class="form-input" placeholder="留空不限制">
-                        </div>
-                        <div class="form-group" style="margin-bottom:0">
-                            <label class="form-label">RPD (每日请求)</label>
-                            <input type="number" min="1" id="llm-rpd" class="form-input" placeholder="留空不限制">
-                        </div>
-                    </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">TPM (每分钟 Token)</label>
-                        <input type="number" min="1" id="llm-tpm" class="form-input" placeholder="留空不限制">
-                    </div>
-                    <button type="button" class="btn btn-primary" style="margin-top:0"
-                        onclick="saveLlmConfig()">保存 LLM 配置</button>
-                </div>
-                <div class="item" style="flex-direction:column; align-items:stretch; gap:8px;">
+                <div class="item" style="cursor:pointer;" onclick="openModal('metadata-modal')">
                     <div class="item-content">
                         <span class="item-title">元数据 API (TMDB / TVDB)</span>
-                        <span class="item-subtitle">两者均可选，同时配置时 TMDB 优先级高于 TVDB</span>
+                        <span class="item-subtitle" id="metadata-summary">加载中...</span>
                     </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">TMDB API Key</label>
-                        <input type="password" id="tmdb-api-key" class="form-input"
-                            placeholder="输入 TMDB API Key">
-                    </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">TVDB API Key</label>
-                        <input type="password" id="tvdb-api-key" class="form-input"
-                            placeholder="输入 TVDB API Key">
-                    </div>
-                    <button type="button" class="btn btn-primary" style="margin-top:0"
-                        onclick="saveMetadataConfig()">保存元数据配置</button>
+                    <span class="item-arrow">›</span>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 积分与定价规则弹窗 -->
+    <div class="modal-overlay" id="points-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>积分、签到与定价规则</span>
+                <span class="modal-close" onclick="closeModal('points-modal')">取消</span>
+            </div>
+            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">续费 / 注册积分模式</label>
+                    <select id="points-renew-mode" class="form-input" onchange="updatePointsModeFields()">
+                        <option value="median">动态中位数（按全群活跃积分自适应）</option>
+                        <option value="fixed">固定积分</option>
+                    </select>
+                </div>
+                <div class="form-group" id="points-renew-fixed-group" style="display:none; margin-bottom:0">
+                    <label class="form-label">固定续费 / 注册积分</label>
+                    <input type="number" min="0" id="points-renew-fixed" class="form-input">
+                </div>
+                <div id="points-renew-median-group" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">动态积分下限</label>
+                        <input type="number" min="0" id="points-renew-min" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">动态积分上限</label>
+                        <input type="number" min="0" id="points-renew-max" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">求片定价模式</label>
+                    <select id="points-request-mode" class="form-input" onchange="updatePointsModeFields()">
+                        <option value="ratio">按续费积分比例</option>
+                        <option value="fixed">固定积分</option>
+                    </select>
+                </div>
+                <div class="form-group" id="points-request-ratio-group" style="margin-bottom:0">
+                    <label class="form-label">求片积分比例（例如 0.1 表示 10%）</label>
+                    <input type="number" step="0.01" min="0" id="points-request-ratio" class="form-input">
+                </div>
+                <div class="form-group" id="points-request-fixed-group" style="display:none; margin-bottom:0">
+                    <label class="form-label">求片固定积分</label>
+                    <input type="number" min="0" id="points-request-fixed" class="form-input">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">签到基础最小积分</label>
+                        <input type="number" min="0" id="points-checkin-min" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">签到基础最大积分</label>
+                        <input type="number" min="0" id="points-checkin-max" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">连签额外奖励</label>
+                        <input type="number" min="0" id="points-checkin-consecutive-bonus" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">幸运签到周期(天,0关闭)</label>
+                        <input type="number" min="0" id="points-checkin-lucky-interval" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">单次结算发言上限</label>
+                        <input type="number" min="0" id="points-message-daily-cap" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">刷屏警告连发阈值(0关闭)</label>
+                        <input type="number" min="0" id="points-spam-threshold" class="form-input">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="savePointsConfig()">保存积分与定价配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MKV 排除关键词弹窗 -->
+    <div class="modal-overlay" id="mkv-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>MKV 处理排除关键词</span>
+                <span class="modal-close" onclick="closeModal('mkv-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <span class="item-subtitle">路径包含任一关键词时跳过清理（逗号或换行分隔）</span>
+                <textarea id="mkv-exclude-keywords" class="form-input" rows="4"
+                    placeholder="例如: VCB-Studio, Remux"></textarea>
+                <button type="button" class="btn btn-primary" onclick="saveMkvExcludeKeywords()">保存排除关键词</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM 翻译配置弹窗 -->
+    <div class="modal-overlay" id="llm-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>LLM 元数据翻译配置</span>
+                <span class="modal-close" onclick="closeModal('llm-modal')">取消</span>
+            </div>
+            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">AI Base URL</label>
+                    <input type="url" id="llm-base-url" class="form-input"
+                        placeholder="https://api.openai.com/v1">
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">AI API Key</label>
+                    <input type="password" id="llm-api-key" class="form-input"
+                        placeholder="输入 API Key">
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">AI Model</label>
+                    <input type="text" id="llm-model" class="form-input" placeholder="gpt-4o-mini">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">Temperature</label>
+                        <input type="number" step="0.1" min="0" max="2" id="llm-temperature" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">并发数 (Concurrency)</label>
+                        <input type="number" min="1" id="llm-concurrency" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">RPM (每分钟请求)</label>
+                        <input type="number" min="1" id="llm-rpm" class="form-input" placeholder="留空不限制">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">RPD (每日请求)</label>
+                        <input type="number" min="1" id="llm-rpd" class="form-input" placeholder="留空不限制">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">TPM (每分钟 Token)</label>
+                    <input type="number" min="1" id="llm-tpm" class="form-input" placeholder="留空不限制">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveLlmConfig()">保存 LLM 配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 元数据 API 配置弹窗 -->
+    <div class="modal-overlay" id="metadata-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>元数据 API (TMDB / TVDB)</span>
+                <span class="modal-close" onclick="closeModal('metadata-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <span class="item-subtitle">两者均可选，同时配置时 TMDB 优先级高于 TVDB</span>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">TMDB API Key</label>
+                    <input type="password" id="tmdb-api-key" class="form-input"
+                        placeholder="输入 TMDB API Key">
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">TVDB API Key</label>
+                    <input type="password" id="tvdb-api-key" class="form-input"
+                        placeholder="输入 TVDB API Key">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveMetadataConfig()">保存元数据配置</button>
             </div>
         </div>
     </div>
@@ -750,17 +876,32 @@
             if (topics.status === 'fulfilled') topicData = topics.value;
             if (sys.status === 'fulfilled') {
                 const s = sys.value;
-                document.getElementById('toggle-points').checked = !!s.enable_points;
+                const pointsEnabled = !!s.enable_points;
+                document.getElementById('toggle-points').checked = pointsEnabled;
+                document.getElementById('points-renew-mode').value = s.points_renew_mode || 'median';
+                document.getElementById('points-renew-fixed').value = s.points_renew_fixed ?? 100;
+                document.getElementById('points-renew-min').value = s.points_renew_min ?? 100;
+                document.getElementById('points-renew-max').value = s.points_renew_max ?? 1000;
+                document.getElementById('points-request-mode').value = s.points_request_mode || 'ratio';
+                document.getElementById('points-request-ratio').value = s.points_request_ratio ?? 0.1;
+                document.getElementById('points-request-fixed').value = s.points_request_fixed ?? 10;
+                document.getElementById('points-checkin-min').value = s.points_checkin_min ?? 1;
+                document.getElementById('points-checkin-max').value = s.points_checkin_max ?? 3;
+                document.getElementById('points-checkin-consecutive-bonus').value = s.points_checkin_consecutive_bonus ?? 2;
+                document.getElementById('points-checkin-lucky-interval').value = s.points_checkin_lucky_interval ?? 7;
+                document.getElementById('points-message-daily-cap').value = s.points_message_daily_cap ?? 20;
+                document.getElementById('points-spam-threshold').value = s.points_spam_threshold ?? 5;
+                updatePointsModeFields();
+                updatePointsConfigVisibility(pointsEnabled);
+
                 document.getElementById('toggle-verification').checked = !!s.enable_verification;
                 document.getElementById('toggle-cleanup').checked = !!s.enable_cleanup_inactive_users;
-                // 未检测到 mkvtoolnix 时禁用开关并隐藏排除关键词设置
-                const mkvAvailable = !!s.mkvtoolnix_available;
-                const mkvEnabled = mkvAvailable && s.enable_mkv_process !== false;
+                // 未检测到 mkvtoolnix 时禁用开关并隐藏排除关键词入口
+                window._mkvAvailable = !!s.mkvtoolnix_available;
+                const mkvEnabled = window._mkvAvailable && s.enable_mkv_process !== false;
                 const mkvToggle = document.getElementById('toggle-mkv-process');
-                mkvToggle.disabled = !mkvAvailable;
+                mkvToggle.disabled = !window._mkvAvailable;
                 mkvToggle.checked = mkvEnabled;
-                const mkvHint = document.getElementById('mkv-unavailable-hint');
-                if (mkvHint) mkvHint.style.display = mkvAvailable ? 'none' : 'block';
                 document.getElementById('mkv-exclude-keywords').value = s.mkv_exclude_keywords || '';
                 updateMkvExcludeVisibility(mkvEnabled);
 
@@ -778,28 +919,130 @@
 
                 document.getElementById('tmdb-api-key').value = s.tmdb_api_key_masked || '';
                 document.getElementById('tvdb-api-key').value = s.tvdb_api_key_masked || '';
+                updateMetadataSummary();
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
         }
 
-        function updateMkvExcludeVisibility(enabled) {
-            const row = document.getElementById('mkv-exclude-row');
-            if (row) {
-                row.style.display = enabled ? 'flex' : 'none';
+        function updatePointsConfigVisibility(enabled) {
+            const btn = document.getElementById('points-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('points-summary');
+            if (!summary) return;
+            if (!enabled) {
+                summary.innerText = '已关闭';
+                return;
             }
+            const renewMode = document.getElementById('points-renew-mode').value;
+            const renewText = renewMode === 'fixed'
+                ? `固定 ${document.getElementById('points-renew-fixed').value || 100}`
+                : `中位数 ${document.getElementById('points-renew-min').value || 100}-${document.getElementById('points-renew-max').value || 1000}`;
+            const reqMode = document.getElementById('points-request-mode').value;
+            const reqText = reqMode === 'fixed'
+                ? `固定 ${document.getElementById('points-request-fixed').value || 10}`
+                : `${Math.round(parseFloat(document.getElementById('points-request-ratio').value || '0.1') * 100)}%`;
+            const cMin = document.getElementById('points-checkin-min').value || 1;
+            const cMax = document.getElementById('points-checkin-max').value || 3;
+            summary.innerText = `续费: ${renewText} · 求片: ${reqText} · 签到: ${cMin}-${cMax}分`;
+        }
+
+        function updatePointsModeFields() {
+            const renewMode = document.getElementById('points-renew-mode').value;
+            document.getElementById('points-renew-fixed-group').style.display = renewMode === 'fixed' ? 'block' : 'none';
+            document.getElementById('points-renew-median-group').style.display = renewMode === 'median' ? 'grid' : 'none';
+
+            const reqMode = document.getElementById('points-request-mode').value;
+            document.getElementById('points-request-ratio-group').style.display = reqMode === 'ratio' ? 'block' : 'none';
+            document.getElementById('points-request-fixed-group').style.display = reqMode === 'fixed' ? 'block' : 'none';
+        }
+
+        async function savePointsConfig() {
+            const parseIntOr = (id, def) => {
+                const raw = document.getElementById(id).value.trim();
+                const val = parseInt(raw, 10);
+                return Number.isNaN(val) ? def : val;
+            };
+            const parseFloatOr = (id, def) => {
+                const raw = document.getElementById(id).value.trim();
+                const val = parseFloat(raw);
+                return Number.isNaN(val) ? def : val;
+            };
+            const payload = {
+                points_renew_mode: document.getElementById('points-renew-mode').value,
+                points_renew_fixed: parseIntOr('points-renew-fixed', 100),
+                points_renew_min: parseIntOr('points-renew-min', 100),
+                points_renew_max: parseIntOr('points-renew-max', 1000),
+                points_request_mode: document.getElementById('points-request-mode').value,
+                points_request_ratio: parseFloatOr('points-request-ratio', 0.1),
+                points_request_fixed: parseIntOr('points-request-fixed', 10),
+                points_checkin_min: parseIntOr('points-checkin-min', 1),
+                points_checkin_max: parseIntOr('points-checkin-max', 3),
+                points_checkin_consecutive_bonus: parseIntOr('points-checkin-consecutive-bonus', 2),
+                points_checkin_lucky_interval: parseIntOr('points-checkin-lucky-interval', 7),
+                points_message_daily_cap: parseIntOr('points-message-daily-cap', 20),
+                points_spam_threshold: parseIntOr('points-spam-threshold', 5)
+            };
+            const res = await api('/system/points', 'POST', payload);
+            updatePointsConfigVisibility(document.getElementById('toggle-points').checked);
+            closeModal('points-modal');
+            tg.showAlert('✅ ' + (res.message || '积分与定价配置已保存'));
+        }
+
+        function openMkvModalIfEnabled() {
+            const toggle = document.getElementById('toggle-mkv-process');
+            if (!window._mkvAvailable || !toggle.checked) return;
+            openModal('mkv-modal');
+        }
+
+        function updateMkvExcludeVisibility(enabled) {
+            const btn = document.getElementById('mkv-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('mkv-summary');
+            if (!summary) return;
+            if (!window._mkvAvailable) {
+                summary.innerText = '未检测到 mkvtoolnix，开关已禁用';
+                return;
+            }
+            if (!enabled) {
+                summary.innerText = '已关闭';
+                return;
+            }
+            const raw = (document.getElementById('mkv-exclude-keywords').value || '').trim();
+            const count = raw ? raw.replace(/\r\n/g, '\n').replace(/,/g, '\n').split('\n').filter(s => s.trim()).length : 0;
+            summary.innerText = count > 0 ? `已配置 ${count} 个排除关键词` : '未设置排除关键词';
         }
 
         function updateLlmConfigVisibility(enabled) {
-            const row = document.getElementById('llm-config-row');
-            if (row) {
-                row.style.display = enabled ? 'flex' : 'none';
+            const btn = document.getElementById('llm-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('llm-summary');
+            if (!summary) return;
+            if (!enabled) {
+                summary.innerText = '已关闭';
+                return;
             }
+            const hasKey = !!(document.getElementById('llm-api-key').value || '').trim();
+            const model = (document.getElementById('llm-model').value || 'gpt-4o-mini').trim();
+            const rpm = (document.getElementById('llm-rpm').value || '').trim();
+            summary.innerText = hasKey
+                ? `${model}${rpm ? ` · RPM ${rpm}` : ''}`
+                : `${model} · 未填写 API Key`;
+        }
+
+        function updateMetadataSummary() {
+            const summary = document.getElementById('metadata-summary');
+            if (!summary) return;
+            const hasTmdb = !!(document.getElementById('tmdb-api-key').value || '').trim();
+            const hasTvdb = !!(document.getElementById('tvdb-api-key').value || '').trim();
+            summary.innerText = `TMDB: ${hasTmdb ? '已配置' : '未配置'} · TVDB: ${hasTvdb ? '已配置' : '未配置'}`;
         }
 
         async function saveMkvExcludeKeywords() {
             const val = document.getElementById('mkv-exclude-keywords').value;
             await api('/system/mkv_exclude_keywords', 'POST', { mkv_exclude_keywords: val });
+            updateMkvExcludeVisibility(document.getElementById('toggle-mkv-process').checked);
+            closeModal('mkv-modal');
             tg.showAlert('✅ MKV 排除关键词已保存');
         }
 
@@ -822,6 +1065,8 @@
             if (payload.ai_api_key && payload.ai_api_key !== '******') {
                 document.getElementById('llm-api-key').value = '******';
             }
+            updateLlmConfigVisibility(document.getElementById('toggle-llm-translate').checked);
+            closeModal('llm-modal');
             tg.showAlert('✅ ' + (res.message || 'LLM 翻译配置已保存'));
         }
 
@@ -837,6 +1082,8 @@
             if (payload.tvdb_api_key && payload.tvdb_api_key !== '******') {
                 document.getElementById('tvdb-api-key').value = '******';
             }
+            updateMetadataSummary();
+            closeModal('metadata-modal');
             tg.showAlert('✅ ' + (res.message || 'TMDB/TVDB 元数据配置已保存'));
         }
 
@@ -1229,7 +1476,9 @@
             const el = document.getElementById(SYSTEM_TOGGLE_ID_MAP[key] || `toggle-${key.split('_')[1]}`);
             try {
                 const res = await api(`/system/${key}/toggle`, 'POST');
-                if (key === 'enable_mkv_process') {
+                if (key === 'enable_points') {
+                    updatePointsConfigVisibility(!!res.new_state);
+                } else if (key === 'enable_mkv_process') {
                     updateMkvExcludeVisibility(res.new_state !== false);
                 } else if (key === 'enable_llm_translate') {
                     updateLlmConfigVisibility(!!res.new_state);
@@ -1237,7 +1486,9 @@
             } catch (e) {
                 if (el) {
                     el.checked = !el.checked;
-                    if (key === 'enable_mkv_process') {
+                    if (key === 'enable_points') {
+                        updatePointsConfigVisibility(el.checked);
+                    } else if (key === 'enable_mkv_process') {
                         updateMkvExcludeVisibility(el.checked);
                     } else if (key === 'enable_llm_translate') {
                         updateLlmConfigVisibility(el.checked);

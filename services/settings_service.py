@@ -26,6 +26,7 @@ from models.schemas import (
     LlmConfigUpdateDto,
     MetadataConfigUpdateDto,
     NsfwLibraryDto,
+    PointsConfigUpdateDto,
     QualityProfileDto,
     RootFolderDto,
 )
@@ -479,6 +480,74 @@ class SettingsServices:
                 message="LLM 配置已保存（当前未填写 API Key，翻译客户端尚未激活）",
             )
         return Result(success=True, message="LLM 翻译配置已保存并生效")
+
+    async def update_points_config(self, payload: PointsConfigUpdateDto) -> Result:
+        """校验并保存积分、签到与定价规则配置。
+
+        Args:
+            payload: 积分与定价规则更新请求体。
+
+        Returns:
+            操作结果。
+        """
+        if payload.points_renew_mode not in ("median", "fixed"):
+            return Result(success=False, message="续费积分模式必须为 median 或 fixed")
+        if payload.points_request_mode not in ("ratio", "fixed"):
+            return Result(success=False, message="求片定价模式必须为 ratio 或 fixed")
+        if (
+            payload.points_renew_fixed < 0
+            or payload.points_renew_min < 0
+            or payload.points_renew_max < 0
+        ):
+            return Result(success=False, message="续费/注册积分不能为负数")
+        if payload.points_renew_max < payload.points_renew_min:
+            return Result(success=False, message="动态中位数上限不能小于下限")
+        if payload.points_request_ratio < 0:
+            return Result(success=False, message="求片积分比例不能为负数")
+        if payload.points_request_fixed < 0:
+            return Result(success=False, message="求片固定积分不能为负数")
+        if payload.points_checkin_min < 0 or payload.points_checkin_max < 0:
+            return Result(success=False, message="签到基础积分不能为负数")
+        if payload.points_checkin_max < payload.points_checkin_min:
+            return Result(success=False, message="签到积分最大值不能小于最小值")
+        if payload.points_checkin_consecutive_bonus < 0:
+            return Result(success=False, message="连签额外奖励不能为负数")
+        if payload.points_checkin_lucky_interval < 0:
+            return Result(success=False, message="幸运签到周期不能为负数")
+        if payload.points_message_daily_cap < 0 or payload.points_spam_threshold < 0:
+            return Result(success=False, message="发言积分上限与刷屏阈值不能为负数")
+
+        items = {
+            ConfigRepository.KEY_POINTS_RENEW_MODE: payload.points_renew_mode,
+            ConfigRepository.KEY_POINTS_RENEW_FIXED: str(payload.points_renew_fixed),
+            ConfigRepository.KEY_POINTS_RENEW_MIN: str(payload.points_renew_min),
+            ConfigRepository.KEY_POINTS_RENEW_MAX: str(payload.points_renew_max),
+            ConfigRepository.KEY_POINTS_REQUEST_MODE: payload.points_request_mode,
+            ConfigRepository.KEY_POINTS_REQUEST_RATIO: str(
+                payload.points_request_ratio
+            ),
+            ConfigRepository.KEY_POINTS_REQUEST_FIXED: str(
+                payload.points_request_fixed
+            ),
+            ConfigRepository.KEY_POINTS_CHECKIN_MIN: str(payload.points_checkin_min),
+            ConfigRepository.KEY_POINTS_CHECKIN_MAX: str(payload.points_checkin_max),
+            ConfigRepository.KEY_POINTS_CHECKIN_CONSECUTIVE_BONUS: str(
+                payload.points_checkin_consecutive_bonus
+            ),
+            ConfigRepository.KEY_POINTS_CHECKIN_LUCKY_INTERVAL: str(
+                payload.points_checkin_lucky_interval
+            ),
+            ConfigRepository.KEY_POINTS_MESSAGE_DAILY_CAP: str(
+                payload.points_message_daily_cap
+            ),
+            ConfigRepository.KEY_POINTS_SPAM_THRESHOLD: str(
+                payload.points_spam_threshold
+            ),
+        }
+        for key, value in items.items():
+            await self.config_repo.set_settings(key, value)
+
+        return Result(success=True, message="积分、签到与定价规则已保存并生效")
 
     async def get_nsfw_libraries_data(self, server_id: int) -> list[NsfwLibraryDto]:
         """获取服务器所有媒体库的 NSFW 状态"""

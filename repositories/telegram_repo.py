@@ -6,6 +6,7 @@ from sqlalchemy import bindparam, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import TelegramUser
+from repositories.config_repo import ConfigRepository
 
 
 class TelegramRepository:
@@ -215,25 +216,28 @@ class TelegramRepository:
         await self.session.commit()
 
     async def get_renew_score(self) -> int:
-        """获取续费所需积分 (动态中位数模式)
-        逻辑：
-        1. 获取所有积分 > 10 的有效用户积分
-        2. 计算中位数 (Median)
-        3. 限制范围在 [100, 1000] 之间，防止过高或过低
+        """获取续费/注册所需积分（支持固定积分或动态中位数模式）。
 
         Returns:
-            int: 动态计算的积分门槛
+            int: 计算后的积分门槛。
         """
+        points_cfg = await ConfigRepository(self.session).get_points_config()
+        if points_cfg["points_renew_mode"] == "fixed":
+            return int(points_cfg["points_renew_fixed"])
+
+        min_score = int(points_cfg["points_renew_min"])
+        max_score = int(points_cfg["points_renew_max"])
+
         stmt = select(TelegramUser.score).where(TelegramUser.score > 10)
         result = await self.session.execute(stmt)
         scores = result.scalars().all()
 
         if not scores:
-            return 100
+            return min_score
 
         final_score = int(median(scores))
 
-        return max(100, min(final_score, 1000))
+        return max(min_score, min(final_score, max_score))
 
     # async def update_user_score(self, user_id: int, score: int):
     #     await self.session.execute(
