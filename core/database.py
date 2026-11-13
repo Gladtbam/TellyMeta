@@ -140,12 +140,21 @@ async def backup_database() -> None:
         logger.exception("备份数据库时出错: {}", e)
         return
 
+    from repositories.config_repo import ConfigRepository
+
+    retention_days = ConfigRepository.get_ops_config_from_cache()[
+        "db_backup_retention_days"
+    ]
+    if retention_days <= 0:
+        return
+
     for file in backup_dir.iterdir():
         try:
             if (
                 file.is_file()
                 and file.name.endswith(".db")
-                and file.stat().st_mtime < datetime.now().timestamp() - 86400 * 7
+                and file.stat().st_mtime
+                < datetime.now().timestamp() - 86400 * retention_days
             ):
                 file.unlink()
                 logger.info("删除过期备份文件: {}", file.name)

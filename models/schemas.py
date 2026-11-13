@@ -200,6 +200,41 @@ class SystemConfigResponse(BaseModel):
     account_delete_grace_days: int = 7
     account_renew_advance_days: int = 7
     request_expire_days: int = 7
+    schedule_ban_expired_day: str = "*"
+    schedule_ban_expired_time: str = "00:15"
+    schedule_delete_banned_day: str = "*"
+    schedule_delete_banned_time: str = "00:30"
+    schedule_cleanup_inactive_day: str = "*"
+    schedule_cleanup_inactive_time: str = "01:00"
+    schedule_settle_scores_day: str = "*"
+    schedule_settle_scores_time: str = "23:00"
+    schedule_cleanup_cache_day: str = "*"
+    schedule_cleanup_cache_time: str = "03:00"
+    schedule_backup_db_day: str = "*"
+    schedule_backup_db_time: str = "04:00"
+    schedule_request_expire_hours: int = 1
+    schedule_nsfw_retry_minutes: int = 10
+    db_backup_retention_days: int = 7
+
+
+class OpsConfigUpdateDto(BaseModel):
+    """定时任务调度与运维策略配置更新请求"""
+
+    schedule_ban_expired_day: str = "*"
+    schedule_ban_expired_time: str = "00:15"
+    schedule_delete_banned_day: str = "*"
+    schedule_delete_banned_time: str = "00:30"
+    schedule_cleanup_inactive_day: str = "*"
+    schedule_cleanup_inactive_time: str = "01:00"
+    schedule_settle_scores_day: str = "*"
+    schedule_settle_scores_time: str = "23:00"
+    schedule_cleanup_cache_day: str = "*"
+    schedule_cleanup_cache_time: str = "03:00"
+    schedule_backup_db_day: str = "*"
+    schedule_backup_db_time: str = "04:00"
+    schedule_request_expire_hours: int = 1
+    schedule_nsfw_retry_minutes: int = 10
+    db_backup_retention_days: int = 7
 
 
 class PointsConfigUpdateDto(BaseModel):

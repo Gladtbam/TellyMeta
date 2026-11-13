@@ -26,6 +26,7 @@ from models.schemas import (
     MetadataConfigUpdateDto,
     MkvConfigUpdateDto,
     NsfwLibraryDto,
+    OpsConfigUpdateDto,
     PointsConfigUpdateDto,
     PolicyConfigUpdateDto,
     ServerCreate,
@@ -97,6 +98,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
     meta_cfg = await repo.get_metadata_config()
     points_cfg = await repo.get_points_config()
     policy_cfg = await repo.get_policy_config()
+    ops_cfg = await repo.get_ops_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -132,6 +134,29 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         "tvdb_api_key_masked": "******" if meta_cfg["tvdb_api_key"] else "",
         **points_cfg,
         **policy_cfg,
+        **ops_cfg,
+    }
+
+
+@router.post(
+    "/system/ops",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_ops_config_endpoint(
+    request: Request,
+    payload: OpsConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新定时任务调度与运维策略配置"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_ops_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "ops_config",
+        "message": result.message,
     }
 
 

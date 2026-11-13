@@ -48,6 +48,23 @@ class ConfigRepository:
     KEY_ACCOUNT_RENEW_ADVANCE_DAYS = "policy:account_renew_advance_days"
     KEY_REQUEST_EXPIRE_DAYS = "policy:request_expire_days"
 
+    # Ops / Scheduler Keys
+    KEY_SCHEDULE_BAN_EXPIRED_DAY = "ops:schedule_ban_expired_day"
+    KEY_SCHEDULE_BAN_EXPIRED_TIME = "ops:schedule_ban_expired_time"
+    KEY_SCHEDULE_DELETE_BANNED_DAY = "ops:schedule_delete_banned_day"
+    KEY_SCHEDULE_DELETE_BANNED_TIME = "ops:schedule_delete_banned_time"
+    KEY_SCHEDULE_CLEANUP_INACTIVE_DAY = "ops:schedule_cleanup_inactive_day"
+    KEY_SCHEDULE_CLEANUP_INACTIVE_TIME = "ops:schedule_cleanup_inactive_time"
+    KEY_SCHEDULE_SETTLE_SCORES_DAY = "ops:schedule_settle_scores_day"
+    KEY_SCHEDULE_SETTLE_SCORES_TIME = "ops:schedule_settle_scores_time"
+    KEY_SCHEDULE_CLEANUP_CACHE_DAY = "ops:schedule_cleanup_cache_day"
+    KEY_SCHEDULE_CLEANUP_CACHE_TIME = "ops:schedule_cleanup_cache_time"
+    KEY_SCHEDULE_BACKUP_DB_DAY = "ops:schedule_backup_db_day"
+    KEY_SCHEDULE_BACKUP_DB_TIME = "ops:schedule_backup_db_time"
+    KEY_SCHEDULE_REQUEST_EXPIRE_HOURS = "ops:schedule_request_expire_hours"
+    KEY_SCHEDULE_NSFW_RETRY_MINUTES = "ops:schedule_nsfw_retry_minutes"
+    KEY_DB_BACKUP_RETENTION_DAYS = "ops:db_backup_retention_days"
+
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
         """解析 MKV 排除关键词列表（支持逗号或换行分隔）"""
@@ -108,6 +125,21 @@ class ConfigRepository:
             cls.KEY_ACCOUNT_DELETE_GRACE_DAYS: "7",
             cls.KEY_ACCOUNT_RENEW_ADVANCE_DAYS: "7",
             cls.KEY_REQUEST_EXPIRE_DAYS: "7",
+            cls.KEY_SCHEDULE_BAN_EXPIRED_DAY: "*",
+            cls.KEY_SCHEDULE_BAN_EXPIRED_TIME: "00:15",
+            cls.KEY_SCHEDULE_DELETE_BANNED_DAY: "*",
+            cls.KEY_SCHEDULE_DELETE_BANNED_TIME: "00:30",
+            cls.KEY_SCHEDULE_CLEANUP_INACTIVE_DAY: "*",
+            cls.KEY_SCHEDULE_CLEANUP_INACTIVE_TIME: "01:00",
+            cls.KEY_SCHEDULE_SETTLE_SCORES_DAY: "*",
+            cls.KEY_SCHEDULE_SETTLE_SCORES_TIME: "23:00",
+            cls.KEY_SCHEDULE_CLEANUP_CACHE_DAY: "*",
+            cls.KEY_SCHEDULE_CLEANUP_CACHE_TIME: "03:00",
+            cls.KEY_SCHEDULE_BACKUP_DB_DAY: "*",
+            cls.KEY_SCHEDULE_BACKUP_DB_TIME: "04:00",
+            cls.KEY_SCHEDULE_REQUEST_EXPIRE_HOURS: "1",
+            cls.KEY_SCHEDULE_NSFW_RETRY_MINUTES: "10",
+            cls.KEY_DB_BACKUP_RETENTION_DAYS: "7",
         }
 
         new_items = []
@@ -369,3 +401,107 @@ class ConfigRepository:
             if val is not None:
                 source[key] = val
         return self._build_policy_config(source)
+
+    @staticmethod
+    def _parse_hhmm(raw: str | None, default: str) -> str:
+        """校验并规范化 ``HH:MM`` 时间字符串，无效时返回默认值。"""
+        text = (raw or "").strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            return default
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError:
+            return default
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+        return default
+
+    @staticmethod
+    def _parse_cron_day(raw: str | None) -> str:
+        """读取并规范化 cron ``day`` 字段，留空时回退为 ``*``。"""
+        text = (raw or "").strip()
+        return text or "*"
+
+    @classmethod
+    def _build_ops_config(cls, source: dict[str, str]) -> dict[str, Any]:
+        """从配置键值字典解析定时任务调度与运维保留策略配置。"""
+        return {
+            "schedule_ban_expired_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_BAN_EXPIRED_DAY)
+            ),
+            "schedule_ban_expired_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_BAN_EXPIRED_TIME), "00:15"
+            ),
+            "schedule_delete_banned_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_DELETE_BANNED_DAY)
+            ),
+            "schedule_delete_banned_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_DELETE_BANNED_TIME), "00:30"
+            ),
+            "schedule_cleanup_inactive_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_CLEANUP_INACTIVE_DAY)
+            ),
+            "schedule_cleanup_inactive_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_CLEANUP_INACTIVE_TIME), "01:00"
+            ),
+            "schedule_settle_scores_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_SETTLE_SCORES_DAY)
+            ),
+            "schedule_settle_scores_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_SETTLE_SCORES_TIME), "23:00"
+            ),
+            "schedule_cleanup_cache_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_CLEANUP_CACHE_DAY)
+            ),
+            "schedule_cleanup_cache_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_CLEANUP_CACHE_TIME), "03:00"
+            ),
+            "schedule_backup_db_day": cls._parse_cron_day(
+                source.get(cls.KEY_SCHEDULE_BACKUP_DB_DAY)
+            ),
+            "schedule_backup_db_time": cls._parse_hhmm(
+                source.get(cls.KEY_SCHEDULE_BACKUP_DB_TIME), "04:00"
+            ),
+            "schedule_request_expire_hours": cls._parse_int(
+                source.get(cls.KEY_SCHEDULE_REQUEST_EXPIRE_HOURS), 1, 1
+            ),
+            "schedule_nsfw_retry_minutes": cls._parse_int(
+                source.get(cls.KEY_SCHEDULE_NSFW_RETRY_MINUTES), 10, 1
+            ),
+            "db_backup_retention_days": cls._parse_int(
+                source.get(cls.KEY_DB_BACKUP_RETENTION_DAYS), 7, 0
+            ),
+        }
+
+    @classmethod
+    def get_ops_config_from_cache(cls) -> dict[str, Any]:
+        """同步读取内存缓存中的定时任务调度与运维策略配置。"""
+        return cls._build_ops_config(cls.cache)
+
+    async def get_ops_config(self) -> dict[str, Any]:
+        """读取数据库/缓存中的定时任务调度与运维策略配置。"""
+        keys = (
+            self.KEY_SCHEDULE_BAN_EXPIRED_DAY,
+            self.KEY_SCHEDULE_BAN_EXPIRED_TIME,
+            self.KEY_SCHEDULE_DELETE_BANNED_DAY,
+            self.KEY_SCHEDULE_DELETE_BANNED_TIME,
+            self.KEY_SCHEDULE_CLEANUP_INACTIVE_DAY,
+            self.KEY_SCHEDULE_CLEANUP_INACTIVE_TIME,
+            self.KEY_SCHEDULE_SETTLE_SCORES_DAY,
+            self.KEY_SCHEDULE_SETTLE_SCORES_TIME,
+            self.KEY_SCHEDULE_CLEANUP_CACHE_DAY,
+            self.KEY_SCHEDULE_CLEANUP_CACHE_TIME,
+            self.KEY_SCHEDULE_BACKUP_DB_DAY,
+            self.KEY_SCHEDULE_BACKUP_DB_TIME,
+            self.KEY_SCHEDULE_REQUEST_EXPIRE_HOURS,
+            self.KEY_SCHEDULE_NSFW_RETRY_MINUTES,
+            self.KEY_DB_BACKUP_RETENTION_DAYS,
+        )
+        source: dict[str, str] = {}
+        for key in keys:
+            val = await self.get_settings(key)
+            if val is not None:
+                source[key] = val
+        return self._build_ops_config(source)

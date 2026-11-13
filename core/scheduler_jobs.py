@@ -45,6 +45,68 @@ def scheduled_job(trigger: str, **kwargs):
     return decorator
 
 
+def _split_hhmm(hhmm: str) -> tuple[int, int]:
+    """将 ``HH:MM`` 字符串拆分为 ``(hour, minute)`` 整数元组。"""
+    hour_str, minute_str = hhmm.split(":")
+    return int(hour_str), int(minute_str)
+
+
+def get_ops_schedule_overrides(
+    ops_cfg: dict[str, Any] | None = None,
+) -> dict[str, tuple[str, dict[str, Any]]]:
+    """根据运维配置生成各定时任务的触发器类型与参数映射。"""
+    cfg = ops_cfg or ConfigRepository.get_ops_config_from_cache()
+    cron_map = {
+        "ban_expired_users": (
+            cfg["schedule_ban_expired_day"],
+            cfg["schedule_ban_expired_time"],
+        ),
+        "delete_expired_banned_users": (
+            cfg["schedule_delete_banned_day"],
+            cfg["schedule_delete_banned_time"],
+        ),
+        "cleanup_inactive_users": (
+            cfg["schedule_cleanup_inactive_day"],
+            cfg["schedule_cleanup_inactive_time"],
+        ),
+        "settle_scores": (
+            cfg["schedule_settle_scores_day"],
+            cfg["schedule_settle_scores_time"],
+        ),
+        "cleanup_api_cache": (
+            cfg["schedule_cleanup_cache_day"],
+            cfg["schedule_cleanup_cache_time"],
+        ),
+        "auto_backup_db": (
+            cfg["schedule_backup_db_day"],
+            cfg["schedule_backup_db_time"],
+        ),
+    }
+    overrides: dict[str, tuple[str, dict[str, Any]]] = {}
+    for job_id, (day_expr, hhmm) in cron_map.items():
+        hour, minute = _split_hhmm(hhmm)
+        overrides[job_id] = ("cron", {"day": day_expr, "hour": hour, "minute": minute})
+    overrides["expire_pending_media_requests"] = (
+        "interval",
+        {"hours": int(cfg["schedule_request_expire_hours"])},
+    )
+    overrides["retry_pending_nsfw_revokes"] = (
+        "interval",
+        {"minutes": int(cfg["schedule_nsfw_retry_minutes"])},
+    )
+    return overrides
+
+
+def apply_ops_schedules(scheduler, ops_cfg: dict[str, Any] | None = None) -> None:
+    """将当前运维定时配置热应用到 APScheduler 调度器实例。"""
+    if scheduler is None:
+        return
+    overrides = get_ops_schedule_overrides(ops_cfg)
+    for job_id, (trigger, trigger_args) in overrides.items():
+        if scheduler.get_job(job_id) is not None:
+            scheduler.reschedule_job(job_id, trigger=trigger, **trigger_args)
+
+
 @scheduled_job("cron", hour=0, minute=15, id="ban_expired_users", replace_existing=True)
 async def ban_expired_users() -> None:
     """封禁过期用户

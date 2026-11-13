@@ -32,7 +32,7 @@ from core.initialization import (
     check_sqlite_version,
     initialize_admin,
 )
-from core.scheduler_jobs import SCHEDULER_JOBS_REGISTRY
+from core.scheduler_jobs import SCHEDULER_JOBS_REGISTRY, get_ops_schedule_overrides
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
@@ -180,8 +180,20 @@ async def lifespan(app: FastAPI):
         timezone=settings.timezone,
     )
 
+    overrides = get_ops_schedule_overrides()
     for job in SCHEDULER_JOBS_REGISTRY:
-        app.state.scheduler.add_job(job.func, job.trigger, **job.kwargs)
+        job_id = job.kwargs.get("id")
+        if job_id and job_id in overrides:
+            trigger, trigger_args = overrides[job_id]
+            merged_kwargs = {
+                k: v
+                for k, v in job.kwargs.items()
+                if k not in ("day", "hour", "minute", "hours", "minutes")
+            }
+            merged_kwargs.update(trigger_args)
+            app.state.scheduler.add_job(job.func, trigger, **merged_kwargs)
+        else:
+            app.state.scheduler.add_job(job.func, job.trigger, **job.kwargs)
 
     app.state.scheduler.start()
 

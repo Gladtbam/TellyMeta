@@ -2,6 +2,7 @@ import contextlib
 import json
 
 import httpx2
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -16,6 +17,7 @@ from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
+from core.scheduler_jobs import apply_ops_schedules
 from core.telegram_manager import TelethonClientWarper
 from models.emby import LibraryMediaFolder
 from models.orm import ServerInstance, ServerType
@@ -26,6 +28,7 @@ from models.schemas import (
     LlmConfigUpdateDto,
     MetadataConfigUpdateDto,
     NsfwLibraryDto,
+    OpsConfigUpdateDto,
     PointsConfigUpdateDto,
     PolicyConfigUpdateDto,
     QualityProfileDto,
@@ -584,6 +587,117 @@ class SettingsServices:
             await self.config_repo.set_settings(key, value)
 
         return Result(success=True, message="验证超时与宽限期配置已保存并生效")
+
+    async def update_ops_config(self, payload: OpsConfigUpdateDto) -> Result:
+        """校验并保存定时任务调度与运维策略配置，同时热更新调度器。
+
+        Args:
+            payload: 运维与定时任务配置更新请求体。
+
+        Returns:
+            操作结果。
+        """
+        day_fields = {
+            ConfigRepository.KEY_SCHEDULE_BAN_EXPIRED_DAY: (
+                payload.schedule_ban_expired_day,
+                "过期用户封禁日期",
+            ),
+            ConfigRepository.KEY_SCHEDULE_DELETE_BANNED_DAY: (
+                payload.schedule_delete_banned_day,
+                "已封禁账户删除日期",
+            ),
+            ConfigRepository.KEY_SCHEDULE_CLEANUP_INACTIVE_DAY: (
+                payload.schedule_cleanup_inactive_day,
+                "不在群成员清理日期",
+            ),
+            ConfigRepository.KEY_SCHEDULE_SETTLE_SCORES_DAY: (
+                payload.schedule_settle_scores_day,
+                "活跃度积分结算日期",
+            ),
+            ConfigRepository.KEY_SCHEDULE_CLEANUP_CACHE_DAY: (
+                payload.schedule_cleanup_cache_day,
+                "API 缓存清理日期",
+            ),
+            ConfigRepository.KEY_SCHEDULE_BACKUP_DB_DAY: (
+                payload.schedule_backup_db_day,
+                "数据库自动备份日期",
+            ),
+        }
+        normalized_days: dict[str, str] = {}
+        for key, (raw_day, label) in day_fields.items():
+            day_expr = ConfigRepository._parse_cron_day(raw_day)
+            try:
+                CronTrigger(day=day_expr)
+            except ValueError:
+                return Result(
+                    success=False,
+                    message=f"{label} cron 表达式无效，支持如 *、*/3、1,15",
+                )
+            normalized_days[key] = day_expr
+
+        hhmm_fields = {
+            ConfigRepository.KEY_SCHEDULE_BAN_EXPIRED_TIME: (
+                payload.schedule_ban_expired_time,
+                "过期用户封禁时间",
+            ),
+            ConfigRepository.KEY_SCHEDULE_DELETE_BANNED_TIME: (
+                payload.schedule_delete_banned_time,
+                "已封禁账户删除时间",
+            ),
+            ConfigRepository.KEY_SCHEDULE_CLEANUP_INACTIVE_TIME: (
+                payload.schedule_cleanup_inactive_time,
+                "不在群成员清理时间",
+            ),
+            ConfigRepository.KEY_SCHEDULE_SETTLE_SCORES_TIME: (
+                payload.schedule_settle_scores_time,
+                "活跃度积分结算时间",
+            ),
+            ConfigRepository.KEY_SCHEDULE_CLEANUP_CACHE_TIME: (
+                payload.schedule_cleanup_cache_time,
+                "API 缓存清理时间",
+            ),
+            ConfigRepository.KEY_SCHEDULE_BACKUP_DB_TIME: (
+                payload.schedule_backup_db_time,
+                "数据库自动备份时间",
+            ),
+        }
+        normalized_hhmm: dict[str, str] = {}
+        for key, (raw_val, label) in hhmm_fields.items():
+            parsed = ConfigRepository._parse_hhmm(raw_val, "")
+            if not parsed:
+                return Result(
+                    success=False, message=f"{label} 格式无效，请使用 HH:MM（如 04:00）"
+                )
+            normalized_hhmm[key] = parsed
+
+        if payload.schedule_request_expire_hours < 1:
+            return Result(success=False, message="超时求片检查间隔至少为 1 小时")
+        if payload.schedule_nsfw_retry_minutes < 1:
+            return Result(success=False, message="NSFW 撤权重试间隔至少为 1 分钟")
+        if payload.db_backup_retention_days < 0:
+            return Result(success=False, message="数据库备份保留天数不能为负数")
+
+        for key, value in normalized_days.items():
+            await self.config_repo.set_settings(key, value)
+        for key, value in normalized_hhmm.items():
+            await self.config_repo.set_settings(key, value)
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_SCHEDULE_REQUEST_EXPIRE_HOURS,
+            str(payload.schedule_request_expire_hours),
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_SCHEDULE_NSFW_RETRY_MINUTES,
+            str(payload.schedule_nsfw_retry_minutes),
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_DB_BACKUP_RETENTION_DAYS,
+            str(payload.db_backup_retention_days),
+        )
+
+        ops_cfg = await self.config_repo.get_ops_config()
+        apply_ops_schedules(getattr(self.app.state, "scheduler", None), ops_cfg)
+
+        return Result(success=True, message="定时任务与运维策略已保存并生效")
 
     async def get_nsfw_libraries_data(self, server_id: int) -> list[NsfwLibraryDto]:
         """获取服务器所有媒体库的 NSFW 状态"""

@@ -445,6 +445,13 @@
                     </div>
                     <span class="item-arrow">›</span>
                 </div>
+                <div class="item" style="cursor:pointer;" onclick="openModal('ops-modal')">
+                    <div class="item-content">
+                        <span class="item-title">定时任务与运维策略</span>
+                        <span class="item-subtitle" id="ops-summary">加载中...</span>
+                    </div>
+                    <span class="item-arrow">›</span>
+                </div>
             </div>
         </div>
     </div>
@@ -655,6 +662,82 @@
                 </div>
                 <span class="item-subtitle">提前续期窗口指账户距离到期多少天内允许用户主动续期；过期删号宽限期指封禁到期后延迟几天删除媒体账户。</span>
                 <button type="button" class="btn btn-primary" onclick="savePolicyConfig('policy-modal')">保存宽限期配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 定时任务与运维策略弹窗 -->
+    <div class="modal-overlay" id="ops-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>定时任务与运维策略</span>
+                <span class="modal-close" onclick="closeModal('ops-modal')">取消</span>
+            </div>
+            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+                <span class="item-subtitle">日期支持 cron 语法：<code>*</code> 每天、<code>*/3</code> 每3天、<code>1,15</code> 每月1/15号</span>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">过期封禁 · 日期 (day)</label>
+                        <input type="text" id="ops-ban-expired-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">过期封禁 · 时间</label>
+                        <input type="time" id="ops-ban-expired-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">封禁删号 · 日期 (day)</label>
+                        <input type="text" id="ops-delete-banned-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">封禁删号 · 时间</label>
+                        <input type="time" id="ops-delete-banned-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">退群清理 · 日期 (day)</label>
+                        <input type="text" id="ops-cleanup-inactive-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">退群清理 · 时间</label>
+                        <input type="time" id="ops-cleanup-inactive-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">积分结算 · 日期 (day)</label>
+                        <input type="text" id="ops-settle-scores-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">积分结算 · 时间</label>
+                        <input type="time" id="ops-settle-scores-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">缓存清理 · 日期 (day)</label>
+                        <input type="text" id="ops-cleanup-cache-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">缓存清理 · 时间</label>
+                        <input type="time" id="ops-cleanup-cache-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">数据库备份 · 日期 (day)</label>
+                        <input type="text" id="ops-backup-db-day" class="form-input" placeholder="*">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">数据库备份 · 时间</label>
+                        <input type="time" id="ops-backup-db-time" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">求片超时巡检 (小时)</label>
+                        <input type="number" min="1" id="ops-request-expire-hours" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">NSFW 撤权重试 (分钟)</label>
+                        <input type="number" min="1" id="ops-nsfw-retry-minutes" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">SQLite 备份保留天数 (0 不自动清理)</label>
+                    <input type="number" min="0" id="ops-backup-retention-days" class="form-input">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveOpsConfig()">保存运维策略</button>
             </div>
         </div>
     </div>
@@ -985,6 +1068,23 @@
                 document.getElementById('policy-request-expire').value = s.request_expire_days ?? 7;
                 updateVerificationVisibility(!!s.enable_verification);
                 updatePolicySummary();
+
+                document.getElementById('ops-ban-expired-day').value = s.schedule_ban_expired_day || '*';
+                document.getElementById('ops-ban-expired-time').value = s.schedule_ban_expired_time || '00:15';
+                document.getElementById('ops-delete-banned-day').value = s.schedule_delete_banned_day || '*';
+                document.getElementById('ops-delete-banned-time').value = s.schedule_delete_banned_time || '00:30';
+                document.getElementById('ops-cleanup-inactive-day').value = s.schedule_cleanup_inactive_day || '*';
+                document.getElementById('ops-cleanup-inactive-time').value = s.schedule_cleanup_inactive_time || '01:00';
+                document.getElementById('ops-settle-scores-day').value = s.schedule_settle_scores_day || '*';
+                document.getElementById('ops-settle-scores-time').value = s.schedule_settle_scores_time || '23:00';
+                document.getElementById('ops-cleanup-cache-day').value = s.schedule_cleanup_cache_day || '*';
+                document.getElementById('ops-cleanup-cache-time').value = s.schedule_cleanup_cache_time || '03:00';
+                document.getElementById('ops-backup-db-day').value = s.schedule_backup_db_day || '*';
+                document.getElementById('ops-backup-db-time').value = s.schedule_backup_db_time || '04:00';
+                document.getElementById('ops-request-expire-hours').value = s.schedule_request_expire_hours ?? 1;
+                document.getElementById('ops-nsfw-retry-minutes').value = s.schedule_nsfw_retry_minutes ?? 10;
+                document.getElementById('ops-backup-retention-days').value = s.db_backup_retention_days ?? 7;
+                updateOpsSummary();
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
@@ -1191,6 +1291,45 @@
             updatePolicySummary();
             closeModal(modalId);
             tg.showAlert('✅ ' + (res.message || '策略配置已保存'));
+        }
+
+        function updateOpsSummary() {
+            const summary = document.getElementById('ops-summary');
+            if (!summary) return;
+            const settle = document.getElementById('ops-settle-scores-time').value || '23:00';
+            const backup = document.getElementById('ops-backup-db-time').value || '04:00';
+            const keep = document.getElementById('ops-backup-retention-days').value ?? 7;
+            const keepText = String(keep) === '0' ? '永久保留' : `保留 ${keep} 天`;
+            summary.innerText = `积分结算 ${settle} · 备份 ${backup} (${keepText})`;
+        }
+
+        async function saveOpsConfig() {
+            const parseIntOr = (id, def) => {
+                const raw = document.getElementById(id).value.trim();
+                const val = parseInt(raw, 10);
+                return Number.isNaN(val) ? def : val;
+            };
+            const payload = {
+                schedule_ban_expired_day: document.getElementById('ops-ban-expired-day').value.trim() || '*',
+                schedule_ban_expired_time: document.getElementById('ops-ban-expired-time').value || '00:15',
+                schedule_delete_banned_day: document.getElementById('ops-delete-banned-day').value.trim() || '*',
+                schedule_delete_banned_time: document.getElementById('ops-delete-banned-time').value || '00:30',
+                schedule_cleanup_inactive_day: document.getElementById('ops-cleanup-inactive-day').value.trim() || '*',
+                schedule_cleanup_inactive_time: document.getElementById('ops-cleanup-inactive-time').value || '01:00',
+                schedule_settle_scores_day: document.getElementById('ops-settle-scores-day').value.trim() || '*',
+                schedule_settle_scores_time: document.getElementById('ops-settle-scores-time').value || '23:00',
+                schedule_cleanup_cache_day: document.getElementById('ops-cleanup-cache-day').value.trim() || '*',
+                schedule_cleanup_cache_time: document.getElementById('ops-cleanup-cache-time').value || '03:00',
+                schedule_backup_db_day: document.getElementById('ops-backup-db-day').value.trim() || '*',
+                schedule_backup_db_time: document.getElementById('ops-backup-db-time').value || '04:00',
+                schedule_request_expire_hours: parseIntOr('ops-request-expire-hours', 1),
+                schedule_nsfw_retry_minutes: parseIntOr('ops-nsfw-retry-minutes', 10),
+                db_backup_retention_days: parseIntOr('ops-backup-retention-days', 7)
+            };
+            const res = await api('/system/ops', 'POST', payload);
+            updateOpsSummary();
+            closeModal('ops-modal');
+            tg.showAlert('✅ ' + (res.message || '定时任务与运维策略已保存'));
         }
 
         function renderAdmins(data) {
