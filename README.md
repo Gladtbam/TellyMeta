@@ -113,6 +113,9 @@ uv sync --extra postgres
 
 # 同时安装 SQLite 与 PostgreSQL 驱动（如需执行数据库迁移）
 uv sync --all-extras
+
+# 生产部署若无需安装 black / pyright 等开发依赖，可追加 --no-dev
+uv sync --no-dev --extra sqlite
 ```
 
 **使用 pip:**
@@ -342,6 +345,19 @@ TellyMeta 对接的媒体服务器 REST API 模型（`models/radarr.py`、`model
   uv run python -m scripts.generate_openapi_models jellyfin
   uv run python -m scripts.generate_openapi_models emby
   ```
+
+### 开发依赖与代码检查
+
+`pyproject.toml` 的 `[dependency-groups] dev` 中配置了 `black` 与 `pyright`（`uv sync` 默认安装，生产环境可通过 `--no-dev` 跳过）：
+
+```bash
+# 类型检查（已在 pyproject.toml 配置 venvPath，无需手动指定解释器）
+uv run pyright
+
+# 代码格式化与校验
+uv run black .
+uv run black --check .
+```
 
 ---
 

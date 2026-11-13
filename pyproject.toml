@@ -32,12 +32,24 @@ postgres = [
     "psycopg[binary]>=3.3.9",
 ]
 
+[dependency-groups]
+dev = [
+    "black>=26.10.1",
+    "pyright>=1.1.414",
+]
+
 [tool.pyright]
+venvPath = "."
+venv = ".venv"
 exclude = ["**/__pycache__", "**/.venv", "**/.env", ".git", "**/data", "**/logs"]
 typeCheckingMode = "standard"
 strictDictionaryInference = true
 strictListInference = true
 deprecateTypingAliases = true
+
+[tool.black]
+target-version = ["py311"]
+line-length = 88
 
 [tool.pylint.format]
 max-line-length = 120
