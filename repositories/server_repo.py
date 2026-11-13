@@ -10,11 +10,22 @@ from models.orm import ServerInstance
 # 定义一个唯一的哨兵对象，用于区分 "未传参" 和 "传了 None"
 _UNSET = object()
 
+
 class ServerRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def add(self, name: str, server_type: str, url: str, api_key: str, priority: int = 0) -> ServerInstance:
+    async def add(
+        self,
+        name: str,
+        server_type: str,
+        url: str,
+        api_key: str,
+        priority: int = 0,
+        qb_username: str | None = None,
+        qb_torrent_limit: int = 43200,
+        qb_server_id: int | None = None,
+    ) -> ServerInstance:
         """添加服务器"""
         token = secrets.token_urlsafe(32)
         instance = ServerInstance(
@@ -23,7 +34,10 @@ class ServerRepository:
             url=url,
             api_key=api_key,
             priority=priority,
-            webhook_token=token
+            webhook_token=token,
+            qb_username=qb_username,
+            qb_torrent_limit=qb_torrent_limit,
+            qb_server_id=qb_server_id,
         )
         self.session.add(instance)
         await self.session.commit()
@@ -38,17 +52,24 @@ class ServerRepository:
 
     async def get_all_enabled(self) -> Sequence[ServerInstance]:
         """获取已启用的服务器"""
-        stmt = select(ServerInstance).where(
-            ServerInstance.is_enabled.is_(True)).order_by(ServerInstance.priority.desc())
+        stmt = (
+            select(ServerInstance)
+            .where(ServerInstance.is_enabled.is_(True))
+            .order_by(ServerInstance.priority.desc())
+        )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
     async def get_by_type(self, server_type: str) -> Sequence[ServerInstance]:
         """根据类型获取服务器 (Sonarr/Radarr/Emby...)"""
-        stmt = select(ServerInstance).where(
-            ServerInstance.server_type == server_type,
-            ServerInstance.is_enabled.is_(True)
-        ).order_by(ServerInstance.priority.desc())
+        stmt = (
+            select(ServerInstance)
+            .where(
+                ServerInstance.server_type == server_type,
+                ServerInstance.is_enabled.is_(True),
+            )
+            .order_by(ServerInstance.priority.desc())
+        )
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
@@ -69,7 +90,9 @@ class ServerRepository:
             await self.session.delete(server)
             await self.session.commit()
 
-    async def update_basic_info(self, server_id: int, **kwargs) -> ServerInstance | None:
+    async def update_basic_info(
+        self, server_id: int, **kwargs
+    ) -> ServerInstance | None:
         """更新服务器基础信息 (name, url, api_key)
         Args:
             server_id (int): 服务器 ID
@@ -79,8 +102,9 @@ class ServerRepository:
         if not server:
             return None
 
+        nullable_fields = {"qb_server_id", "qb_username"}
         for key, value in kwargs.items():
-            if hasattr(server, key) and value is not None:
+            if hasattr(server, key) and (value is not None or key in nullable_fields):
                 setattr(server, key, value)
 
         await self.session.commit()
@@ -103,7 +127,7 @@ class ServerRepository:
         count: int | None = None,
         time: str | None = None,
         external_url: str | None = None,
-        external_parser: str | None = None
+        external_parser: str | None = None,
     ) -> ServerInstance | None:
         """更新注册策略"""
         server = await self.get_by_id(server_id)
@@ -126,7 +150,7 @@ class ServerRepository:
         self,
         server_id: int,
         expiry_days: int | None = None,
-        code_days: int | None = None
+        code_days: int | None = None,
     ) -> ServerInstance | None:
         """更新有效期配置"""
         server = await self.get_by_id(server_id)
@@ -144,7 +168,7 @@ class ServerRepository:
         server_id: int,
         enabled: bool | None = None,
         lib_ids: str | None = None,
-        sub_lib_ids: str | None = None
+        sub_lib_ids: str | None = None,
     ) -> ServerInstance | None:
         """更新 NSFW 配置"""
         server = await self.get_by_id(server_id)
@@ -163,7 +187,7 @@ class ServerRepository:
         self,
         server_id: int,
         notify_topic_id: int | None | object = _UNSET,
-        request_notify_topic_id: int | None| object = _UNSET
+        request_notify_topic_id: int | None | object = _UNSET,
     ) -> ServerInstance | None:
         """更新通知话题配置"""
         server = await self.get_by_id(server_id)
@@ -171,7 +195,9 @@ class ServerRepository:
             if notify_topic_id is not _UNSET:
                 server.notify_topic_id = cast(int | None, notify_topic_id)
             if request_notify_topic_id is not _UNSET:
-                server.request_notify_topic_id = cast(int | None, request_notify_topic_id)
+                server.request_notify_topic_id = cast(
+                    int | None, request_notify_topic_id
+                )
 
             await self.session.commit()
             await self.session.refresh(server)

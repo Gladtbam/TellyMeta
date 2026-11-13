@@ -279,7 +279,13 @@ async def create_server(
     """创建服务器"""
     service = SettingsServices(request.app, session)
     result = await service.add_server(
-        data.name, data.server_type, data.url, data.api_key
+        data.name,
+        data.server_type,
+        data.url,
+        data.api_key,
+        qb_username=data.qb_username,
+        qb_torrent_limit=data.qb_torrent_limit,
+        qb_server_id=data.qb_server_id,
     )
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
@@ -327,6 +333,19 @@ async def update_server(
         update_dict["allow_request"] = data.allow_request
     if data.allow_nfo is not None:
         update_dict["allow_nfo"] = data.allow_nfo
+    if data.qb_username is not None:
+        update_dict["qb_username"] = data.qb_username.strip() or None
+    if data.qb_torrent_limit is not None:
+        update_dict["qb_torrent_limit"] = data.qb_torrent_limit
+    if "qb_server_id" in data.model_fields_set:
+        if data.qb_server_id is not None:
+            qb_target = await repo.get_by_id(data.qb_server_id)
+            if not qb_target or qb_target.server_type != ServerType.QBITTORRENT:
+                raise HTTPException(
+                    status_code=400,
+                    detail="绑定的 qBittorrent 服务器不存在或类型不匹配",
+                )
+        update_dict["qb_server_id"] = data.qb_server_id
 
     # 路径映射 (List -> JSON)
     if data.path_mappings is not None:

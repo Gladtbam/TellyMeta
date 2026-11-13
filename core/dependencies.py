@@ -33,9 +33,9 @@ def get_ai_client(request: Request) -> AIClientWarper | None:
     return request.app.state.ai_client
 
 
-def get_qb_client(request: Request) -> QbittorrentClient | None:
-    """获取 qBittorrent 客户端实例。"""
-    return request.app.state.qb_client
+def get_qb_clients(request: Request) -> dict[int, QbittorrentClient]:
+    """获取所有 qBittorrent 客户端实例。"""
+    return request.app.state.qb_clients
 
 
 def get_tmdb_client(request: Request) -> TmdbClient | None:

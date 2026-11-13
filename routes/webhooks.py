@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Response
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
@@ -11,11 +12,12 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
+from core.database import get_db
 from core.dependencies import (
     get_ai_client,
     get_media_clients,
     get_notification_service,
-    get_qb_client,
+    get_qb_clients,
     get_radarr_clients,
     get_server_by_token,
     get_sonarr_clients,
@@ -38,6 +40,7 @@ from models.sonarr import (
     SonarrWebhookSeriesAddPayload,
 )
 from repositories.config_repo import ConfigRepository
+from repositories.server_repo import ServerRepository
 from services.media_service import MediaService
 from services.notification_service import NotificationService
 from workers.nfo_worker import (
@@ -86,6 +89,28 @@ def _resolve_mkv_task_target(
     return True, Path(local_path), None
 
 
+async def _schedule_qb_share_limit(
+    server_instance: ServerInstance,
+    download_id: str | None,
+    qb_clients: dict[int, QbittorrentClient],
+    session: AsyncSession,
+) -> None:
+    """根据 Arr 绑定的 qBittorrent 服务器配置异步设置做种时长限制。"""
+    if not download_id or not server_instance.qb_server_id:
+        return
+    qb_client = qb_clients.get(server_instance.qb_server_id)
+    if not qb_client:
+        return
+    qb_server = await ServerRepository(session).get_by_id(server_instance.qb_server_id)
+    seeding_limit = qb_server.qb_torrent_limit if qb_server else 43200
+    asyncio.create_task(
+        qb_client.torrents_set_share_limits(
+            torrent_hash=download_id,
+            seeding_time_limit=seeding_limit,
+        )
+    )
+
+
 @router.post("/webhook/sonarr", status_code=202)
 async def sonarr_webhook(
     payload: SonarrPayload,
@@ -94,8 +119,9 @@ async def sonarr_webhook(
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
     tvdb_client: TvdbClient | None = Depends(get_tvdb_client),
     task_queue: asyncio.Queue | None = Depends(get_task_queue),
-    qb_client: QbittorrentClient | None = Depends(get_qb_client),
+    qb_clients: dict[int, QbittorrentClient] = Depends(get_qb_clients),
     notify_service: NotificationService = Depends(get_notification_service),
+    session: AsyncSession = Depends(get_db),
 ) -> Response:
     """处理来自 Sonarr 的 Webhook"""
     client = sonarr_clients.get(server_instance.id)
@@ -155,12 +181,8 @@ async def sonarr_webhook(
                     except Exception as e:
                         logger.warning("发送 MKV 路径映射告警失败: {}", e)
 
-        if payload.downloadId and qb_client:
-            asyncio.create_task(
-                qb_client.torrents_set_share_limits(
-                    torrent_hash=payload.downloadId,
-                    seeding_time_limit=settings.qbittorrent_torrent_limit,
-                )
+        await _schedule_qb_share_limit(
+            server_instance, payload.downloadId, qb_clients, session
             )
 
         if client.notify_topic_id:
@@ -186,8 +208,9 @@ async def radarrarr_webhook(
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
     task_queue: asyncio.Queue | None = Depends(get_task_queue),
-    qb_client: QbittorrentClient | None = Depends(get_qb_client),
+    qb_clients: dict[int, QbittorrentClient] = Depends(get_qb_clients),
     notify_service: NotificationService = Depends(get_notification_service),
+    session: AsyncSession = Depends(get_db),
 ) -> Response:
     """处理来自 Radarr 的 Webhook"""
     client = radarr_clients.get(server_instance.id)
@@ -239,12 +262,8 @@ async def radarrarr_webhook(
                 )
             )
 
-        if payload.downloadId and qb_client:
-            asyncio.create_task(
-                qb_client.torrents_set_share_limits(
-                    torrent_hash=payload.downloadId,
-                    seeding_time_limit=settings.qbittorrent_torrent_limit,
-                )
+        await _schedule_qb_share_limit(
+            server_instance, payload.downloadId, qb_clients, session
             )
 
         if client.notify_topic_id:

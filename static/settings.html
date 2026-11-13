@@ -478,34 +478,49 @@
                     <div class="form-group"><label class="form-label">名称</label><input type="text" class="form-input"
                             id="srv-name" required placeholder="服务器昵称"></div>
                     <div class="form-group"><label class="form-label">类型</label><select class="form-select"
-                            id="srv-type">
+                            id="srv-type" onchange="onServerTypeChange()">
                             <option value="emby">Emby</option>
                             <option value="jellyfin">Jellyfin</option>
                             <option value="sonarr">Sonarr</option>
                             <option value="radarr">Radarr</option>
+                            <option value="qbittorrent">qBittorrent</option>
                         </select></div>
                     <div class="form-group"><label class="form-label">地址 (URL)</label><input type="url"
                             class="form-input" id="srv-url" required placeholder="http://127.0.0.1:8096"></div>
-                    <div class="form-group"><label class="form-label">API Key</label><input type="text"
-                            class="form-input" id="srv-key" required placeholder="API Key"></div>
-                    <div class="form-group">
-                        <label class="form-label">Webhook URL (点击复制)</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" class="form-input" id="srv-webhook" readonly
-                                onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
-                                style="background: #eee; color: #555;">
-                        </div>
+                    <div id="qb-fields-group" style="display:none;">
+                        <div class="form-group"><label class="form-label">用户名 (可选，使用 API Key 时留空)</label><input
+                                type="text" class="form-input" id="srv-qb-username" placeholder="admin"></div>
+                        <div class="form-group"><label class="form-label">默认做种时长限制 (分钟)</label><input type="number"
+                                min="0" class="form-input" id="srv-qb-limit" value="43200"></div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Webhook Token (Header 鉴权，点击复制)</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" class="form-input" id="srv-webhook-token" readonly
-                                onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
-                                style="background: #eee; color: #555;">
+                    <div class="form-group"><label class="form-label" id="srv-key-label">API Key</label><input
+                            type="text" class="form-input" id="srv-key" required placeholder="API Key / 密码"></div>
+                    <div class="form-group" id="arr-qb-group" style="display:none;">
+                        <label class="form-label">绑定 qBittorrent 下载器</label>
+                        <select class="form-select" id="srv-qb-server">
+                            <option value="">不绑定</option>
+                        </select>
+                    </div>
+                    <div id="webhook-info-group">
+                        <div class="form-group">
+                            <label class="form-label">Webhook URL (点击复制)</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" class="form-input" id="srv-webhook" readonly
+                                    onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
+                                    style="background: #eee; color: #555;">
+                            </div>
                         </div>
-                        <div class="section-hint" style="margin: 4px 0 0 0;">请将上方 URL 填入 Jellyfin/Emby/Sonarr/Radarr 的
-                            Webhook 设置，并在请求标头中添加 <code>X-Webhook-Token: &lt;Token&gt;</code> 或
-                            <code>Authorization: Bearer &lt;Token&gt;</code>。</div>
+                        <div class="form-group">
+                            <label class="form-label">Webhook Token (Header 鉴权，点击复制)</label>
+                            <div style="display: flex; gap: 8px;">
+                                <input type="text" class="form-input" id="srv-webhook-token" readonly
+                                    onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
+                                    style="background: #eee; color: #555;">
+                            </div>
+                            <div class="section-hint" style="margin: 4px 0 0 0;">请将上方 URL 填入 Jellyfin/Emby/Sonarr/Radarr 的
+                                Webhook 设置，并在请求标头中添加 <code>X-Webhook-Token: &lt;Token&gt;</code> 或
+                                <code>Authorization: Bearer &lt;Token&gt;</code>。</div>
+                        </div>
                     </div>
                 </div>
 
@@ -783,12 +798,38 @@
             });
         }
 
+        let allServers = [];
+
         function renderServers(data) {
+            allServers = data || [];
             const list = document.getElementById('server-list');
             list.innerHTML = data.length ? '' : '<div class="state-text">无服务器</div>';
             data.forEach(s => {
                 list.innerHTML += `<div class="item" onclick='openEditServer(${JSON.stringify(s)})'><div class="item-content"><span class="item-title">${s.name}</span><span class="item-subtitle">${s.server_type} • ${s.url}</span></div><span class="item-status" style="color:${s.is_enabled ? '#34c759' : '#ff3b30'}">●</span><div style="color:var(--hint-color);margin-left:8px">›</div></div>`;
             });
+        }
+
+        function fillQbServerSelect(selectedId) {
+            const sel = document.getElementById('srv-qb-server');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">不绑定</option>';
+            allServers.filter(s => s.server_type === 'qbittorrent').forEach(qb => {
+                const opt = document.createElement('option');
+                opt.value = String(qb.id);
+                opt.textContent = `${qb.name} (${qb.url})`;
+                if (selectedId && Number(selectedId) === qb.id) opt.selected = true;
+                sel.appendChild(opt);
+            });
+        }
+
+        function onServerTypeChange() {
+            const type = document.getElementById('srv-type').value;
+            const isQb = type === 'qbittorrent';
+            const isArr = ['sonarr', 'radarr'].includes(type);
+            document.getElementById('qb-fields-group').style.display = isQb ? 'block' : 'none';
+            document.getElementById('arr-qb-group').style.display = isArr ? 'block' : 'none';
+            document.getElementById('webhook-info-group').style.display = isQb ? 'none' : 'block';
+            document.getElementById('srv-key-label').textContent = isQb ? '密码 / API Key' : 'API Key';
         }
 
         // --- Server Edit ---
@@ -797,10 +838,13 @@
             document.getElementById('server-form').reset();
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
+            document.getElementById('srv-qb-limit').value = 43200;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
+            fillQbServerSelect(null);
+            onServerTypeChange();
 
             document.getElementById('srv-tabs').style.display = 'none';
             switchTab('basic');
@@ -815,6 +859,8 @@
             document.getElementById('srv-url').value = s.url;
             document.getElementById('srv-key').value = "******";
             document.getElementById('srv-enabled').checked = s.is_enabled;
+            document.getElementById('srv-qb-username').value = s.qb_username || '';
+            document.getElementById('srv-qb-limit').value = s.qb_torrent_limit ?? 43200;
 
             const origin = window.location.origin;
             const webhookPath = `/webhook/${s.server_type}`;
@@ -823,13 +869,16 @@
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', s.notify_topic_id, s.id, 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', s.request_notify_topic_id, s.id, 'request')
+            fillQbServerSelect(s.qb_server_id);
+            onServerTypeChange();
 
             const isMedia = ['emby', 'jellyfin'].includes(s.server_type);
+            const isArr = ['sonarr', 'radarr'].includes(s.server_type);
             document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
-            document.getElementById('tab-paths').style.display = isMedia ? 'none' : 'block';
-            document.getElementById('req-topic-group').style.display = isMedia ? 'none' : 'block';
-            document.getElementById('arr-nfo-group').style.display = isMedia ? 'none' : 'flex';
-            if (!isMedia) {
+            document.getElementById('tab-paths').style.display = isArr ? 'block' : 'none';
+            document.getElementById('req-topic-group').style.display = isArr ? 'block' : 'none';
+            document.getElementById('arr-nfo-group').style.display = isArr ? 'flex' : 'none';
+            if (isArr) {
                 document.getElementById('srv-allow-nfo').checked = s.allow_nfo !== false;
             }
 
@@ -1050,7 +1099,12 @@
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
                 payload.allow_request = document.getElementById('srv-request').checked;
+            } else if (type === 'qbittorrent') {
+                payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
+                payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;
             } else {
+                const qbSelVal = document.getElementById('srv-qb-server').value;
+                payload.qb_server_id = qbSelVal ? parseInt(qbSelVal, 10) : null;
                 payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
                 payload.allow_nfo = document.getElementById('srv-allow-nfo').checked;
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({

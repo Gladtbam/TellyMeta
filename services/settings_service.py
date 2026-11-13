@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
+from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
@@ -47,6 +48,7 @@ class SettingsServices:
         self.media_clients: dict[int, MediaService] = app.state.media_clients
         self._sonarr_clients = app.state.sonarr_clients
         self._radarr_clients = app.state.radarr_clients
+        self._qb_clients = getattr(app.state, "qb_clients", None)
 
     async def reload_ai_client(self) -> AIClientWarper | None:
         """根据数据库中的 LLM 配置重新加载或关闭全局 AI 客户端。
@@ -130,6 +132,30 @@ class SettingsServices:
             await self._remove_and_close_client(server)
             return Result(True, f"🔴 服务器 **{server.name}** 已停用并断开连接。")
 
+    @property
+    def qb_clients(self) -> dict[int, QbittorrentClient]:
+        """获取所有已初始化的 qBittorrent 客户端字典。"""
+        if self._qb_clients is None:
+            self._qb_clients = getattr(self.app.state, "qb_clients", {})
+        return self._qb_clients
+
+    @staticmethod
+    def _build_qb_client(
+        url: str, api_key: str, qb_username: str | None
+    ) -> QbittorrentClient:
+        """构造 qBittorrent 客户端实例（提供用户名时走账密登录，否则走 API Key）。"""
+        username = qb_username.strip() if qb_username else None
+        return QbittorrentClient(
+            client=httpx2.AsyncClient(
+                base_url=url,
+                timeout=httpx2.Timeout(10.0, read=30.0),
+                proxy=settings.proxy or None,
+            ),
+            username=username or None,
+            password=api_key if username else None,
+            api_key=None if username else (api_key or None),
+        )
+
     async def _init_and_add_client(self, server: ServerInstance):
         """(内部) 初始化单个客户端并添加到 app.state"""
         client = None
@@ -183,6 +209,11 @@ class SettingsServices:
                 request_notify_topic_id=server.request_notify_topic_id,
             )
             self.radarr_clients[server.id] = client
+        elif server.server_type == ServerType.QBITTORRENT:
+            client = self._build_qb_client(
+                server.url, server.api_key, server.qb_username
+            )
+            self.qb_clients[server.id] = client
 
         if client:
             await client.login()
@@ -196,6 +227,8 @@ class SettingsServices:
             client = self.sonarr_clients.pop(server.id, None)
         elif server.server_type == ServerType.RADARR:
             client = self.radarr_clients.pop(server.id, None)
+        elif server.server_type == ServerType.QBITTORRENT:
+            client = self.qb_clients.pop(server.id, None)
 
         if client:
             await client.close()  # type: ignore
@@ -462,13 +495,32 @@ class SettingsServices:
         return Result(success=True, message=f"已{action}该媒体库。")
 
     async def add_server(
-        self, name: str, server_type: str, url: str, api_key: str
+        self,
+        name: str,
+        server_type: str,
+        url: str,
+        api_key: str,
+        qb_username: str | None = None,
+        qb_torrent_limit: int = 43200,
+        qb_server_id: int | None = None,
     ) -> Result:
         """添加新服务器并初始化客户端"""
+        if qb_server_id is not None:
+            qb_target = await self.server_repo.get_by_id(qb_server_id)
+            if not qb_target or qb_target.server_type != ServerType.QBITTORRENT:
+                return Result(False, "绑定的 qBittorrent 服务器不存在或类型不匹配。")
+
         try:
             # 默认优先级设为 0
             instance = await self.server_repo.add(
-                name, server_type, url, api_key, priority=0
+                name,
+                server_type,
+                url,
+                api_key,
+                priority=0,
+                qb_username=qb_username,
+                qb_torrent_limit=qb_torrent_limit,
+                qb_server_id=qb_server_id,
             )
         except IntegrityError:
             return Result(False, "服务器名称已存在，请勿重复添加。")
@@ -494,6 +546,10 @@ class SettingsServices:
             elif server_type == ServerType.RADARR:
                 new_client = RadarrClient(httpx2.AsyncClient(base_url=url), api_key)
                 self.radarr_clients[instance.id] = new_client
+            elif server_type == ServerType.QBITTORRENT:
+                new_client = self._build_qb_client(url, api_key, qb_username)
+                await new_client.login()
+                self.qb_clients[instance.id] = new_client
 
             return Result(True, f"✅ 服务器 **{name}** 添加成功并已上线！")
 
@@ -514,6 +570,10 @@ class SettingsServices:
             del self.sonarr_clients[server_id]
         if server_id in self.radarr_clients:
             del self.radarr_clients[server_id]
+        qb_client = self.qb_clients.pop(server_id, None)
+        if qb_client is not None:
+            with contextlib.suppress(Exception):
+                await qb_client.close()
 
         await self.server_repo.delete(server_id)
         return Result(True, "服务器已删除")

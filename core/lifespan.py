@@ -61,18 +61,7 @@ async def lifespan(app: FastAPI):
     app.state.message_tracker = MessageTrackingState()
 
     app.state.ai_client = None
-
-    if settings.qbittorrent_base_url:
-        app.state.qb_client = QbittorrentClient(
-            client=httpx2.AsyncClient(
-                base_url=settings.qbittorrent_base_url, proxy=settings.proxy or None
-            ),
-            username=settings.qbittorrent_username,
-            password=settings.qbittorrent_password,
-            api_key=settings.qbiitorrent_api_key,
-        )
-    else:
-        app.state.qb_client = None
+    app.state.qb_clients = {}  # dict[int, QbittorrentClient]
 
     if settings.tmdb_api_key:
         app.state.tmdb_client = CachedTmdbClient(
@@ -176,6 +165,21 @@ async def lifespan(app: FastAPI):
                             server_name=server.name,
                             notify_topic_id=server.notify_topic_id,
                         )
+                    case ServerType.QBITTORRENT:
+                        # 使用 username 时将 api_key 视为登录密码，否则视为 API Key
+                        qb_client = QbittorrentClient(
+                            client=httpx2.AsyncClient(
+                                base_url=server.url,
+                                timeout=httpx2.Timeout(10.0, read=30.0),
+                                proxy=settings.proxy or None,
+                            ),
+                            username=server.qb_username or None,
+                            password=server.api_key if server.qb_username else None,
+                            api_key=(
+                                None if server.qb_username else (server.api_key or None)
+                            ),
+                        )
+                        app.state.qb_clients[server.id] = qb_client
         finally:
             await session.close()
 
@@ -209,10 +213,12 @@ async def lifespan(app: FastAPI):
     ai_client: AIClientWarper | None = getattr(app.state, "ai_client", None)
     if ai_client:
         await ai_client.close()
-    if app.state.qb_client:
-        await app.state.qb_client.close()
-    if app.state.tvdb_client:
-        await app.state.tvdb_client.close()
+    tvdb_client: CachedTvdbClient | None = getattr(app.state, "tvdb_client", None)
+    if tvdb_client:
+        await tvdb_client.close()
+
+    for client in app.state.qb_clients.values():
+        await client.close()
 
     for client in app.state.sonarr_clients.values():
         await client.close()

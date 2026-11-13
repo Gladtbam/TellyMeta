@@ -108,6 +108,9 @@ class ServerDto(BaseModel):
 
     # 高级配置
     path_mappings: list[PathMapping] = []
+    qb_username: str | None = None
+    qb_torrent_limit: int = 43200
+    qb_server_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -120,6 +123,9 @@ class ServerCreate(BaseModel):
     server_type: str
     url: str
     api_key: str
+    qb_username: str | None = None
+    qb_torrent_limit: int = 43200
+    qb_server_id: int | None = None
 
 
 class ServerUpdate(BaseModel):
@@ -149,6 +155,9 @@ class ServerUpdate(BaseModel):
 
     # 高级配置
     path_mappings: list[PathMapping] = []
+    qb_username: str | None = None
+    qb_torrent_limit: int | None = None
+    qb_server_id: int | None = None
 
 
 # --- System Models (系统配置相关) ---

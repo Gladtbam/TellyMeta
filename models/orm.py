@@ -26,6 +26,7 @@ class ServerType(StrEnum):
     JELLYFIN = "jellyfin"
     SONARR = "sonarr"
     RADARR = "radarr"
+    QBITTORRENT = "qbittorrent"
 
 
 class RegistrationMode(StrEnum):
@@ -138,6 +139,17 @@ class ServerInstance(Base):
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     request_notify_topic_id: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
+    )
+
+    # qBittorrent 实例配置与 Radarr/Sonarr 绑定关系
+    qb_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    qb_torrent_limit: Mapped[int] = mapped_column(
+        Integer, default=43200, server_default=text("43200")
+    )
+    qb_server_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
 
