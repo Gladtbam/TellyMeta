@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import contextlib
+import re
 import textwrap
 
 import aiofiles.tempfile
@@ -14,6 +15,7 @@ from bot.utils import safe_delete
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
+from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
 from services.request_service import RequestService
 from services.subtitle_service import SubtitleService
@@ -165,76 +167,137 @@ INTRO_MSG = textwrap.dedent("""
 async def run_subtitle_upload_flow(
     user_id: int,
     telethon_client: TelethonClientWarper,
-    session: AsyncSession,
+    session: AsyncSession | None,
     radarr_clients: dict[int, RadarrClient],
     sonarr_clients: dict[int, SonarrClient],
+    media_server_id: int,
 ) -> None:
-    """运行上传字幕流程 (Conversation)"""
+    """运行上传字幕流程 (Conversation)，仅在所属媒体服务器已绑定的 Arr 实例中定位目标"""
     chat_id = user_id
-    subtitle_service = SubtitleService(session, radarr_clients, sonarr_clients)
     client: TelegramClient = telethon_client.client
 
-    try:
-        async with client.conversation(chat_id, timeout=300) as conv:
-            intro_msg = await conv.send_message(INTRO_MSG)
-            if isinstance(intro_msg, list):
-                intro_msg = intro_msg[0]
-
-            # Wait for file loop
-            while True:
-                response_msg = await conv.get_response()
-                if response_msg.text and response_msg.text.startswith("/"):
-                    await intro_msg.edit("❌ 检测到命令，已取消上传。")
-                    return
-
-                if not response_msg.file:
-                    await intro_msg.edit(
-                        "请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。"
-                    )
-                    continue
-
-                if not response_msg.file.name.lower().endswith(".zip"):
-                    await intro_msg.edit(
-                        "❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。"
-                    )
-                    continue
-
-                if response_msg.file.size > MAX_FILE_SIZE:
-                    await intro_msg.edit(
-                        f"❌ 文件过大！最大支持 {MAX_FILE_SIZE // 1024 // 1024} MiB，请重新发送。"
-                    )
-                    continue
-
-                # Valid file found
-                break
-
-            processing_msg = await intro_msg.edit("📥 正在接收并处理文件，请稍候...")
-
-            async with aiofiles.tempfile.NamedTemporaryFile(suffix=".zip") as tmp_file:
-                file_path = await response_msg.download_media(file=tmp_file.name)
-
-                if not file_path:
-                    await processing_msg.edit("❌ 文件下载失败，请重试。")
-                    return
-
-                result = await subtitle_service.handle_file_upload(
-                    user_id, file_path, response_msg.file.name
-                )
-                if result.success:
-                    await processing_msg.edit(result.message)
-                else:
-                    await processing_msg.edit(f"❌ **上传失败**\n\n{result.message}")
-
-            with contextlib.suppress(Exception):
-                await response_msg.delete()
-
-    except errors.AlreadyInConversationError:
-        await client.send_message(
-            chat_id,
-            "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
+    async def _run_with_session(active_session: AsyncSession) -> None:
+        subtitle_service = SubtitleService(
+            active_session, radarr_clients, sonarr_clients
         )
-    except asyncio.TimeoutError:
-        await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
-    except Exception as e:
-        logger.error(f"Conversation error: {e}")
-        await client.send_message(chat_id, f"❌ 发生未知错误: {str(e)}")
+
+        try:
+            async with client.conversation(chat_id, timeout=300) as conv:
+                intro_msg = await conv.send_message(INTRO_MSG)
+                if isinstance(intro_msg, list):
+                    intro_msg = intro_msg[0]
+
+                # Wait for file loop
+                while True:
+                    response_msg = await conv.get_response()
+                    if response_msg.text and response_msg.text.startswith("/"):
+                        await intro_msg.edit("❌ 检测到命令，已取消上传。")
+                        return
+
+                    if not response_msg.file:
+                        await intro_msg.edit(
+                            "请发送一个带有文件的消息 (Zip 格式)，或发送 /cancel 取消。"
+                        )
+                        continue
+
+                    if not response_msg.file.name.lower().endswith(".zip"):
+                        await intro_msg.edit(
+                            "❌ 格式错误！仅支持 `.zip` 格式的压缩包，请重新发送。"
+                        )
+                        continue
+
+                    if response_msg.file.size > MAX_FILE_SIZE:
+                        await intro_msg.edit(
+                            f"❌ 文件过大！最大支持 {MAX_FILE_SIZE // 1024 // 1024} MiB，请重新发送。"
+                        )
+                        continue
+
+                    # Valid file found
+                    break
+
+                processing_msg = await intro_msg.edit(
+                    "📥 正在接收并处理文件，请稍候..."
+                )
+
+                async with aiofiles.tempfile.NamedTemporaryFile(
+                    suffix=".zip"
+                ) as tmp_file:
+                    file_path = await response_msg.download_media(file=tmp_file.name)
+
+                    if not file_path:
+                        await processing_msg.edit("❌ 文件下载失败，请重试。")
+                        return
+
+                    file_name = response_msg.file.name
+                    target_arr_id: int | None = None
+
+                    # 若多个已绑定实例均匹配同一外部媒体 ID，先让用户明确目标实例再写入
+                    match = re.search(
+                        r"^(tvdb|tmdb)-(\d+)\.zip$", file_name, re.IGNORECASE
+                    )
+                    if match:
+                        m_type = match.group(1).lower()
+                        m_id = int(match.group(2))
+                        targets = await subtitle_service.find_matching_arr_targets(
+                            media_server_id, m_type, m_id
+                        )
+                        if len(targets) > 1:
+                            options_text = "\n".join(
+                                f"{idx}. {name} (ID: {aid})"
+                                for idx, (aid, name) in enumerate(targets, 1)
+                            )
+                            await processing_msg.edit(
+                                f"⚠️ 多个已绑定的实例均匹配该媒体，请回复对应序号明确目标：\n\n"
+                                f"{options_text}\n\n发送 `/cancel` 取消。"
+                            )
+                            while True:
+                                choice_msg = await conv.get_response()
+                                choice_text = (choice_msg.text or "").strip()
+                                if choice_text.startswith("/"):
+                                    await processing_msg.edit("❌ 已取消上传。")
+                                    return
+                                if choice_text.isdigit():
+                                    idx = int(choice_text)
+                                    if 1 <= idx <= len(targets):
+                                        target_arr_id = targets[idx - 1][0]
+                                        await processing_msg.edit(
+                                            "📥 正在写入目标实例，请稍候..."
+                                        )
+                                        break
+                                await conv.send_message(
+                                    f"请输入有效序号（1-{len(targets)}），或发送 `/cancel` 取消。"
+                                )
+
+                    result = await subtitle_service.handle_file_upload(
+                        user_id,
+                        file_path,
+                        file_name,
+                        media_server_id=media_server_id,
+                        target_arr_id=target_arr_id,
+                    )
+                    if result.success:
+                        await processing_msg.edit(result.message)
+                    else:
+                        await processing_msg.edit(
+                            f"❌ **上传失败**\n\n{result.message}"
+                        )
+
+                with contextlib.suppress(Exception):
+                    await response_msg.delete()
+
+        except errors.AlreadyInConversationError:
+            await client.send_message(
+                chat_id,
+                "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
+            )
+        except asyncio.TimeoutError:
+            await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
+        except Exception as e:
+            logger.error(f"Conversation error: {e}")
+            await client.send_message(chat_id, f"❌ 发生未知错误: {str(e)}")
+
+    if session is not None:
+        await _run_with_session(session)
+    else:
+        async with async_session() as bg_session:
+            await _run_with_session(bg_session)

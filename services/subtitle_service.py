@@ -12,67 +12,182 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
+from models.radarr import MovieResource
+from models.sonarr import SeriesResource
+from repositories.binding_repo import BindingRepository
 from repositories.config_repo import ConfigRepository
+from repositories.server_repo import ServerRepository
 from services.user_service import Result
 
 settings = get_settings()
 
-ALLOWED_EXTENSIONS = {'.srt', '.ass', '.ssa', '.vtt', '.sub', '.idx', '.sup'}
+ALLOWED_EXTENSIONS = {".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx", ".sup"}
 MAX_SINGLE_FILE_SIZE = 20 * 1024 * 1024
 MAX_TOTAL_EXTRACT_SIZE = 50 * 1024 * 1024
+
 
 class SubtitleService:
     def __init__(
         self,
         session: AsyncSession,
         radarr_clients: dict[int, RadarrClient],
-        sonarr_clients: dict[int, SonarrClient]
+        sonarr_clients: dict[int, SonarrClient],
     ):
         self.config_repo = ConfigRepository(session)
+        self.binding_repo = BindingRepository(session)
+        self.server_repo = ServerRepository(session)
         self.radarr_clients: dict[int, RadarrClient] = radarr_clients
         self.sonarr_clients: dict[int, SonarrClient] = sonarr_clients
 
-    async def handle_file_upload(self, user_id: int, file_path: str, file_name: str) -> Result:
-        """处理字幕文件上传（入口分发）"""
+    async def _get_bound_arr_ids(self, media_server_id: int) -> list[int]:
+        """获取指定媒体服务器已绑定的去重 Arr 实例 ID 列表"""
+        bindings = await self.binding_repo.get_by_media_id(media_server_id)
+        return list(dict.fromkeys(b.arr_id for b in bindings))
+
+    async def _format_arr_labels(self, arr_ids: list[int]) -> list[tuple[int, str]]:
+        """获取 Arr 实例 ID 与可读名称列表，用于多实例匹配时提示明确目标"""
+        labels: list[tuple[int, str]] = []
+        for arr_id in arr_ids:
+            server = await self.server_repo.get_by_id(arr_id)
+            name = server.name if server else f"Arr#{arr_id}"
+            labels.append((arr_id, name))
+        return labels
+
+    async def find_matching_arr_targets(
+        self, media_server_id: int, media_type: str, media_id: int
+    ) -> list[tuple[int, str]]:
+        """在媒体服务器已绑定的 Arr 实例中查找匹配外部媒体 ID 的实例列表"""
+        bound_arr_ids = await self._get_bound_arr_ids(media_server_id)
+        if not bound_arr_ids:
+            return []
+
+        matched_ids: list[int] = []
+        if media_type == "tvdb":
+            for arr_id in bound_arr_ids:
+                client = self.sonarr_clients.get(arr_id)
+                if not client:
+                    continue
+                try:
+                    series = await client.get_series_by_tvdb(media_id)
+                    if series and series.id:
+                        matched_ids.append(arr_id)
+                except Exception as e:
+                    logger.warning("查询绑定 Sonarr 实例 {} 失败: {}", arr_id, e)
+        elif media_type == "tmdb":
+            for arr_id in bound_arr_ids:
+                client = self.radarr_clients.get(arr_id)
+                if not client:
+                    continue
+                try:
+                    movie = await client.get_movie_by_tmdb(media_id)
+                    if movie and movie.id:
+                        matched_ids.append(arr_id)
+                except Exception as e:
+                    logger.warning("查询绑定 Radarr 实例 {} 失败: {}", arr_id, e)
+
+        return await self._format_arr_labels(matched_ids)
+
+    async def handle_file_upload(
+        self,
+        user_id: int,
+        file_path: str,
+        file_name: str,
+        media_server_id: int | None = None,
+        target_arr_id: int | None = None,
+    ) -> Result:
+        """处理字幕文件上传（限定在所属媒体服务器已绑定的 Arr 实例中定位目标）"""
+        if media_server_id is None:
+            return Result(False, "未指定所属媒体服务器，无法定位已绑定的 Arr 实例。")
+
         # 1. 检查文件名格式
-        match = re.search(r'^(tvdb|tmdb)-(\d+)\.zip$', file_name, re.IGNORECASE)
+        match = re.search(r"^(tvdb|tmdb)-(\d+)\.zip$", file_name, re.IGNORECASE)
         if not match:
-            return Result(False, "文件名格式错误。请使用 `tvdb-ID.zip` 或 `tmdb-ID.zip` 命名 (例如 `tvdb-842675.zip`)。")
+            return Result(
+                False,
+                "文件名格式错误。请使用 `tvdb-ID.zip` 或 `tmdb-ID.zip` 命名 (例如 `tvdb-842675.zip`)。",
+            )
 
         media_type = match.group(1).lower()
         media_id = int(match.group(2))
 
-        logger.info(f"处理字幕上传: 用户={user_id}, 类型={media_type}, ID={media_id}")
+        bound_arr_ids = await self._get_bound_arr_ids(media_server_id)
+        if not bound_arr_ids:
+            return Result(
+                False, "该媒体服务器未绑定任何 Sonarr/Radarr 实例，无法上传字幕。"
+            )
+
+        logger.info(
+            "处理字幕上传: 用户={}, 媒体服={}, 类型={}, ID={}, 指定Arr={}",
+            user_id,
+            media_server_id,
+            media_type,
+            media_id,
+            target_arr_id,
+        )
 
         try:
             # 2. 根据类型分发处理
-            if media_type == 'tvdb':
-                return await self._handle_series(user_id, media_id, file_path)
-            elif media_type == 'tmdb':
-                return await self._handle_movie(user_id, media_id, file_path)
+            if media_type == "tvdb":
+                return await self._handle_series(
+                    user_id, media_id, file_path, bound_arr_ids, target_arr_id
+                )
+            elif media_type == "tmdb":
+                return await self._handle_movie(
+                    user_id, media_id, file_path, bound_arr_ids, target_arr_id
+                )
         except (OSError, ValueError, TypeError) as e:
             logger.exception(f"处理字幕时发生系统错误: {e}")
             return Result(False, f"处理过程中发生系统错误: {str(e)}")
 
         return Result(False, "不支持的媒体类型")
 
-    async def _handle_series(self, user_id: int, tvdb_id: int, zip_path: str) -> Result:
-        """处理剧集字幕 (Sonarr)"""
-        target_client = None
-        series = None
+    async def _handle_series(
+        self,
+        user_id: int,
+        tvdb_id: int,
+        zip_path: str,
+        bound_arr_ids: list[int],
+        target_arr_id: int | None = None,
+    ) -> Result:
+        """处理剧集字幕 (仅限已绑定的 Sonarr 实例)"""
+        candidate_ids = [aid for aid in bound_arr_ids if aid in self.sonarr_clients]
+        if not candidate_ids:
+            return Result(
+                False, "该媒体服务器未绑定可用的 Sonarr 实例，无法上传剧集字幕。"
+            )
 
-        for client in self.sonarr_clients.values():
+        if target_arr_id is not None:
+            if target_arr_id not in candidate_ids:
+                return Result(False, "指定的 Sonarr 实例未绑定到该媒体服务器或未连接。")
+            candidate_ids = [target_arr_id]
+
+        matches: list[tuple[int, SonarrClient, SeriesResource]] = []
+        for arr_id in candidate_ids:
+            client = self.sonarr_clients[arr_id]
             try:
                 series = await client.get_series_by_tvdb(tvdb_id)
                 if series and series.id:
-                    target_client = client
-                    break
+                    matches.append((arr_id, client, series))
             except Exception as e:
-                logger.warning(f"查询 Sonarr 实例失败: {e}")
+                logger.warning("查询 Sonarr 实例 {} 失败: {}", arr_id, e)
                 continue
 
-        if not target_client or not series or not series.id:
-            return Result(False, f"未在任何已启用的 Sonarr 实例中找到 TVDB ID 为 {tvdb_id} 的剧集。")
+        if not matches:
+            return Result(
+                False,
+                f"未在该媒体服务器已绑定的 Sonarr 实例中找到 TVDB ID 为 {tvdb_id} 的剧集。",
+            )
+
+        if len(matches) > 1:
+            labels = await self._format_arr_labels([m[0] for m in matches])
+            desc = "、".join(f"{name}(ID:{aid})" for aid, name in labels)
+            return Result(
+                False,
+                f"多个已绑定的 Sonarr 实例均匹配 TVDB ID {tvdb_id}（{desc}），请先明确目标实例后再处理。",
+            )
+
+        _, target_client, series = matches[0]
+        assert series.id is not None
 
         episodes = await target_client.get_episode_by_series_id(series.id)
         if not episodes:
@@ -86,17 +201,17 @@ class SubtitleService:
                 episode_map[key] = ep.episodeFile.path
 
         return await self._extract_and_process(
-            zip_path,
-            series.title,
-            lambda f: self._process_series_file(f, episode_map)
+            zip_path, series.title, lambda f: self._process_series_file(f, episode_map)
         )
 
-    def _process_series_file(self, sub_file_path: str, episode_map: dict[str, str]) -> str | None:
+    def _process_series_file(
+        self, sub_file_path: str, episode_map: dict[str, str]
+    ) -> str | None:
         """剧集单文件处理逻辑：返回错误信息或 None(成功)"""
         sub_filename = os.path.basename(sub_file_path)
 
         # 匹配 SxxExx
-        ep_match = re.search(r'[sS](\d+)[eE](\d+)', sub_filename)
+        ep_match = re.search(r"[sS](\d+)[eE](\d+)", sub_filename)
         if not ep_match:
             return f"忽略 {sub_filename}：文件名未包含 SxxExx 格式"
 
@@ -113,8 +228,8 @@ class SubtitleService:
         media_basename = os.path.splitext(os.path.basename(media_path))[0]
 
         # 截取 SxxExx 之后的部分，例如 ".zh.comment.ass" 或 " - Title.zh.ass"
-        remainder = sub_filename[ep_match.end():]
-        suffix_match = re.search(r'(?:\.[^.]+)+$', remainder)
+        remainder = sub_filename[ep_match.end() :]
+        suffix_match = re.search(r"(?:\.[^.]+)+$", remainder)
         if suffix_match:
             suffixes = suffix_match.group()
         else:
@@ -129,24 +244,52 @@ class SubtitleService:
 
         return self._safe_move(sub_file_path, new_sub_path)
 
-    async def _handle_movie(self, user_id: int, tmdb_id: int, zip_path: str) -> Result:
-        """处理电影字幕 (Radarr)"""
-        # 1. 在所有 Radarr 实例中查找
-        target_client = None
-        movie = None
+    async def _handle_movie(
+        self,
+        user_id: int,
+        tmdb_id: int,
+        zip_path: str,
+        bound_arr_ids: list[int],
+        target_arr_id: int | None = None,
+    ) -> Result:
+        """处理电影字幕 (仅限已绑定的 Radarr 实例)"""
+        candidate_ids = [aid for aid in bound_arr_ids if aid in self.radarr_clients]
+        if not candidate_ids:
+            return Result(
+                False, "该媒体服务器未绑定可用的 Radarr 实例，无法上传电影字幕。"
+            )
 
-        for client in self.radarr_clients.values():
+        if target_arr_id is not None:
+            if target_arr_id not in candidate_ids:
+                return Result(False, "指定的 Radarr 实例未绑定到该媒体服务器或未连接。")
+            candidate_ids = [target_arr_id]
+
+        matches: list[tuple[int, RadarrClient, MovieResource]] = []
+        for arr_id in candidate_ids:
+            client = self.radarr_clients[arr_id]
             try:
                 movie = await client.get_movie_by_tmdb(tmdb_id)
                 if movie and movie.id:
-                    target_client = client
-                    break
+                    matches.append((arr_id, client, movie))
             except Exception as e:
-                logger.warning(f"查询 Radarr 实例失败: {e}")
+                logger.warning("查询 Radarr 实例 {} 失败: {}", arr_id, e)
                 continue
 
-        if not target_client or not movie:
-            return Result(False, f"未在任何已启用的 Radarr 实例中找到 TMDB ID 为 {tmdb_id} 的电影。")
+        if not matches:
+            return Result(
+                False,
+                f"未在该媒体服务器已绑定的 Radarr 实例中找到 TMDB ID 为 {tmdb_id} 的电影。",
+            )
+
+        if len(matches) > 1:
+            labels = await self._format_arr_labels([m[0] for m in matches])
+            desc = "、".join(f"{name}(ID:{aid})" for aid, name in labels)
+            return Result(
+                False,
+                f"多个已绑定的 Radarr 实例均匹配 TMDB ID {tmdb_id}（{desc}），请先明确目标实例后再处理。",
+            )
+
+        _, _, movie = matches[0]
 
         if not movie.hasFile or not movie.movieFile or not movie.movieFile.path:
             return Result(False, "该电影在库中尚无视频文件，无法上传字幕。")
@@ -159,10 +302,12 @@ class SubtitleService:
         return await self._extract_and_process(
             zip_path,
             movie.title,
-            lambda f: self._process_movie_file(f, media_dir, media_basename)
+            lambda f: self._process_movie_file(f, media_dir, media_basename),
         )
 
-    def _process_movie_file(self, sub_file_path: str, media_dir: str, media_basename: str) -> str | None:
+    def _process_movie_file(
+        self, sub_file_path: str, media_dir: str, media_basename: str
+    ) -> str | None:
         """电影单文件处理逻辑"""
         sub_filename = os.path.basename(sub_file_path)
         # 获取所有后缀 (如 .chi.srt)
@@ -201,23 +346,32 @@ class SubtitleService:
         self,
         zip_path: str,
         media_title: str | None,
-        process_func: Callable[[str], str | None]) -> Result:
+        process_func: Callable[[str], str | None],
+    ) -> Result:
         """通用解压和遍历逻辑"""
         async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
             try:
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                with zipfile.ZipFile(zip_path, "r") as zip_ref:
                     total_size = 0
                     for zinfo in zip_ref.infolist():
-                        if zinfo.filename.startswith('/') or '..' in zinfo.filename:
-                            return Result(False, f"发现不安全的文件路径: {zinfo.filename}")
+                        if zinfo.filename.startswith("/") or ".." in zinfo.filename:
+                            return Result(
+                                False, f"发现不安全的文件路径: {zinfo.filename}"
+                            )
 
                         if zinfo.file_size > MAX_SINGLE_FILE_SIZE:
-                            return Result(False, f"文件 {zinfo.filename} 过大 (超过 {MAX_SINGLE_FILE_SIZE//1024//1024}MB)")
+                            return Result(
+                                False,
+                                f"文件 {zinfo.filename} 过大 (超过 {MAX_SINGLE_FILE_SIZE//1024//1024}MB)",
+                            )
 
                         total_size += zinfo.file_size
 
                     if total_size > MAX_TOTAL_EXTRACT_SIZE:
-                        return Result(False, f"压缩包解压后总大小过大 (超过 {MAX_TOTAL_EXTRACT_SIZE//1024//1024}MB)")
+                        return Result(
+                            False,
+                            f"压缩包解压后总大小过大 (超过 {MAX_TOTAL_EXTRACT_SIZE//1024//1024}MB)",
+                        )
 
                     zip_ref.extractall(temp_dir)
             except zipfile.BadZipFile:
@@ -228,7 +382,7 @@ class SubtitleService:
 
             for root, _, files in os.walk(temp_dir):
                 for file in files:
-                    if file.startswith('.') or file.startswith('__MACOSX'):
+                    if file.startswith(".") or file.startswith("__MACOSX"):
                         continue
 
                     full_path = os.path.join(root, file)

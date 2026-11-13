@@ -633,9 +633,21 @@ async def trigger_upload_subtitle(
     if not radarr_clients and not sonarr_clients:
         return {"success": False, "message": "媒体服务器未配置"}
 
+    from repositories.binding_repo import BindingRepository
+
+    bindings = await BindingRepository(session).get_by_media_id(server_id)
+    has_bound_client = any(
+        b.arr_id in radarr_clients or b.arr_id in sonarr_clients for b in bindings
+    )
+    if not bindings or not has_bound_client:
+        return {
+            "success": False,
+            "message": "该媒体服务器未绑定可用的 Sonarr/Radarr 实例，无法上传字幕",
+        }
+
     asyncio.create_task(
         run_subtitle_upload_flow(
-            user_id, client, session, radarr_clients, sonarr_clients
+            user_id, client, None, radarr_clients, sonarr_clients, server_id
         )
     )
     return {"success": True, "message": "请返回 Telegram 聊天窗口，查看上传指引。"}
