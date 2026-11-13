@@ -533,6 +533,10 @@
                         <label class="form-label">求片通知频道</label>
                         <div id="req-topic-wrapper"></div>
                     </div>
+                    <div class="item" id="arr-nfo-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>启用 NFO 生成功能</span>
+                        <label class="switch"><input type="checkbox" id="srv-allow-nfo"><span class="slider"></span></label>
+                    </div>
                     <div id="sonarr-actions"
                         style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
                         <div class="section-hint">高级维护工具</div>
@@ -725,6 +729,10 @@
             document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
             document.getElementById('tab-paths').style.display = isMedia ? 'none' : 'block';
             document.getElementById('req-topic-group').style.display = isMedia ? 'none' : 'block';
+            document.getElementById('arr-nfo-group').style.display = isMedia ? 'none' : 'flex';
+            if (!isMedia) {
+                document.getElementById('srv-allow-nfo').checked = s.allow_nfo !== false;
+            }
 
             const sonarrActions = document.getElementById('sonarr-actions');
             if (sonarrActions) {
@@ -945,6 +953,7 @@
                 payload.allow_request = document.getElementById('srv-request').checked;
             } else {
                 payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
+                payload.allow_nfo = document.getElementById('srv-allow-nfo').checked;
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({
                     remote: div.querySelector('.remote').value,
                     local: div.querySelector('.local').value

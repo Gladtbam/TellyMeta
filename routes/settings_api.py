@@ -291,6 +291,8 @@ async def update_server(
         update_dict["allow_subtitle_upload"] = data.allow_subtitle_upload
     if data.allow_request is not None:
         update_dict["allow_request"] = data.allow_request
+    if data.allow_nfo is not None:
+        update_dict["allow_nfo"] = data.allow_nfo
 
     # 路径映射 (List -> JSON)
     if data.path_mappings is not None:
@@ -538,6 +540,9 @@ async def rebuild_server_metadata(
 
     if not server:
         raise HTTPException(status_code=404, detail="服务器不存在")
+
+    if not server.allow_nfo:
+        raise HTTPException(status_code=400, detail="该服务器未启用 NFO 生成功能")
 
     client = None
     if server.server_type == ServerType.SONARR:

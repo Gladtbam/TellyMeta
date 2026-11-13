@@ -130,6 +130,9 @@ class ServerInstance(Base):
     allow_request: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )
+    allow_nfo: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)

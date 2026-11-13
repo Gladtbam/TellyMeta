@@ -109,7 +109,7 @@ async def sonarr_webhook(
     if isinstance(payload, SonarrWebhookSeriesAddPayload):
         if mapped_path := client.to_local_path(payload.series.path):
             payload.series.path = mapped_path
-        if tmdb_client:
+        if tmdb_client and getattr(server_instance, "allow_nfo", True):
             asyncio.create_task(
                 handle_series_add_metadata(client, payload, tmdb_client, tvdb_client)
             )
@@ -129,7 +129,7 @@ async def sonarr_webhook(
             )
             if mapped_path := client.to_local_path(remote_path):
                 payload.episodeFile.path = mapped_path
-            if tmdb_client:
+            if tmdb_client and getattr(server_instance, "allow_nfo", True):
                 asyncio.create_task(
                     create_episode_nfo(payload, tmdb_client, tvdb_client)
                 )
@@ -228,10 +228,14 @@ async def radarrarr_webhook(
                     except Exception as e:
                         logger.warning("发送 MKV 路径映射告警失败: {}", e)
 
-        if local_folder_path := client.to_local_path(payload.movieFile.path):
+        if getattr(server_instance, "allow_nfo", True) and (
+            local_movie_file := client.to_local_path(payload.movieFile.path)
+        ):
             asyncio.create_task(
                 create_movie_nfo(
-                    Path(local_folder_path), payload.movie.tmdbId, tmdb_client
+                    Path(local_movie_file).with_suffix(".nfo"),
+                    payload.movie.tmdbId,
+                    tmdb_client,
                 )
             )
 
@@ -257,6 +261,7 @@ async def radarrarr_webhook(
     elif isinstance(payload, RadarrWebhookAddedPayload):
         if local_folder_path := client.to_local_path(payload.movie.folderPath):
             payload.movie.folderPath = local_folder_path
+            if getattr(server_instance, "allow_nfo", True):
             asyncio.create_task(handle_movie_add_metadata(payload, tmdb_client))
         if client.notify_topic_id:
             await notify_service.send_to_topic(

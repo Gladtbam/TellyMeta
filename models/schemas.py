@@ -103,6 +103,7 @@ class ServerDto(BaseModel):
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool = True
     allow_request: bool = True
+    allow_nfo: bool = True
     tos: str | None = None
 
     # 高级配置
@@ -143,6 +144,7 @@ class ServerUpdate(BaseModel):
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool | None = None
     allow_request: bool | None = None
+    allow_nfo: bool | None = None
     tos: str | None = None
 
     # 高级配置
@@ -250,6 +252,7 @@ class MediaAccountDto(BaseModel):
     is_banned: bool
     allow_subtitle_upload: bool = True
     allow_request: bool = True
+    allow_nfo: bool = True
     tos: str | None = None
 
 
