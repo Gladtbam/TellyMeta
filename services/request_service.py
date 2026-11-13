@@ -367,6 +367,50 @@ class RequestService:
             )
         return Result(False, msg)
 
+    async def _get_media_server_name(self, media_server_id: int) -> str:
+        """获取媒体服务器名称用于通知展示"""
+        server = await self.server_repo.get_by_id(media_server_id)
+        return server.name if server else f"#{media_server_id}"
+
+    async def _notify_requester_dm(
+        self,
+        request_id: int,
+        user_id: int,
+        stage: str,
+        *,
+        event_type: NotificationEvent | None = None,
+        text: str | None = None,
+        **kwargs: Any,
+    ) -> bool:
+        """向求片申请人发送私聊结果通知；送达失败仅记录诊断日志，不逆转已完成的状态和积分处理"""
+        try:
+            if event_type is not None:
+                ok = await self.notification_service.send_to_user(
+                    user_id, event_type, **kwargs
+                )
+            elif text is not None:
+                ok = await self.notification_service.send_text_to_user(user_id, text)
+            else:
+                return False
+
+            if not ok:
+                logger.warning(
+                    "求片结果私聊通知送达失败（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}",
+                    request_id,
+                    user_id,
+                    stage,
+                )
+            return ok
+        except Exception as e:
+            logger.warning(
+                "求片结果私聊通知异常（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}, err={}",
+                request_id,
+                user_id,
+                stage,
+                e,
+            )
+            return False
+
     async def handle_approval_by_request_id(
         self, request_id: int, approver_name: str = "管理员"
     ) -> Result:
@@ -432,6 +476,16 @@ class RequestService:
                 claimed.reserved_cost,
                 approver_name,
             )
+            server_name = await self._get_media_server_name(claimed.media_server_id)
+            await self._notify_requester_dm(
+                request_id,
+                claimed.user_id,
+                "approved",
+                event_type=NotificationEvent.REQUEST_APPROVED,
+                media_title=claimed.title or msg,
+                media_year="",
+                server_name=server_name,
+            )
             return Result(
                 True,
                 f"✅ 已批准并添加 **{msg}**（结算积分: {claimed.reserved_cost}，操作人: {approver_name}）",
@@ -456,6 +510,18 @@ class RequestService:
             claimed.user_id,
             claimed.reserved_cost,
             msg,
+        )
+        server_name = await self._get_media_server_name(claimed.media_server_id)
+        await self._notify_requester_dm(
+            request_id,
+            claimed.user_id,
+            "arr_failed",
+            text=(
+                f"❌ <b>求片添加失败</b>\n\n"
+                f"您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）"
+                f"在加入媒体库时失败：{msg}\n"
+                f"已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"
+            ),
         )
         return Result(
             False,
@@ -493,6 +559,17 @@ class RequestService:
             updated.user_id,
             updated.reserved_cost,
             approver_name,
+        )
+        server_name = await self._get_media_server_name(updated.media_server_id)
+        await self._notify_requester_dm(
+            request_id,
+            updated.user_id,
+            "rejected",
+            event_type=NotificationEvent.REQUEST_REJECTED,
+            media_title=updated.title or f"#{request_id}",
+            media_year="",
+            server_name=server_name,
+            reason=f"管理员（{approver_name}）已拒绝该请求，已释放全部预留积分 {updated.reserved_cost}。",
         )
         return Result(
             True,
@@ -561,6 +638,18 @@ class RequestService:
                 updated.id,
                 updated.user_id,
                 updated.reserved_cost,
+            )
+            server_name = await self._get_media_server_name(updated.media_server_id)
+            await self._notify_requester_dm(
+                updated.id,
+                updated.user_id,
+                "expired",
+                text=(
+                    f"⏰ <b>求片已超时自动取消</b>\n\n"
+                    f"您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）"
+                    f"待审核已满 7 天未处理，系统已自动取消。\n"
+                    f"已全额释放预留积分 <b>{updated.reserved_cost}</b>。"
+                ),
             )
         return expired_count
 

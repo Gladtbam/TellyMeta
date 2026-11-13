@@ -88,18 +88,42 @@ class NotificationService:
 
     async def send_to_user(
         self, user_id: int, event_type: NotificationEvent, image: Any = None, **kwargs
-    ) -> None:
-        """
-        发送通知给特定用户 (私聊)
-        """
+    ) -> bool:
+        """发送模板通知给特定用户 (私聊)，返回是否发送成功"""
         message_text = await self._render(event_type, kwargs)
         if not message_text:
-            return
+            logger.warning(
+                "用户私聊通知模板渲染为空: user_id={}, event={}",
+                user_id,
+                event_type.value,
+            )
+            return False
 
         try:
             await self.client.send_message(
                 chat_id=user_id, message=message_text, file=image, parse_mode="html"
             )
             logger.debug("发送的用户通知：{} -> 用户 {}", event_type.value, user_id)
+            return True
         except Exception as e:
-            logger.error("无法向 {} 发送用户通知：{}", user_id, e)
+            logger.error(
+                "无法向 {} 发送用户通知 ({})：{}", user_id, event_type.value, e
+            )
+            return False
+
+    async def send_text_to_user(
+        self, user_id: int, message_text: str, image: Any = None
+    ) -> bool:
+        """发送自定义文本通知给特定用户 (私聊)，返回是否发送成功"""
+        if not message_text:
+            return False
+
+        try:
+            await self.client.send_message(
+                chat_id=user_id, message=message_text, file=image, parse_mode="html"
+            )
+            logger.debug("发送的用户文本通知 -> 用户 {}", user_id)
+            return True
+        except Exception as e:
+            logger.error("无法向 {} 发送用户文本通知：{}", user_id, e)
+            return False
