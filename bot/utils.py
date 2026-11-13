@@ -21,8 +21,8 @@ async def safe_respond(event, msg: str, delete_after: int = 10):
         message = await event.respond(msg, parse_mode="markdown")
         asyncio.create_task(_delayed_delete(message, delete_after))
         return message
-    except errors.FloodWaitError as e:
-        logger.error("发送消息失败: {}", e)
+    except (errors.FloodWaitError, errors.RPCError) as e:
+        logger.warning("发送消息失败: {}", e)
 
 
 async def safe_reply(event, msg: str, delete_after: int = 10):
@@ -31,8 +31,8 @@ async def safe_reply(event, msg: str, delete_after: int = 10):
         message = await event.reply(msg, parse_mode="markdown")
         asyncio.create_task(_delayed_delete(message, delete_after))
         return message
-    except errors.FloodWaitError as e:
-        logger.error("发送消息失败: {}", e)
+    except (errors.FloodWaitError, errors.RPCError) as e:
+        logger.warning("发送消息失败: {}", e)
 
 
 async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 60):
@@ -41,8 +41,8 @@ async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 6
         message = await event.respond(msg, buttons=keyboard, parse_mode="markdown")
         asyncio.create_task(_delayed_delete(message, delete_after))
         return message
-    except errors.FloodWaitError as e:
-        logger.error("发送消息失败: {}", e)
+    except (errors.FloodWaitError, errors.RPCError) as e:
+        logger.warning("发送消息失败: {}", e)
 
 
 async def safe_reply_keyboard(event, msg: str, keyboard, delete_after: int = 60):
@@ -51,8 +51,8 @@ async def safe_reply_keyboard(event, msg: str, keyboard, delete_after: int = 60)
         message = await event.reply(msg, buttons=keyboard, parse_mode="markdown")
         asyncio.create_task(_delayed_delete(message, delete_after))
         return message
-    except errors.FloodWaitError as e:
-        logger.error("发送消息失败: {}", e)
+    except (errors.FloodWaitError, errors.RPCError) as e:
+        logger.warning("发送消息失败: {}", e)
 
 
 async def safe_delete(message) -> None:

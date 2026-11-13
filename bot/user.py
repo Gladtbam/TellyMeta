@@ -1,6 +1,7 @@
 from fastapi import FastAPI
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import events
+from telethon import errors, events
 
 from bot.decorators import provide_db_session
 from bot.utils import safe_reply
@@ -39,9 +40,19 @@ async def checkin_handler(
     result = await user_service.perform_checkin(user_id, username)
 
     if result.success:
-        await event.reply(result.message, parse_mode="markdown")
+        try:
+            await event.reply(result.message, parse_mode="markdown")
+        except (errors.FloodWaitError, errors.RPCError) as e:
+            logger.warning("回复签到结果失败: {}", e)
     else:
         await safe_reply(event, result.message)
 
     if result.private_message:
-        await client.send_message(user_id, str(result.private_message))
+        try:
+            await client.send_message(user_id, str(result.private_message))
+        except (
+            errors.UserIsBlockedError,
+            errors.PeerIdInvalidError,
+            errors.RPCError,
+        ) as e:
+            logger.warning("向用户 {} 发送签到私聊消息失败: {}", user_id, e)

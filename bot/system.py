@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import errors, events
 
 from bot.decorators import provide_db_session
-from bot.utils import safe_reply, safe_respond, safe_respond_keyboard
+from bot.utils import safe_delete, safe_reply, safe_respond, safe_respond_keyboard
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
@@ -66,8 +66,6 @@ async def help_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
     msg = textwrap.dedent("""\
     /help - [私聊]帮助
     /checkin - 签到
-    /signup - 注册, 仅开放注册时使用
-    /code - [私聊]使用注册码注册, 或者使用续期码续期。例: /code 123
     /del - [管理员]删除 Emby 账户, 需回复一个用户
     /warn - [管理员]警告用户, 需回复一个用户
     /info - [管理员]查看用户信息
@@ -190,7 +188,9 @@ async def verify_handler(
         )
 
 
-@TelethonClientWarper.handler(events.NewMessage(chats=settings.telegram_chat_id))
+@TelethonClientWarper.handler(
+    events.NewMessage(chats=settings.telegram_chat_id, incoming=True)
+)
 @provide_db_session
 async def group_message_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
@@ -201,59 +201,68 @@ async def group_message_handler(
     if not event.sender_id or not event.message or not event.message.text:
         return  # 忽略无发送者或无文本的消息
 
+    if getattr(event, "out", False) or getattr(
+        getattr(event, "sender", None), "bot", False
+    ):
+        return  # 忽略 Bot 自身或其它 Bot 发出的消息
+
     user_id = event.sender_id
 
     if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
         return
 
-    if event.message.text.startswith("/"):
+    text = event.message.text.strip()
+    if text.startswith("/"):
         return
 
-    if any(word in event.message.text for word in IGNORED_KEYWORDS):
-        return
+    # 无意义水贴关键词仅不计积分，仍纳入防刷屏连续计数
+    count_score = text not in IGNORED_KEYWORDS
 
     flood_state: MessageTrackingState = app.state.message_tracker
     antiflood_service = ScoreService(session, flood_state)
-    flood_result = await antiflood_service.process_message(user_id, app.state.admin_ids)
+    flood_result = await antiflood_service.process_message(
+        user_id, app.state.admin_ids, count_score=count_score
+    )
     if flood_result:
         await safe_reply(event, flood_result.message)
 
 
 @TelethonClientWarper.handler(
-    events.NewMessage(pattern=r"^/(\w+)(?:@\w+)?$", incoming=True)
+    events.NewMessage(pattern=r"^/(\w+)(?:@(\w+))?$", incoming=True)
 )
 async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
     """未知命令处理器
-    处理未知命令，提示用户使用 /help 获取帮助
-    删除所有命令消息
+    忽略 @ 其它 Bot 的指令；对其余未知命令提示 /help 并安全清理消息
     """
-    known_commands = [
+    known_commands = {
         "start",
         "help",
         "info",
         "chat_id",
         "del",
-        "code",
         "checkin",
         "warn",
         "change",
         "settle",
-        "signup",
         "kick",
         "ban",
+        "bind",
         "cancel",
-    ]
+    }
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore
-        if command not in known_commands:
-            await safe_reply(event, f"未知命令: /{command}. 使用 /help 获取帮助。")
+        target_bot = event.pattern_match.group(2)  # type: ignore
     except IndexError:
-        logger.warning("group(1) 不存在")
+        logger.warning("unknown_command_handler 正则分组缺失")
+        return
 
-    try:
-        await asyncio.sleep(1)
-        await event.delete()
-    except errors.FloodWaitError as e:
-        logger.warning("删除消息时等待错误：等待{}秒", e.seconds)
-        await asyncio.sleep(e.seconds)
-        await event.delete()
+    # 明确 @ 了其他 Bot 时直接忽略，不回复也不尝试删除
+    my_bot_name = (settings.telegram_bot_name or "").lstrip("@").lower()
+    if target_bot and my_bot_name and target_bot.lower() != my_bot_name:
+        return
+
+    if command not in known_commands:
+        await safe_reply(event, f"未知命令: /{command}. 使用 /help 获取帮助。")
+
+    await asyncio.sleep(1)
+    await safe_delete(event.message)

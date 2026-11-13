@@ -27,18 +27,21 @@ class ScoreService:
         self.state = state
         self.telegram_repo = TelegramRepository(session)
 
-    async def process_message(self, user_id: int, admin_ids: list) -> None | Result:
-        """处理用户消息，检测是否为刷屏行为。
+    async def process_message(
+        self, user_id: int, admin_ids: list | set, count_score: bool = True
+    ) -> None | Result:
+        """处理用户消息，检测是否为刷屏行为并按需累计消息积分。
 
         Args:
             user_id (int): 发送消息的用户ID。
-            admin_ids (list): BOT 管理员列表
+            admin_ids (list | set): BOT 管理员列表。
+            count_score (bool): 是否计入消息积分（无意义关键词仅做刷屏检测不计分）。
         """
         if self.state.last_user_id != user_id:
             self.state.last_user_id = user_id
             self.state.consecutive_count = 1
 
-            if user_id in admin_ids:
+            if user_id in admin_ids or not count_score:
                 return None
 
             self.state.message_counts[user_id] = (
