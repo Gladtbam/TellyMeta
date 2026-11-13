@@ -11,6 +11,16 @@ class ConfigRepository:
     KEY_ENABLE_POINTS = "system:enable_points"
     KEY_ENABLE_VERIFICATION = "system:enable_verification"
     KEY_ENABLE_CLEANUP_INACTIVE_USERS = "system:enable_cleanup_inactive_users"
+    KEY_ENABLE_MKV_PROCESS = "system:enable_mkv_process"
+    KEY_MKV_EXCLUDE_KEYWORDS = "system:mkv_exclude_keywords"
+
+    @staticmethod
+    def parse_exclude_keywords(raw: str | None) -> list[str]:
+        """解析 MKV 排除关键词列表（支持逗号或换行分隔）"""
+        if not raw:
+            return []
+        normalized = raw.replace("\r\n", "\n").replace(",", "\n")
+        return [item.strip() for item in normalized.split("\n") if item.strip()]
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -34,6 +44,8 @@ class ConfigRepository:
             cls.KEY_ENABLE_POINTS: "true",
             cls.KEY_ENABLE_VERIFICATION: "true",
             cls.KEY_ENABLE_CLEANUP_INACTIVE_USERS: "false",
+            cls.KEY_ENABLE_MKV_PROCESS: "true",
+            cls.KEY_MKV_EXCLUDE_KEYWORDS: "",
         }
 
         new_items = []

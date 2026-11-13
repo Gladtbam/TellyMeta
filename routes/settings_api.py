@@ -22,6 +22,7 @@ from models.schemas import (
     ArrServerDto,
     BindingUpdate,
     LibraryDto,
+    MkvConfigUpdateDto,
     NsfwLibraryDto,
     ServerCreate,
     ServerDto,
@@ -65,6 +66,7 @@ SYSTEM_KEY_MAP = {
     "enable_points": ConfigRepository.KEY_ENABLE_POINTS,
     "enable_verification": ConfigRepository.KEY_ENABLE_VERIFICATION,
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
+    "enable_mkv_process": ConfigRepository.KEY_ENABLE_MKV_PROCESS,
 }
 
 
@@ -89,6 +91,36 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
             ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false"
         )
         == "true",
+        "enable_mkv_process": await repo.get_settings(
+            ConfigRepository.KEY_ENABLE_MKV_PROCESS, "true"
+        )
+        == "true",
+        "mkv_exclude_keywords": await repo.get_settings(
+            ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, ""
+        )
+        or "",
+    }
+
+
+@router.post(
+    "/system/mkv_exclude_keywords",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_mkv_exclude_keywords(
+    payload: MkvConfigUpdateDto, session: AsyncSession = Depends(get_db)
+):
+    """更新 MKV 自动处理排除关键词配置"""
+    repo = ConfigRepository(session)
+    cleaned = "\n".join(
+        ConfigRepository.parse_exclude_keywords(payload.mkv_exclude_keywords)
+    )
+    await repo.set_settings(ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, cleaned)
+    return {
+        "success": True,
+        "key": "mkv_exclude_keywords",
+        "db_key": ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS,
+        "message": "MKV 排除关键词已保存",
     }
 
 

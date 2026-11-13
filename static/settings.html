@@ -381,6 +381,22 @@
                             onchange="toggleSystem('enable_cleanup_inactive_users')"><span
                             class="slider"></span></label>
                 </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">自动清理 MKV 冗余字幕</span></div><label class="switch"><input
+                            type="checkbox" id="toggle-mkv-process"
+                            onchange="toggleSystem('enable_mkv_process')"><span
+                            class="slider"></span></label>
+                </div>
+                <div class="item" id="mkv-exclude-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+                    <div class="item-content">
+                        <span class="item-title">MKV 处理排除关键词</span>
+                        <span class="item-subtitle">路径包含任一关键词时跳过清理（逗号或换行分隔）</span>
+                    </div>
+                    <textarea id="mkv-exclude-keywords" class="form-input" rows="2"
+                        placeholder="例如: VCB-Studio, Remux"></textarea>
+                    <button type="button" class="btn btn-primary" style="margin-top:0"
+                        onclick="saveMkvExcludeKeywords()">保存排除关键词</button>
+                </div>
             </div>
         </div>
     </div>
@@ -631,10 +647,30 @@
             ]);
             if (topics.status === 'fulfilled') topicData = topics.value;
             if (sys.status === 'fulfilled') {
-                for (const [k, v] of Object.entries(sys.value)) document.getElementById(`toggle-${k.split('_')[1]}`).checked = v;
+                const s = sys.value;
+                document.getElementById('toggle-points').checked = !!s.enable_points;
+                document.getElementById('toggle-verification').checked = !!s.enable_verification;
+                document.getElementById('toggle-cleanup').checked = !!s.enable_cleanup_inactive_users;
+                const mkvEnabled = s.enable_mkv_process !== false;
+                document.getElementById('toggle-mkv-process').checked = mkvEnabled;
+                document.getElementById('mkv-exclude-keywords').value = s.mkv_exclude_keywords || '';
+                updateMkvExcludeVisibility(mkvEnabled);
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
+        }
+
+        function updateMkvExcludeVisibility(enabled) {
+            const row = document.getElementById('mkv-exclude-row');
+            if (row) {
+                row.style.display = enabled ? 'flex' : 'none';
+            }
+        }
+
+        async function saveMkvExcludeKeywords() {
+            const val = document.getElementById('mkv-exclude-keywords').value;
+            await api('/system/mkv_exclude_keywords', 'POST', { mkv_exclude_keywords: val });
+            tg.showAlert('✅ MKV 排除关键词已保存');
         }
 
         function renderAdmins(data) {
@@ -969,7 +1005,29 @@
             setTimeout(() => document.querySelector(`#${id}`).style.display = 'none', 300);
         }
         async function toggleAdmin(uid, cb) { try { await api(`/admins/${uid}/toggle`, 'POST'); } catch (e) { cb.checked = !cb.checked; } }
-        async function toggleSystem(key) { try { await api(`/system/${key}/toggle`, 'POST'); } catch (e) { document.getElementById(`toggle-${key.split('_')[1]}`).checked = !document.getElementById(`toggle-${key.split('_')[1]}`).checked; } }
+        const SYSTEM_TOGGLE_ID_MAP = {
+            enable_points: 'toggle-points',
+            enable_verification: 'toggle-verification',
+            enable_cleanup_inactive_users: 'toggle-cleanup',
+            enable_mkv_process: 'toggle-mkv-process'
+        };
+
+        async function toggleSystem(key) {
+            const el = document.getElementById(SYSTEM_TOGGLE_ID_MAP[key] || `toggle-${key.split('_')[1]}`);
+            try {
+                const res = await api(`/system/${key}/toggle`, 'POST');
+                if (key === 'enable_mkv_process') {
+                    updateMkvExcludeVisibility(res.new_state !== false);
+                }
+            } catch (e) {
+                if (el) {
+                    el.checked = !el.checked;
+                    if (key === 'enable_mkv_process') {
+                        updateMkvExcludeVisibility(el.checked);
+                    }
+                }
+            }
+        }
 
         loadData();
     </script>

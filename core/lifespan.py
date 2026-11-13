@@ -51,7 +51,9 @@ async def lifespan(app: FastAPI):
 
     if check_mkvtoolnix():
         app.state.task_queue = asyncio.Queue()
-        app.state.mkv_worker = asyncio.create_task(mkv_merge_task(app.state.task_queue))
+        app.state.mkv_worker = asyncio.create_task(
+            mkv_merge_task(app.state.task_queue, app_state=app.state)
+        )
     else:
         app.state.task_queue = None
         app.state.mkv_worker = None

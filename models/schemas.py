@@ -158,6 +158,14 @@ class SystemConfigResponse(BaseModel):
     enable_points: bool
     enable_verification: bool
     enable_cleanup_inactive_users: bool
+    enable_mkv_process: bool = True
+    mkv_exclude_keywords: str
+
+
+class MkvConfigUpdateDto(BaseModel):
+    """MKV 排除关键词配置更新请求"""
+
+    mkv_exclude_keywords: str
 
 
 class ToggleResponse(BaseModel):
