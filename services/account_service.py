@@ -4,6 +4,7 @@ import json
 import re
 import socket
 import textwrap
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -30,6 +31,7 @@ settings = get_settings()
 
 class AccountService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
+        self.app = app
         self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)
         self.code_repo = CodeRepository(session)
@@ -432,6 +434,7 @@ class AccountService:
         server: ServerInstance,
         enable_nsfw: bool,
         current_policy: Any | None = None,
+        all_libs: Sequence[Any] | None = None,
     ) -> None:
         """辅助方法：应用 NSFW 策略到媒体服务器
         Args:
@@ -439,6 +442,7 @@ class AccountService:
             current_policy: 可选，当前的用户策略对象。
                             - 如果传入 (Toggle场景)，基于它修改，保留其他权限。
                             - 如果不传 (Register场景)，使用空字典，底层模型会自动用默认值填充其他字段。
+            all_libs: 可选，预先获取的媒体库列表，避免批量撤权时重复请求。
         """
         # 1. 准备基础策略字典
         if current_policy:
@@ -464,11 +468,8 @@ class AccountService:
             else set()
         )
 
-        try:
+        if all_libs is None:
             all_libs = await client.get_libraries() or []
-        except HTTPError as e:
-            logger.error("在策略应用期间无法获取服务器 {} 的库：{}", server.id, e)
-            return
 
         safe_lib_ids = []
         if server.server_type == ServerType.JELLYFIN:
@@ -698,18 +699,155 @@ class AccountService:
 
         target_enable_nsfw = not is_unlocked
 
-        await self._apply_nsfw_policy(
-            client=client,
-            media_user_id=media_user.media_id,
-            server=server,
-            enable_nsfw=target_enable_nsfw,
-            current_policy=policy,
-        )
+        # 管理员关闭服务器 NSFW 开关后，成员自助接口不得再授予 NSFW 权限
+        if not server.nsfw_enabled and target_enable_nsfw:
+            return Result(False, "该服务器当前未开放 NSFW 权限，无法开启。")
+
+        try:
+            await self._apply_nsfw_policy(
+                client=client,
+                media_user_id=media_user.media_id,
+                server=server,
+                enable_nsfw=target_enable_nsfw,
+                current_policy=policy,
+            )
+        except HTTPError as e:
+            logger.error(
+                "切换 NSFW 策略失败: user_id={}, server_id={}, err={}",
+                user_id,
+                server_id,
+                e,
+            )
+            return Result(False, "操作失败，无法更新媒体服务器权限，请稍后重试。")
 
         action_text = "开启" if target_enable_nsfw else "关闭"
         return Result(
             True, f"已 {action_text} 您的 NSFW 权限 (服务器: {server.name})。"
         )
+
+    def _get_pending_nsfw_revokes(self) -> dict[int, set[str]]:
+        """获取挂载在 app.state 上的待重试 NSFW 撤权映射 (server_id -> set[media_id])。"""
+        pending = getattr(self.app.state, "_pending_nsfw_revokes", None)
+        if pending is None:
+            pending = {}
+            self.app.state._pending_nsfw_revokes = pending
+        return pending
+
+    async def revoke_server_nsfw(
+        self, server_id: int, target_media_ids: Sequence[str] | None = None
+    ) -> tuple[int, int]:
+        """撤销指定服务器上已有媒体账户的 NSFW 授权。
+
+        外部服务器暂不可用或单账户撤权失败时，将失败的 media_id 记录到待重试队列，
+        供定时任务后续重试，不将未撤权账户误报为已撤权。
+
+        Args:
+            server_id (int): 服务器 ID
+            target_media_ids (Sequence[str] | None): 指定需要重试撤权的 media_id 列表；为 None 时扫描全服账户
+
+        Returns:
+            tuple[int, int]: (本次确认已撤权数量, 本次撤权失败/待重试数量)
+        """
+        pending = self._get_pending_nsfw_revokes()
+        server = await self.server_repo.get_by_id(server_id)
+        if not server or server.nsfw_enabled:
+            pending.pop(server_id, None)
+            return 0, 0
+
+        if target_media_ids is not None:
+            media_ids = list(dict.fromkeys(target_media_ids))
+        else:
+            media_users = await self.media_repo.get_all_by_server_id(server_id)
+            media_ids = [mu.media_id for mu in media_users]
+
+        if not media_ids:
+            pending.pop(server_id, None)
+            return 0, 0
+
+        client = self.media_clients.get(server_id)
+        if not client:
+            pending.setdefault(server_id, set()).update(media_ids)
+            logger.warning(
+                "服务器 {} 客户端未连接，{} 个账户的 NSFW 撤权已加入待重试队列",
+                server_id,
+                len(media_ids),
+            )
+            return 0, len(media_ids)
+
+        try:
+            all_libs = await client.get_libraries() or []
+        except Exception as e:
+            pending.setdefault(server_id, set()).update(media_ids)
+            logger.warning(
+                "获取服务器 {} 媒体库失败，{} 个账户的 NSFW 撤权已加入待重试队列: {}",
+                server_id,
+                len(media_ids),
+                e,
+            )
+            return 0, len(media_ids)
+
+        revoked_count = 0
+        failed_count = 0
+        server_pending = pending.setdefault(server_id, set())
+
+        for media_id in media_ids:
+            try:
+                media_info = await client.get_user_info(media_id)
+            except HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    server_pending.discard(media_id)
+                    revoked_count += 1
+                    continue
+                server_pending.add(media_id)
+                failed_count += 1
+                logger.error(
+                    "撤权获取用户信息失败: server_id={}, media_id={}, status={}",
+                    server_id,
+                    media_id,
+                    e.response.status_code,
+                )
+                continue
+            except Exception as e:
+                server_pending.add(media_id)
+                failed_count += 1
+                logger.error(
+                    "撤权获取用户信息失败: server_id={}, media_id={}, err={}",
+                    server_id,
+                    media_id,
+                    e,
+                )
+                continue
+
+            if not isinstance(media_info, User):
+                server_pending.add(media_id)
+                failed_count += 1
+                continue
+
+            try:
+                await self._apply_nsfw_policy(
+                    client=client,
+                    media_user_id=media_id,
+                    server=server,
+                    enable_nsfw=False,
+                    current_policy=media_info.Policy,
+                    all_libs=all_libs,
+                )
+                server_pending.discard(media_id)
+                revoked_count += 1
+            except Exception as e:
+                server_pending.add(media_id)
+                failed_count += 1
+                logger.error(
+                    "撤销账户 NSFW 权限失败: server_id={}, media_id={}, err={}",
+                    server_id,
+                    media_id,
+                    e,
+                )
+
+        if not server_pending:
+            pending.pop(server_id, None)
+
+        return revoked_count, failed_count
 
     async def forget_password(self, user_id: int, server_id: int):
         """重置密码

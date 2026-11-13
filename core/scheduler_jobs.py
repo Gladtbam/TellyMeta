@@ -180,6 +180,43 @@ async def delete_expired_banned_users() -> None:
             await session.close()
 
 
+@scheduled_job(
+    "interval", minutes=10, id="retry_pending_nsfw_revokes", replace_existing=True
+)
+async def retry_pending_nsfw_revokes() -> None:
+    """重试此前因外部服务器不可用而未完成的 NSFW 撤权任务。"""
+    from main import app  # 避免循环导入
+    from services.account_service import AccountService
+
+    pending: dict[int, set[str]] | None = getattr(
+        app.state, "_pending_nsfw_revokes", None
+    )
+    if not pending:
+        return
+
+    async with async_session() as session:
+        try:
+            account_service = AccountService(app, session)
+            for server_id, media_ids in list(pending.items()):
+                if not media_ids:
+                    pending.pop(server_id, None)
+                    continue
+                revoked, failed = await account_service.revoke_server_nsfw(
+                    server_id, list(media_ids)
+                )
+                logger.info(
+                    "重试 NSFW 撤权完成: server_id={}, 成功={}, 仍待重试={}",
+                    server_id,
+                    revoked,
+                    failed,
+                )
+        except Exception as e:
+            logger.exception("重试 NSFW 撤权任务时出错: {}", e)
+            await session.rollback()
+        finally:
+            await session.close()
+
+
 @scheduled_job("cron", hour=23, minute=0, id="settle_scores", replace_existing=True)
 async def settle_scores() -> None:
     """结算用户积分"""

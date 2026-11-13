@@ -9,26 +9,43 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.database import get_db
-from core.dependencies import (get_radarr_clients, get_sonarr_clients,
-                               get_tmdb_client, get_tvdb_client)
+from core.dependencies import (
+    get_radarr_clients,
+    get_sonarr_clients,
+    get_tmdb_client,
+    get_tvdb_client,
+)
 from core.webapp_auth import validate_admin_access
 from models.orm import ServerInstance, ServerType
-from models.schemas import (AdminDto, ArrServerDto, BindingUpdate, LibraryDto,
-                            NsfwLibraryDto, ServerCreate, ServerDto,
-                            ServerUpdate, SystemConfigResponse, ToggleResponse,
-                            TopicsResponse)
+from models.schemas import (
+    AdminDto,
+    ArrServerDto,
+    BindingUpdate,
+    LibraryDto,
+    NsfwLibraryDto,
+    ServerCreate,
+    ServerDto,
+    ServerUpdate,
+    SystemConfigResponse,
+    ToggleResponse,
+    TopicsResponse,
+)
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
+from services.account_service import AccountService
 from services.settings_service import SettingsServices
-from workers.nfo_worker import (rebuild_radarr_metadata_task,
-                                rebuild_sonarr_metadata_task)
+from workers.nfo_worker import (
+    rebuild_radarr_metadata_task,
+    rebuild_sonarr_metadata_task,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
 
 def mask_server_data(server: ServerInstance) -> dict:
     """脱敏并转换 ServerInstance"""
     data = {c.name: getattr(server, c.name) for c in server.__table__.columns}
-    data['api_key'] = "******"
+    data["api_key"] = "******"
 
     # 路径映射 JSON -> List
     pm = data.get("path_mappings")
@@ -41,6 +58,7 @@ def mask_server_data(server: ServerInstance) -> dict:
     data["path_mappings"] = mappings_list
     return data
 
+
 # --- System & Admin APIs ---
 
 SYSTEM_KEY_MAP = {
@@ -49,18 +67,39 @@ SYSTEM_KEY_MAP = {
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
 }
 
-@router.get("/system", dependencies=[Depends(validate_admin_access)], response_model=SystemConfigResponse)
+
+@router.get(
+    "/system",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=SystemConfigResponse,
+)
 async def get_system_config(session: AsyncSession = Depends(get_db)):
     """获取系统配置"""
     repo = ConfigRepository(session)
     return {
-        "enable_points": await repo.get_settings(ConfigRepository.KEY_ENABLE_POINTS, "true") == "true",
-        "enable_verification": await repo.get_settings(ConfigRepository.KEY_ENABLE_VERIFICATION, "true") == "true",
-        "enable_cleanup_inactive_users": await repo.get_settings(ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false") == "true",
+        "enable_points": await repo.get_settings(
+            ConfigRepository.KEY_ENABLE_POINTS, "true"
+        )
+        == "true",
+        "enable_verification": await repo.get_settings(
+            ConfigRepository.KEY_ENABLE_VERIFICATION, "true"
+        )
+        == "true",
+        "enable_cleanup_inactive_users": await repo.get_settings(
+            ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS, "false"
+        )
+        == "true",
     }
 
-@router.post("/system/{key}/toggle", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def toggle_system_setting_endpoint(request: Request, key: str, session: AsyncSession = Depends(get_db)):
+
+@router.post(
+    "/system/{key}/toggle",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def toggle_system_setting_endpoint(
+    request: Request, key: str, session: AsyncSession = Depends(get_db)
+):
     """切换系统配置"""
     db_key = SYSTEM_KEY_MAP.get(key)
     if not db_key:
@@ -71,9 +110,20 @@ async def toggle_system_setting_endpoint(request: Request, key: str, session: As
         raise HTTPException(status_code=500, detail=result.message)
     repo = ConfigRepository(session)
     new_value = await repo.get_settings(db_key)
-    return {"success": True, "key": key, "db_key": db_key, "new_state": new_value == "true", "message": result.message}
+    return {
+        "success": True,
+        "key": key,
+        "db_key": db_key,
+        "new_state": new_value == "true",
+        "message": result.message,
+    }
 
-@router.get("/admins", dependencies=[Depends(validate_admin_access)], response_model=list[AdminDto])
+
+@router.get(
+    "/admins",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=list[AdminDto],
+)
 async def get_admins(request: Request, session: AsyncSession = Depends(get_db)):
     """获取管理员列表"""
     service = SettingsServices(request.app, session)
@@ -81,16 +131,25 @@ async def get_admins(request: Request, session: AsyncSession = Depends(get_db)):
     group_admins = await service.client.get_chat_admin_ids()
     result = []
     for user in group_admins:
-        result.append({
-            "id": user.id,
-            "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
-            "username": user.username,
-            "is_bot_admin": user.id in bot_admin_ids
-        })
+        result.append(
+            {
+                "id": user.id,
+                "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                "username": user.username,
+                "is_bot_admin": user.id in bot_admin_ids,
+            }
+        )
     return result
 
-@router.post("/admins/{user_id}/toggle", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def toggle_admin(request: Request, user_id: int, session: AsyncSession = Depends(get_db)):
+
+@router.post(
+    "/admins/{user_id}/toggle",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def toggle_admin(
+    request: Request, user_id: int, session: AsyncSession = Depends(get_db)
+):
     """切换管理员状态"""
     service = SettingsServices(request.app, session)
     result = await service.toggle_admin(user_id)
@@ -98,26 +157,42 @@ async def toggle_admin(request: Request, user_id: int, session: AsyncSession = D
         raise HTTPException(status_code=400, detail=result.message)
     return {"success": True, "message": result.message}
 
-@router.get("/topics", dependencies=[Depends(validate_admin_access)], response_model=TopicsResponse)
+
+@router.get(
+    "/topics",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=TopicsResponse,
+)
 async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
     """获取主题列表"""
     service = SettingsServices(request.app, session)
     topic_map = await service.client.get_group_topics()
     return {
         "is_forum": topic_map["is_forum"],
-        "topics": [{"id": k, "name": v} for k, v in topic_map["topics"].items()]
+        "topics": [{"id": k, "name": v} for k, v in topic_map["topics"].items()],
     }
+
 
 # --- Server Management APIs ---
 
-@router.get("/servers", dependencies=[Depends(validate_admin_access)], response_model=list[ServerDto])
+
+@router.get(
+    "/servers",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=list[ServerDto],
+)
 async def get_servers(session: AsyncSession = Depends(get_db)):
     """获取服务器列表"""
     repo = ServerRepository(session)
     servers = await repo.get_all()
     return [mask_server_data(s) for s in servers]
 
-@router.get("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ServerDto)
+
+@router.get(
+    "/servers/{server_id}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ServerDto,
+)
 async def get_server_detail(server_id: int, session: AsyncSession = Depends(get_db)):
     """获取服务器详情"""
     repo = ServerRepository(session)
@@ -126,17 +201,36 @@ async def get_server_detail(server_id: int, session: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="Server not found")
     return mask_server_data(server)
 
-@router.post("/servers", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def create_server(request: Request, data: ServerCreate, session: AsyncSession = Depends(get_db)):
+
+@router.post(
+    "/servers",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def create_server(
+    request: Request, data: ServerCreate, session: AsyncSession = Depends(get_db)
+):
     """创建服务器"""
     service = SettingsServices(request.app, session)
-    result = await service.add_server(data.name, data.server_type, data.url, data.api_key)
+    result = await service.add_server(
+        data.name, data.server_type, data.url, data.api_key
+    )
     if not result.success:
         raise HTTPException(status_code=400, detail=result.message)
     return {"success": True, "message": result.message}
 
-@router.patch("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def update_server(request: Request, server_id: int, data: ServerUpdate, session: AsyncSession = Depends(get_db)):
+
+@router.patch(
+    "/servers/{server_id}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_server(
+    request: Request,
+    server_id: int,
+    data: ServerUpdate,
+    session: AsyncSession = Depends(get_db),
+):
     """更新服务器"""
     service = SettingsServices(request.app, session)
     repo = ServerRepository(session)
@@ -144,47 +238,55 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
     # 状态切换
     current_server = await repo.get_by_id(server_id)
 
-    if current_server and data.is_enabled is not None and current_server.is_enabled != data.is_enabled:
+    if (
+        current_server
+        and data.is_enabled is not None
+        and current_server.is_enabled != data.is_enabled
+    ):
         await service.toggle_server_status(server_id)
 
     # 基础信息
     update_dict = {}
     if data.name:
-        update_dict['name'] = data.name
+        update_dict["name"] = data.name
     if data.url:
-        update_dict['url'] = data.url
+        update_dict["url"] = data.url
     if data.api_key and data.api_key != "******":
-        update_dict['api_key'] = data.api_key
+        update_dict["api_key"] = data.api_key
     if data.tos is not None:
-        update_dict['tos'] = data.tos
+        update_dict["tos"] = data.tos
     if data.allow_subtitle_upload is not None:
-        update_dict['allow_subtitle_upload'] = data.allow_subtitle_upload
+        update_dict["allow_subtitle_upload"] = data.allow_subtitle_upload
     if data.allow_request is not None:
-        update_dict['allow_request'] = data.allow_request
+        update_dict["allow_request"] = data.allow_request
 
     # 路径映射 (List -> JSON)
     if data.path_mappings is not None:
-        mapping_dict = {m.remote: m.local for m in data.path_mappings if m.remote and m.local}
-        update_dict['path_mappings'] = json.dumps(mapping_dict)
+        mapping_dict = {
+            m.remote: m.local for m in data.path_mappings if m.remote and m.local
+        }
+        update_dict["path_mappings"] = json.dumps(mapping_dict)
 
     # 高级配置
     if data.notify_topic_id is not None:
         await repo.update_notify_config(server_id, notify_topic_id=data.notify_topic_id)
     if data.request_notify_topic_id is not None:
-        await repo.update_notify_config(server_id, request_notify_topic_id=data.request_notify_topic_id)
+        await repo.update_notify_config(
+            server_id, request_notify_topic_id=data.request_notify_topic_id
+        )
 
     # 注册策略
     policy_kwargs = {}
     if data.registration_mode:
-        policy_kwargs['mode'] = data.registration_mode
+        policy_kwargs["mode"] = data.registration_mode
     if data.registration_count_limit is not None:
-        policy_kwargs['count'] = data.registration_count_limit
+        policy_kwargs["count"] = data.registration_count_limit
     if data.registration_time_limit is not None:
-        policy_kwargs['time'] = data.registration_time_limit
+        policy_kwargs["time"] = data.registration_time_limit
     if data.registration_external_url is not None:
-        policy_kwargs['external_url'] = data.registration_external_url
+        policy_kwargs["external_url"] = data.registration_external_url
     if data.registration_external_parser is not None:
-        policy_kwargs['external_parser'] = data.registration_external_parser
+        policy_kwargs["external_parser"] = data.registration_external_parser
 
     if policy_kwargs:
         await repo.update_policy_config(server_id, **policy_kwargs)
@@ -192,36 +294,72 @@ async def update_server(request: Request, server_id: int, data: ServerUpdate, se
     # 有效期与 NSFW (Global for server)
     expiry_kwargs = {}
     if data.registration_expiry_days is not None:
-        expiry_kwargs['expiry_days'] = data.registration_expiry_days
+        expiry_kwargs["expiry_days"] = data.registration_expiry_days
     if data.code_expiry_days is not None:
-        expiry_kwargs['code_days'] = data.code_expiry_days
+        expiry_kwargs["code_days"] = data.code_expiry_days
 
     if expiry_kwargs:
         await repo.update_expiry_config(server_id, **expiry_kwargs)
 
-    if data.nsfw_enabled is not None:
-        await repo.update_nsfw_config(server_id, enabled=data.nsfw_enabled)
-
-    # 执行基础信息更新与重载
+    # 执行基础信息更新与重载（先重载客户端，确保后续 NSFW 撤权使用最新连接）
     if update_dict:
         await repo.update_basic_info(server_id, **update_dict)
         server = await repo.get_by_id(server_id)
         if server and server.is_enabled:
             await service._reload_server_client(server)
 
+    if data.nsfw_enabled is not None:
+        await repo.update_nsfw_config(server_id, enabled=data.nsfw_enabled)
+        if not data.nsfw_enabled:
+            account_service = AccountService(request.app, session)
+            revoked_count, failed_count = await account_service.revoke_server_nsfw(
+                server_id
+            )
+            if failed_count > 0:
+                return {
+                    "success": True,
+                    "message": (
+                        f"NSFW 开关已关闭（已禁止成员新开启），但有 {failed_count} 个现有账户撤权失败，"
+                        "已加入待重试队列，请检查媒体服务器状态。"
+                    ),
+                }
+            return {
+                "success": True,
+                "message": f"配置已保存，NSFW 开关已关闭，已撤销 {revoked_count} 个现有账户的 NSFW 权限。",
+            }
+        else:
+            pending = getattr(request.app.state, "_pending_nsfw_revokes", None)
+            if isinstance(pending, dict):
+                pending.pop(server_id, None)
+
     return {"success": True, "message": "配置已保存"}
 
-@router.delete("/servers/{server_id}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def delete_server_endpoint(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+
+@router.delete(
+    "/servers/{server_id}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def delete_server_endpoint(
+    request: Request, server_id: int, session: AsyncSession = Depends(get_db)
+):
     """删除服务器"""
     service = SettingsServices(request.app, session)
     result = await service.delete_server(server_id)
     return {"success": True, "message": result.message}
 
+
 # --- NSFW Library APIs ---
 
-@router.get("/servers/{server_id}/nsfw_libraries", dependencies=[Depends(validate_admin_access)], response_model=list[NsfwLibraryDto])
-async def get_nsfw_libs(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+
+@router.get(
+    "/servers/{server_id}/nsfw_libraries",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=list[NsfwLibraryDto],
+)
+async def get_nsfw_libs(
+    request: Request, server_id: int, session: AsyncSession = Depends(get_db)
+):
     """获取NSFW库列表"""
     service = SettingsServices(request.app, session)
     try:
@@ -229,12 +367,18 @@ async def get_nsfw_libs(request: Request, server_id: int, session: AsyncSession 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
 @router.post(
     "/servers/{server_id}/nsfw_libraries/{lib_id}/toggle",
     dependencies=[Depends(validate_admin_access)],
-    response_model=ToggleResponse
+    response_model=ToggleResponse,
 )
-async def toggle_nsfw_lib(request: Request, server_id: int, lib_id: str, session: AsyncSession = Depends(get_db)):
+async def toggle_nsfw_lib(
+    request: Request,
+    server_id: int,
+    lib_id: str,
+    session: AsyncSession = Depends(get_db),
+):
     """切换NSFW库状态"""
     service = SettingsServices(request.app, session)
     try:
@@ -243,14 +387,18 @@ async def toggle_nsfw_lib(request: Request, server_id: int, lib_id: str, session
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
 # --- Library Binding APIs ---
+
 
 @router.get(
     "/servers/{server_id}/libraries",
     dependencies=[Depends(validate_admin_access)],
-    response_model=list[LibraryDto]
+    response_model=list[LibraryDto],
 )
-async def get_libraries(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+async def get_libraries(
+    request: Request, server_id: int, session: AsyncSession = Depends(get_db)
+):
     """获取库列表"""
     service = SettingsServices(request.app, session)
     try:
@@ -258,47 +406,71 @@ async def get_libraries(request: Request, server_id: int, session: AsyncSession 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.get("/bindings/options", dependencies=[Depends(validate_admin_access)], response_model=list[ArrServerDto])
-async def get_binding_options(request: Request, session: AsyncSession = Depends(get_db)):
+
+@router.get(
+    "/bindings/options",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=list[ArrServerDto],
+)
+async def get_binding_options(
+    request: Request, session: AsyncSession = Depends(get_db)
+):
     """获取绑定选项(Arr服务器列表)"""
     service = SettingsServices(request.app, session)
     return await service.get_arr_servers_data()
 
+
 @router.get("/arr/{server_id}/resources", dependencies=[Depends(validate_admin_access)])
-async def get_arr_resources(request: Request, server_id: int, session: AsyncSession = Depends(get_db)):
+async def get_arr_resources(
+    request: Request, server_id: int, session: AsyncSession = Depends(get_db)
+):
     """获取Arr资源(质量配置文件和根文件夹)"""
     service = SettingsServices(request.app, session)
     try:
         profiles, folders = await service.get_arr_resources(server_id)
-        return {
-            "profiles": profiles,
-            "folders": folders
-        }
+        return {"profiles": profiles, "folders": folders}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
 
 @router.post(
     "/servers/{server_id}/bindings/{library_name}",
     dependencies=[Depends(validate_admin_access)],
-    response_model=ToggleResponse
+    response_model=ToggleResponse,
 )
 async def save_binding(
     request: Request,
     server_id: int,
     library_name: str,
     data: BindingUpdate,
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ):
     """保存库绑定"""
     service = SettingsServices(request.app, session)
     try:
-        await service.save_library_binding(library_name, server_id, data.arr_id, data.quality_profile_id, data.root_folder)
+        await service.save_library_binding(
+            library_name,
+            server_id,
+            data.arr_id,
+            data.quality_profile_id,
+            data.root_folder,
+        )
         return {"success": True, "message": "绑定已保存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.delete("/servers/{server_id}/bindings/{library_name}", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
-async def delete_binding(request: Request, server_id: int, library_name: str, session: AsyncSession = Depends(get_db)):
+
+@router.delete(
+    "/servers/{server_id}/bindings/{library_name}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def delete_binding(
+    request: Request,
+    server_id: int,
+    library_name: str,
+    session: AsyncSession = Depends(get_db),
+):
     """解除库绑定"""
     service = SettingsServices(request.app, session)
     try:
@@ -307,7 +479,12 @@ async def delete_binding(request: Request, server_id: int, library_name: str, se
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.post("/servers/{server_id}/rebuild_metadata", dependencies=[Depends(validate_admin_access)], response_model=ToggleResponse)
+
+@router.post(
+    "/servers/{server_id}/rebuild_metadata",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
 async def rebuild_server_metadata(
     request: Request,
     server_id: int,
@@ -316,11 +493,13 @@ async def rebuild_server_metadata(
     sonarr_clients: dict[int, SonarrClient] = Depends(get_sonarr_clients),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
     tmdb_client: TmdbClient | None = Depends(get_tmdb_client),
-    tvdb_client: TvdbClient | None = Depends(get_tvdb_client)
+    tvdb_client: TvdbClient | None = Depends(get_tvdb_client),
 ):
     """触发 Sonarr 元数据重建任务"""
     if not tmdb_client:
-        raise HTTPException(status_code=400, detail="TMDB API Key 未配置，无法执行 NFO 重建任务")
+        raise HTTPException(
+            status_code=400, detail="TMDB API Key 未配置，无法执行 NFO 重建任务"
+        )
 
     repo = ServerRepository(session)
     server = await repo.get_by_id(server_id)
@@ -334,7 +513,9 @@ async def rebuild_server_metadata(
     elif server.server_type == ServerType.RADARR:
         client = radarr_clients.get(server_id)
     else:
-        raise HTTPException(status_code=400, detail="目前仅支持 Sonarr 和 Radarr 服务器")
+        raise HTTPException(
+            status_code=400, detail="目前仅支持 Sonarr 和 Radarr 服务器"
+        )
 
     if not client:
         raise HTTPException(status_code=500, detail="客户端未连接")
@@ -342,16 +523,12 @@ async def rebuild_server_metadata(
     # 添加后台任务
     if isinstance(client, SonarrClient):
         background_tasks.add_task(
-            rebuild_sonarr_metadata_task,
-            client,
-            tmdb_client,
-            tvdb_client
+            rebuild_sonarr_metadata_task, client, tmdb_client, tvdb_client
         )
     elif isinstance(client, RadarrClient):
-        background_tasks.add_task(
-            rebuild_radarr_metadata_task,
-            client,
-            tmdb_client
-        )
+        background_tasks.add_task(rebuild_radarr_metadata_task, client, tmdb_client)
 
-    return {"success": True, "message": "元数据重建任务已在后台启动，请查看日志关注进度。"}
+    return {
+        "success": True,
+        "message": "元数据重建任务已在后台启动，请查看日志关注进度。",
+    }

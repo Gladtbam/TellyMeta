@@ -31,6 +31,19 @@ class MediaRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_all_by_server_id(self, server_id: int) -> Sequence[MediaUser]:
+        """获取指定服务器上的所有媒体账户
+
+        Args:
+            server_id (int): 服务器 ID
+
+        Returns:
+            Sequence[MediaUser]: 该服务器的所有媒体账户列表
+        """
+        stmt = select(MediaUser).where(MediaUser.server_id == server_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def get_by_media_id(
         self, media_id: str, server_id: int | None = None
     ) -> MediaUser | None:
