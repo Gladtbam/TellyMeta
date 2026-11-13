@@ -552,8 +552,13 @@
         function getTargetUserId() {
             const urlParams = new URLSearchParams(window.location.search);
             let uid = urlParams.get('user_id');
-            if (!uid && tg?.initDataUnsafe?.start_param) {
-                uid = tg.initDataUnsafe.start_param;
+            if (!uid) {
+                const startParam = tg?.initDataUnsafe?.start_param
+                    || urlParams.get('tgWebAppStartParam')
+                    || '';
+                uid = startParam.startsWith('user_info_')
+                    ? startParam.slice('user_info_'.length)
+                    : startParam;
             }
             return uid;
         }

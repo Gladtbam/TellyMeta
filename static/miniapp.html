@@ -349,6 +349,20 @@
         tg.onEvent('themeChanged', applyTheme);
         tg.expand();
 
+        // 从群组 startapp 深链进入时，若携带 user_info_<uid> 参数则直接跳转到用户卡片页
+        const _startParam = tg?.initDataUnsafe?.start_param
+            || new URLSearchParams(tg?.initData || '').get('start_param')
+            || new URLSearchParams(window.location.search).get('tgWebAppStartParam')
+            || '';
+        let _redirectingToUserInfo = false;
+        if (_startParam.startsWith('user_info_')) {
+            const _targetUid = _startParam.slice('user_info_'.length);
+            if (/^\d+$/.test(_targetUid)) {
+                _redirectingToUserInfo = true;
+                window.location.replace(`user_info.html?user_id=${encodeURIComponent(_targetUid)}`);
+            }
+        }
+
         tg.BackButton.show();
         tg.BackButton.onClick(() => {
             tg.close();
@@ -629,7 +643,9 @@
             window.location.href = "settings.html";
         }
 
-        fetchMe();
+        if (!_redirectingToUserInfo) {
+            fetchMe();
+        }
     </script>
 </body>
 

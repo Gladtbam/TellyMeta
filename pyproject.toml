@@ -20,7 +20,7 @@ dependencies = [
     "pydantic-settings>=2.16.2",
     "python-socks>=3.2.1",
     "sqlalchemy[asyncio]>=2.1.8",
-    "telethon==1.44.0",
+    "telethon>=1.45.0",
     "uvicorn[standard]>=0.54.0",
 ]
 

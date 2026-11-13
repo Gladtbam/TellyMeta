@@ -2,10 +2,10 @@ import textwrap
 from typing import Any
 
 from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import Button, events
-from telethon.tl.types import KeyboardButtonWebView
+from telethon.tl.types import InlineButtonTypeWebView, KeyboardInlineButton
 
 from bot.decorators import provide_db_session, require_admin, require_real_reply
 from bot.utils import safe_reply, safe_reply_keyboard, safe_respond
@@ -41,9 +41,16 @@ async def info_handler(
     if settings.telegram_webapp_url:
         webapp_base = settings.telegram_webapp_url.rstrip("/")
         card_url = f"{webapp_base}/webapp/user_info.html?user_id={target_user_id}"
-        web_app_buttons = [[KeyboardButtonWebView(text="👤 查看用户卡片", url=card_url)]]
+        web_app_buttons = [
+            [
+                KeyboardInlineButton(
+                    text="👤 查看用户卡片",
+                    type=InlineButtonTypeWebView(url=card_url),
+                )
+            ]
+        ]
 
-        # 如果当前就是在私聊中，Telegram 允许直接发送 KeyboardButtonWebView 按钮
+        # 私聊中支持直接附带内联 WebView 按钮
         if event.is_private:
             await safe_reply_keyboard(
                 event,
@@ -55,7 +62,24 @@ async def info_handler(
             )
             return
 
-        # 如果在群组中，由于 Telegram API 限制群聊消息不能附带 KeyboardButtonWebView，将卡片发送到管理员私聊
+        # 群组中通过主 Mini App startapp 深链按钮直接在群内弹出 Mini App（需在 @BotFather 配置 Main Mini App）
+        clean_bot_name = settings.telegram_bot_name.lstrip("@")
+        if clean_bot_name:
+            startapp_url = (
+                f"https://t.me/{clean_bot_name}?startapp=user_info_{target_user_id}"
+            )
+            group_buttons = [[Button.url("👤 查看用户卡片", startapp_url)]]
+            await safe_reply_keyboard(
+                event,
+                f"📋 **用户资料卡片**\n\n"
+                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
+                f"点击下方按钮在群内打开用户卡片：",
+                group_buttons,
+                delete_after=60,
+            )
+            return
+
+        # 未配置机器人用户名时，降级发送到管理员私聊
         try:
             await client.send_message(
                 admin_id,
@@ -64,19 +88,11 @@ async def info_handler(
                 f"请点击下方按钮打开卡片并执行管理操作：",
                 buttons=web_app_buttons,
             )
-
-            clean_bot_name = settings.telegram_bot_name.lstrip("@")
-            group_buttons = (
-                [[Button.url("💬 前往私聊查看", f"https://t.me/{clean_bot_name}")]]
-                if clean_bot_name
-                else None
+            await safe_reply(
+                event,
+                f"🔍 已将用户 [{target_name}](tg://user?id={target_user_id}) 的信息卡片发送至您的私聊，请查收。",
+                delete_after=30,
             )
-
-            msg = f"🔍 已将用户 [{target_name}](tg://user?id={target_user_id}) 的信息卡片发送至您的私聊，请查收。"
-            if group_buttons:
-                await safe_reply_keyboard(event, msg, group_buttons, delete_after=30)
-            else:
-                await safe_reply(event, msg, delete_after=30)
 
         except Exception as e:
             logger.warning("未能向管理员发送私聊消息（可能未私聊启动过机器人）: {}", e)
