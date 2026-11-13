@@ -89,14 +89,6 @@ class Settings(BaseSettings):
     proxy: str = ""
     tmdb_api_key: str = ""
     tvdb_api_key: str = ""
-    ai_api_key: str = ""
-    ai_base_url: str = "https://api.openai.com/v1"
-    ai_model: str = "gpt-4o-mini"
-    ai_temperature: float = 1.3
-    ai_rpm: int | None = 60
-    ai_rpd: int | None = None
-    ai_tpm: int | None = None
-    ai_concurrency: int = 1
     qbittorrent_base_url: str = ""
     qbittorrent_username: str = ""
     qbittorrent_password: str = ""

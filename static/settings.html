@@ -397,6 +397,54 @@
                     <button type="button" class="btn btn-primary" style="margin-top:0"
                         onclick="saveMkvExcludeKeywords()">保存排除关键词</button>
                 </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">启用 LLM 元数据翻译</span>
+                        <span class="item-subtitle">开启后可使用兼容 OpenAI 的模型自动翻译媒体简介与标题</span>
+                    </div><label class="switch"><input type="checkbox" id="toggle-llm-translate"
+                            onchange="toggleSystem('enable_llm_translate')"><span class="slider"></span></label>
+                </div>
+                <div class="item" id="llm-config-row"
+                    style="display:none; flex-direction:column; align-items:stretch; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">AI Base URL</label>
+                        <input type="url" id="llm-base-url" class="form-input"
+                            placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">AI API Key</label>
+                        <input type="password" id="llm-api-key" class="form-input"
+                            placeholder="输入 API Key（保持 ****** 则不修改）">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">AI Model</label>
+                        <input type="text" id="llm-model" class="form-input" placeholder="gpt-4o-mini">
+                    </div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">Temperature</label>
+                            <input type="number" step="0.1" min="0" max="2" id="llm-temperature" class="form-input">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">并发数 (Concurrency)</label>
+                            <input type="number" min="1" id="llm-concurrency" class="form-input">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">RPM (每分钟请求)</label>
+                            <input type="number" min="1" id="llm-rpm" class="form-input" placeholder="留空不限制">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0">
+                            <label class="form-label">RPD (每日请求)</label>
+                            <input type="number" min="1" id="llm-rpd" class="form-input" placeholder="留空不限制">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">TPM (每分钟 Token)</label>
+                        <input type="number" min="1" id="llm-tpm" class="form-input" placeholder="留空不限制">
+                    </div>
+                    <button type="button" class="btn btn-primary" style="margin-top:0"
+                        onclick="saveLlmConfig()">保存 LLM 配置</button>
+                </div>
             </div>
         </div>
     </div>
@@ -668,6 +716,18 @@
                 document.getElementById('toggle-mkv-process').checked = mkvEnabled;
                 document.getElementById('mkv-exclude-keywords').value = s.mkv_exclude_keywords || '';
                 updateMkvExcludeVisibility(mkvEnabled);
+
+                const llmEnabled = !!s.enable_llm_translate;
+                document.getElementById('toggle-llm-translate').checked = llmEnabled;
+                document.getElementById('llm-base-url').value = s.ai_base_url || 'https://api.openai.com/v1';
+                document.getElementById('llm-api-key').value = s.ai_api_key_masked || '';
+                document.getElementById('llm-model').value = s.ai_model || 'gpt-4o-mini';
+                document.getElementById('llm-temperature').value = s.ai_temperature ?? 1.3;
+                document.getElementById('llm-concurrency').value = s.ai_concurrency ?? 1;
+                document.getElementById('llm-rpm').value = s.ai_rpm ?? '';
+                document.getElementById('llm-rpd').value = s.ai_rpd ?? '';
+                document.getElementById('llm-tpm').value = s.ai_tpm ?? '';
+                updateLlmConfigVisibility(llmEnabled);
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
@@ -680,10 +740,39 @@
             }
         }
 
+        function updateLlmConfigVisibility(enabled) {
+            const row = document.getElementById('llm-config-row');
+            if (row) {
+                row.style.display = enabled ? 'flex' : 'none';
+            }
+        }
+
         async function saveMkvExcludeKeywords() {
             const val = document.getElementById('mkv-exclude-keywords').value;
             await api('/system/mkv_exclude_keywords', 'POST', { mkv_exclude_keywords: val });
             tg.showAlert('✅ MKV 排除关键词已保存');
+        }
+
+        async function saveLlmConfig() {
+            const parseOptInt = (id) => {
+                const raw = document.getElementById(id).value.trim();
+                return raw ? parseInt(raw, 10) : null;
+            };
+            const payload = {
+                ai_base_url: document.getElementById('llm-base-url').value.trim(),
+                ai_api_key: document.getElementById('llm-api-key').value.trim(),
+                ai_model: document.getElementById('llm-model').value.trim(),
+                ai_temperature: parseFloat(document.getElementById('llm-temperature').value || '1.3'),
+                ai_concurrency: parseInt(document.getElementById('llm-concurrency').value || '1', 10),
+                ai_rpm: parseOptInt('llm-rpm'),
+                ai_rpd: parseOptInt('llm-rpd'),
+                ai_tpm: parseOptInt('llm-tpm')
+            };
+            const res = await api('/system/llm', 'POST', payload);
+            if (payload.ai_api_key && payload.ai_api_key !== '******') {
+                document.getElementById('llm-api-key').value = '******';
+            }
+            tg.showAlert('✅ ' + (res.message || 'LLM 翻译配置已保存'));
         }
 
         function renderAdmins(data) {
@@ -1028,7 +1117,8 @@
             enable_points: 'toggle-points',
             enable_verification: 'toggle-verification',
             enable_cleanup_inactive_users: 'toggle-cleanup',
-            enable_mkv_process: 'toggle-mkv-process'
+            enable_mkv_process: 'toggle-mkv-process',
+            enable_llm_translate: 'toggle-llm-translate'
         };
 
         async function toggleSystem(key) {
@@ -1037,12 +1127,16 @@
                 const res = await api(`/system/${key}/toggle`, 'POST');
                 if (key === 'enable_mkv_process') {
                     updateMkvExcludeVisibility(res.new_state !== false);
+                } else if (key === 'enable_llm_translate') {
+                    updateLlmConfigVisibility(!!res.new_state);
                 }
             } catch (e) {
                 if (el) {
                     el.checked = !el.checked;
                     if (key === 'enable_mkv_process') {
                         updateMkvExcludeVisibility(el.checked);
+                    } else if (key === 'enable_llm_translate') {
+                        updateLlmConfigVisibility(el.checked);
                     }
                 }
             }

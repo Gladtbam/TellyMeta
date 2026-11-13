@@ -162,12 +162,34 @@ class SystemConfigResponse(BaseModel):
     enable_cleanup_inactive_users: bool
     enable_mkv_process: bool = True
     mkv_exclude_keywords: str
+    enable_llm_translate: bool = False
+    ai_api_key_masked: str = ""
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_model: str = "gpt-4o-mini"
+    ai_temperature: float = 1.3
+    ai_rpm: int | None = 60
+    ai_rpd: int | None = None
+    ai_tpm: int | None = None
+    ai_concurrency: int = 1
 
 
 class MkvConfigUpdateDto(BaseModel):
     """MKV 排除关键词配置更新请求"""
 
     mkv_exclude_keywords: str
+
+
+class LlmConfigUpdateDto(BaseModel):
+    """LLM 翻译参数配置更新请求"""
+
+    ai_api_key: str = ""
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_model: str = "gpt-4o-mini"
+    ai_temperature: float = 1.3
+    ai_rpm: int | None = 60
+    ai_rpd: int | None = None
+    ai_tpm: int | None = None
+    ai_concurrency: int = 1
 
 
 class ToggleResponse(BaseModel):

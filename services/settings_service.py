@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from clients.ai_client import AIClientWarper
 from clients.emby_client import EmbyClient
 from clients.jellyfin_client import JellyfinClient
 from clients.radarr_client import RadarrClient
@@ -19,6 +20,7 @@ from models.schemas import (
     ArrServerDto,
     BindingDto,
     LibraryDto,
+    LlmConfigUpdateDto,
     NsfwLibraryDto,
     QualityProfileDto,
     RootFolderDto,
@@ -36,6 +38,7 @@ settings = get_settings()
 class SettingsServices:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.app = app
+        self.session = session
         self.client: TelethonClientWarper = app.state.telethon_client
         self.telegram_repo = TelegramRepository(session)
         self.config_repo = ConfigRepository(session)
@@ -44,6 +47,36 @@ class SettingsServices:
         self.media_clients: dict[int, MediaService] = app.state.media_clients
         self._sonarr_clients = app.state.sonarr_clients
         self._radarr_clients = app.state.radarr_clients
+
+    async def reload_ai_client(self) -> AIClientWarper | None:
+        """根据数据库中的 LLM 配置重新加载或关闭全局 AI 客户端。
+
+        Returns:
+            启用且配置了 API Key 时返回新建的 ``AIClientWarper``，否则返回 ``None``。
+        """
+        old_client: AIClientWarper | None = getattr(self.app.state, "ai_client", None)
+        if old_client is not None:
+            with contextlib.suppress(Exception):
+                await old_client.close()
+
+        llm_cfg = await self.config_repo.get_llm_config()
+        if llm_cfg["enable_llm_translate"] and llm_cfg["ai_api_key"]:
+            new_client = AIClientWarper(
+                base_url=llm_cfg["ai_base_url"],
+                api_key=llm_cfg["ai_api_key"],
+                model=llm_cfg["ai_model"],
+                temperature=llm_cfg["ai_temperature"],
+                rpm=llm_cfg["ai_rpm"],
+                rpd=llm_cfg["ai_rpd"],
+                tpm=llm_cfg["ai_tpm"],
+                concurrency=llm_cfg["ai_concurrency"],
+                proxy=settings.proxy,
+            )
+            self.app.state.ai_client = new_client
+            return new_client
+
+        self.app.state.ai_client = None
+        return None
 
     @property
     def sonarr_clients(self) -> dict[int, SonarrClient]:
@@ -271,14 +304,75 @@ class SettingsServices:
     async def toggle_system_setting(self, key: str) -> Result:
         """切换系统功能设置"""
         try:
-            current = await self.config_repo.get_settings(key, "true")
+            default_val = (
+                "false" if key == ConfigRepository.KEY_ENABLE_LLM_TRANSLATE else "true"
+            )
+            current = await self.config_repo.get_settings(key, default_val)
             new_state_str = "false" if current == "true" else "true"
             await self.config_repo.set_settings(key, new_state_str)
+
+            if key == ConfigRepository.KEY_ENABLE_LLM_TRANSLATE:
+                await self.reload_ai_client()
 
             status_text = "开启" if new_state_str == "true" else "关闭"
             return Result(success=True, message=f"已{status_text}该功能。")
         except Exception as e:
             return Result(success=False, message=f"设置失败: {str(e)}")
+
+    async def update_llm_config(self, payload: LlmConfigUpdateDto) -> Result:
+        """保存 Mini App 提交的 LLM 翻译参数并热重载 AI 客户端。
+
+        Args:
+            payload: LLM 配置更新请求体。
+
+        Returns:
+            操作结果。
+        """
+        base_url = payload.ai_base_url.strip()
+        model = payload.ai_model.strip()
+        if not base_url or not model:
+            return Result(success=False, message="Base URL 和模型名称不能为空")
+        if payload.ai_temperature < 0 or payload.ai_temperature > 2:
+            return Result(success=False, message="Temperature 必须在 0 到 2 之间")
+        if payload.ai_concurrency < 1:
+            return Result(success=False, message="并发数至少为 1")
+
+        # 保留掩码对应的已有密钥，仅在输入新密钥或显式清空时覆盖
+        submitted_key = payload.ai_api_key.strip()
+        if submitted_key != "******":
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_AI_API_KEY, submitted_key
+            )
+
+        await self.config_repo.set_settings(ConfigRepository.KEY_AI_BASE_URL, base_url)
+        await self.config_repo.set_settings(ConfigRepository.KEY_AI_MODEL, model)
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_AI_TEMPERATURE, str(payload.ai_temperature)
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_AI_RPM,
+            str(payload.ai_rpm) if payload.ai_rpm and payload.ai_rpm > 0 else "",
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_AI_RPD,
+            str(payload.ai_rpd) if payload.ai_rpd and payload.ai_rpd > 0 else "",
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_AI_TPM,
+            str(payload.ai_tpm) if payload.ai_tpm and payload.ai_tpm > 0 else "",
+        )
+        await self.config_repo.set_settings(
+            ConfigRepository.KEY_AI_CONCURRENCY, str(payload.ai_concurrency)
+        )
+
+        client = await self.reload_ai_client()
+        llm_cfg = await self.config_repo.get_llm_config()
+        if llm_cfg["enable_llm_translate"] and client is None:
+            return Result(
+                success=True,
+                message="LLM 配置已保存（当前未填写 API Key，翻译客户端尚未激活）",
+            )
+        return Result(success=True, message="LLM 翻译配置已保存并生效")
 
     async def get_nsfw_libraries_data(self, server_id: int) -> list[NsfwLibraryDto]:
         """获取服务器所有媒体库的 NSFW 状态"""

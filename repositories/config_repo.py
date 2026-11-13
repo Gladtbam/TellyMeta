@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +15,15 @@ class ConfigRepository:
     KEY_ENABLE_CLEANUP_INACTIVE_USERS = "system:enable_cleanup_inactive_users"
     KEY_ENABLE_MKV_PROCESS = "system:enable_mkv_process"
     KEY_MKV_EXCLUDE_KEYWORDS = "system:mkv_exclude_keywords"
+    KEY_ENABLE_LLM_TRANSLATE = "system:enable_llm_translate"
+    KEY_AI_API_KEY = "system:ai_api_key"
+    KEY_AI_BASE_URL = "system:ai_base_url"
+    KEY_AI_MODEL = "system:ai_model"
+    KEY_AI_TEMPERATURE = "system:ai_temperature"
+    KEY_AI_RPM = "system:ai_rpm"
+    KEY_AI_RPD = "system:ai_rpd"
+    KEY_AI_TPM = "system:ai_tpm"
+    KEY_AI_CONCURRENCY = "system:ai_concurrency"
 
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
@@ -46,6 +57,15 @@ class ConfigRepository:
             cls.KEY_ENABLE_CLEANUP_INACTIVE_USERS: "false",
             cls.KEY_ENABLE_MKV_PROCESS: "true",
             cls.KEY_MKV_EXCLUDE_KEYWORDS: "",
+            cls.KEY_ENABLE_LLM_TRANSLATE: "false",
+            cls.KEY_AI_API_KEY: "",
+            cls.KEY_AI_BASE_URL: "https://api.openai.com/v1",
+            cls.KEY_AI_MODEL: "gpt-4o-mini",
+            cls.KEY_AI_TEMPERATURE: "1.3",
+            cls.KEY_AI_RPM: "60",
+            cls.KEY_AI_RPD: "",
+            cls.KEY_AI_TPM: "",
+            cls.KEY_AI_CONCURRENCY: "1",
         }
 
         new_items = []
@@ -96,3 +116,58 @@ class ConfigRepository:
         await self.session.commit()
         await self.session.refresh(setting)
         return setting
+
+    @staticmethod
+    def _parse_optional_int(raw: str | None) -> int | None:
+        """将配置字符串解析为可选正整数，空字符串或无效值返回 None。"""
+        if not raw or not raw.strip():
+            return None
+        try:
+            val = int(raw.strip())
+            return val if val > 0 else None
+        except ValueError:
+            return None
+
+    async def get_llm_config(self) -> dict[str, Any]:
+        """读取并解析数据库中的 LLM 翻译开关及全部 AI 参数。
+
+        Returns:
+            包含 ``enable_llm_translate`` 及 ``ai_*`` 类型化字段的字典。
+        """
+        enable_raw = await self.get_settings(self.KEY_ENABLE_LLM_TRANSLATE, "false")
+        api_key = (await self.get_settings(self.KEY_AI_API_KEY, "") or "").strip()
+        base_url = (
+            await self.get_settings(self.KEY_AI_BASE_URL, "https://api.openai.com/v1")
+            or "https://api.openai.com/v1"
+        ).strip()
+        model = (
+            await self.get_settings(self.KEY_AI_MODEL, "gpt-4o-mini") or "gpt-4o-mini"
+        ).strip()
+
+        temp_raw = await self.get_settings(self.KEY_AI_TEMPERATURE, "1.3")
+        try:
+            temperature = float(temp_raw) if temp_raw else 1.3
+        except ValueError:
+            temperature = 1.3
+
+        rpm = self._parse_optional_int(await self.get_settings(self.KEY_AI_RPM, "60"))
+        rpd = self._parse_optional_int(await self.get_settings(self.KEY_AI_RPD, ""))
+        tpm = self._parse_optional_int(await self.get_settings(self.KEY_AI_TPM, ""))
+        concurrency = (
+            self._parse_optional_int(
+                await self.get_settings(self.KEY_AI_CONCURRENCY, "1")
+            )
+            or 1
+        )
+
+        return {
+            "enable_llm_translate": enable_raw == "true",
+            "ai_api_key": api_key,
+            "ai_base_url": base_url,
+            "ai_model": model,
+            "ai_temperature": temperature,
+            "ai_rpm": rpm,
+            "ai_rpd": rpd,
+            "ai_tpm": tpm,
+            "ai_concurrency": concurrency,
+        }

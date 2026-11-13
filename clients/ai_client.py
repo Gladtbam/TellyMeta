@@ -75,52 +75,40 @@ class AIClientWarper:
             str: 翻译后的文本，如果翻译失败则返回原文本。
         """
         async with self._limiter.acquire(tokens=len(text)):
-            prompt = textwrap.dedent("""
-                你是一名专业影视元数据翻译器。
-
-                【你的任务】
-                - 将输入的文本翻译为 **中文简体**。
-                - 保留所有格式（markdown、段落、换行、缩进、符号、标签、HTML、特殊字符）。
-                - 不擅自添加、删减、润色内容，只做准确翻译。
-
-                【保持不变】
-                以下类型的内容保持原样，不要翻译：
-                - 人名、导演、演员名、工作室名
-                - 角色名（例如 John Doe / Spider-Man）
-                - 专有名词（如 Star Wars, MCU, Netflix）
-                - 季号 / 集号（S01E02）
-                - TMDB / TVDB 标签或字段名
-                - 日期、数字、符号
+            prompt = textwrap.dedent(f"""
+                你是一个资深的日本动画（ACG）本地化翻译专家。
+                请将以下动画元数据的【{key}】字段内容翻译成自然、流畅的简体中文。
 
                 【翻译规则】
-                - 文学性不强，只追求准确和清晰。
-                - 有模糊描述时，保持直译，不要主观扩写。
-                - 英文引号、括号、斜杠位置保持一致。
-                - 如果原文带有 HTML 标签（如 <i>xxx</i>），内容翻译但标签保留。
+                1. 准确传达原意，符合中文语境和 ACG 圈子的阅读习惯。
+                2. 人名、角色名、导演、工作室、专有名词（如特殊武器、魔法设定等）请务必使用**ACG界通用的标准中文译名**（例如保留常见的日文汉字转中文，或标准的罗马音中译）。如果是无法翻译的英文代号可保留原文。
+                3. 严格保留所有的 HTML 标签（如 <i></i>）、Markdown 格式、换行符和缩进。
+                4. 保持季号/集号（如 S01E02）、特殊符号不变，中英文之间适当留白。
+                5. 只需要输出翻译后的最终纯文本，不要包含任何解释、注脚或“好的”、“翻译如下”等废话。
 
-                请只输出翻译后的内容，不要提供解释。
-            """)
+                【待翻译内容】
+                {text}
+            """).strip()
 
-            # prompt = textwrap.dedent(f"""\
-            #     请将以下日本动画的元数据信息（片名、导演、主演、发行公司、播出时间、集数、类型、简介等其中一个）准确、专业地翻译成中文。
-            #     确保术语一致，信息清晰，表达自然流畅。只返回翻译的文本，不要包含其他内容。
-            #     {key}原文内容：\n{text}
-            # """)
             logger.info("AI翻译请求，字段：{}，内容：{}", key, text)
             try:
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": text},
+                        {"role": "user", "content": prompt},
                     ],
                     max_tokens=1000,
                     temperature=self.temperature,
                 )
                 response_text = response.choices[0].message.content
+
                 if response_text and any(
                     "\u4e00" <= char <= "\u9fff" for char in response_text
                 ):
+                    if response_text.startswith("【待翻译内容】"):
+                        response_text = response_text.replace(
+                            "【待翻译内容】", ""
+                        ).strip()
                     return response_text
 
                 logger.warning("翻译未返回有效的中文文本：{}", response_text)
@@ -128,3 +116,7 @@ class AIClientWarper:
             except OpenAIError as e:
                 logger.error("AI 翻译期间出错：{}", e)
                 return text
+
+    async def close(self) -> None:
+        """关闭底层 AsyncOpenAI 客户端以释放连接资源。"""
+        await self.client.close()

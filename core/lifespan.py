@@ -32,6 +32,7 @@ from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.score_service import MessageTrackingState
+from services.settings_service import SettingsServices
 from workers.mkv_worker import mkv_merge_task
 
 settings = get_settings()
@@ -59,20 +60,7 @@ async def lifespan(app: FastAPI):
         app.state.mkv_worker = None
     app.state.message_tracker = MessageTrackingState()
 
-    if settings.ai_api_key:
-        app.state.ai_client = AIClientWarper(
-            base_url=settings.ai_base_url,
-            api_key=settings.ai_api_key,
-            model=settings.ai_model,
-            temperature=settings.ai_temperature,
-            rpm=settings.ai_rpm,
-            rpd=settings.ai_rpd,
-            tpm=settings.ai_tpm,
-            concurrency=settings.ai_concurrency,
-            proxy=settings.proxy,
-        )
-    else:
-        app.state.ai_client = None
+    app.state.ai_client = None
 
     if settings.qbittorrent_base_url:
         app.state.qb_client = QbittorrentClient(
@@ -128,6 +116,7 @@ async def lifespan(app: FastAPI):
             admin_ids = await initialize_admin(session, app.state.telethon_client)
             app.state.admin_ids = set(admin_ids)
             await ConfigRepository.load_all_to_cache(session)
+            await SettingsServices(app, session).reload_ai_client()
 
             servers = await ServerRepository(session).get_all_enabled()
             for server in servers:
@@ -217,6 +206,9 @@ async def lifespan(app: FastAPI):
         app.state.scheduler.shutdown(wait=True)
         logger.info("任务计划程序已关闭")
 
+    ai_client: AIClientWarper | None = getattr(app.state, "ai_client", None)
+    if ai_client:
+        await ai_client.close()
     if app.state.qb_client:
         await app.state.qb_client.close()
     if app.state.tvdb_client:

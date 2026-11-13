@@ -22,6 +22,7 @@ from models.schemas import (
     ArrServerDto,
     BindingUpdate,
     LibraryDto,
+    LlmConfigUpdateDto,
     MkvConfigUpdateDto,
     NsfwLibraryDto,
     ServerCreate,
@@ -67,6 +68,7 @@ SYSTEM_KEY_MAP = {
     "enable_verification": ConfigRepository.KEY_ENABLE_VERIFICATION,
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
     "enable_mkv_process": ConfigRepository.KEY_ENABLE_MKV_PROCESS,
+    "enable_llm_translate": ConfigRepository.KEY_ENABLE_LLM_TRANSLATE,
 }
 
 
@@ -78,6 +80,7 @@ SYSTEM_KEY_MAP = {
 async def get_system_config(session: AsyncSession = Depends(get_db)):
     """获取系统配置"""
     repo = ConfigRepository(session)
+    llm_cfg = await repo.get_llm_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -99,6 +102,37 @@ async def get_system_config(session: AsyncSession = Depends(get_db)):
             ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, ""
         )
         or "",
+        "enable_llm_translate": llm_cfg["enable_llm_translate"],
+        "ai_api_key_masked": "******" if llm_cfg["ai_api_key"] else "",
+        "ai_base_url": llm_cfg["ai_base_url"],
+        "ai_model": llm_cfg["ai_model"],
+        "ai_temperature": llm_cfg["ai_temperature"],
+        "ai_rpm": llm_cfg["ai_rpm"],
+        "ai_rpd": llm_cfg["ai_rpd"],
+        "ai_tpm": llm_cfg["ai_tpm"],
+        "ai_concurrency": llm_cfg["ai_concurrency"],
+    }
+
+
+@router.post(
+    "/system/llm",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_llm_config_endpoint(
+    request: Request,
+    payload: LlmConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新 LLM 翻译配置并热重载全局 AI 客户端"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_llm_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "llm_config",
+        "message": result.message,
     }
 
 
