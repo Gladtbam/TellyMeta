@@ -552,9 +552,15 @@
                 }
                 const qs = params.toString() ? `?${params.toString()}` : '';
 
+                const idempotencyKey = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
                 const res = await fetch(`/api/miniapp/signup/${serverId}${qs}`, {
                     method: 'POST',
-                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                    headers: {
+                        'X-Telegram-Init-Data': tg.initData,
+                        'X-Idempotency-Key': idempotencyKey
+                    }
                 });
 
                 const data = await res.json();
@@ -590,9 +596,15 @@
 
             try {
                 const params = new URLSearchParams({ code });
+                const idempotencyKey = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
                 const res = await fetch(`/api/miniapp/redeem_code?${params.toString()}`, {
                     method: 'POST',
-                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                    headers: {
+                        'X-Telegram-Init-Data': tg.initData,
+                        'X-Idempotency-Key': idempotencyKey
+                    }
                 });
 
                 const data = await res.json();

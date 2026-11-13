@@ -168,6 +168,8 @@ class ToggleResponse(BaseModel):
     db_key: str | None = None  # 数据库真实的 key
     new_state: bool | None = None
     message: str | None = None
+    dm_delivered: bool | None = None
+    one_time_result: str | None = None
 
 
 # --- Admin & Topic Models (管理员与话题) ---

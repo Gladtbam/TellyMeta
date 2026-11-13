@@ -1,7 +1,11 @@
 import asyncio
 import contextlib
+import time
+from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +39,120 @@ from services.request_service import RequestService
 from services.user_service import UserService
 
 router = APIRouter(prefix="/api/miniapp", tags=["miniapp"])
+
+_IDEMPOTENCY_TTL_SECONDS = 300.0
+
+
+def _get_idempotency_state(
+    app: Any,
+) -> tuple[
+    dict[tuple[int, str, str, str], tuple[float, dict[str, Any]]],
+    dict[tuple[int, str, str], asyncio.Lock],
+]:
+    """获取挂载在 app.state 上的幂等缓存与操作互斥锁。"""
+    cache = getattr(app.state, "_miniapp_idempotency_cache", None)
+    if cache is None:
+        cache = {}
+        app.state._miniapp_idempotency_cache = cache
+
+    locks = getattr(app.state, "_miniapp_action_locks", None)
+    if locks is None:
+        locks = {}
+        app.state._miniapp_action_locks = locks
+
+    return cache, locks
+
+
+def _format_plain_sensitive_text(markdown_text: str) -> str:
+    """将 Markdown 格式的凭据/激活码消息整理为适合 Mini App 弹窗展示的纯文本。"""
+    return markdown_text.replace("`", "").replace("**", "").strip()
+
+
+async def _deliver_sensitive_result(
+    client: TelethonClientWarper,
+    user_id: int,
+    action: str,
+    raw_message: str,
+    dm_success_notice: str,
+    dm_failed_prefix: str,
+) -> dict[str, Any]:
+    """优先通过 Telegram 私聊交付敏感结果；私聊失败时降级为 Mini App 本人一次性展示。"""
+    dm_delivered = True
+    try:
+        await client.send_message(user_id, raw_message, parse_mode="markdown")
+    except Exception as e:
+        dm_delivered = False
+        logger.warning(
+            "Telegram 私聊交付敏感结果失败，降级为前端一次性展示: user_id={}, action={}, err={}",
+            user_id,
+            action,
+            e,
+        )
+
+    if dm_delivered:
+        return {
+            "success": True,
+            "dm_delivered": True,
+            "one_time_result": None,
+            "message": dm_success_notice,
+        }
+
+    plain_result = _format_plain_sensitive_text(raw_message)
+    return {
+        "success": True,
+        "dm_delivered": False,
+        "one_time_result": plain_result,
+        "message": (
+            f"{dm_failed_prefix}，但 Telegram 私聊未送达，"
+            f"请立即保存以下信息（仅本次展示）：\n\n{plain_result}"
+        ),
+    }
+
+
+async def _execute_idempotent_sensitive_action(
+    request: Request,
+    user_id: int,
+    action: str,
+    target_key: str,
+    idempotency_key: str | None,
+    client: TelethonClientWarper,
+    operation: Callable[[], Awaitable[Any]],
+    dm_success_notice: str,
+    dm_failed_prefix: str,
+) -> dict[str, Any]:
+    """执行带并发互斥与网络重试幂等保护的敏感操作。"""
+    cache, locks = _get_idempotency_state(request.app)
+    lock_key = (user_id, action, target_key)
+    lock = locks.setdefault(lock_key, asyncio.Lock())
+    clean_key = idempotency_key.strip() if idempotency_key else ""
+
+    async with lock:
+        now = time.monotonic()
+        # 清理过期的幂等缓存条目
+        expired_keys = [k for k, (exp, _) in cache.items() if exp <= now]
+        for k in expired_keys:
+            cache.pop(k, None)
+
+        cache_key = (user_id, action, target_key, clean_key)
+        if clean_key and cache_key in cache:
+            _, cached_resp = cache[cache_key]
+            return dict(cached_resp)
+
+        result = await operation()
+        if not result.success:
+            return {"success": False, "message": result.message}
+
+        response = await _deliver_sensitive_result(
+            client=client,
+            user_id=user_id,
+            action=action,
+            raw_message=result.message,
+            dm_success_notice=dm_success_notice,
+            dm_failed_prefix=dm_failed_prefix,
+        )
+        if clean_key:
+            cache[cache_key] = (now + _IDEMPOTENCY_TTL_SECONDS, dict(response))
+        return response
 
 
 @router.get("/me", response_model=UserInfoDto)
@@ -312,26 +430,29 @@ async def admin_ban_user(
 async def redeem_code(
     request: Request,
     code: str = Query(...),
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-) -> dict[str, bool | str]:
+) -> dict[str, Any]:
     """使用兑换码（注册码/续期码）"""
     username = await client.get_user_name(user_id, need_username=True)
     if not username or username is False:
         return {"success": False, "message": "请先设置 Telegram 用户名后再使用兑换码。"}
 
+    clean_code = code.strip()
     account_service = AccountService(request.app, session)
-    result = await account_service.redeem_code(user_id, username, code.strip())
-
-    if result.success:
-        await client.send_message(user_id, result.message, parse_mode="markdown")
-        return {
-            "success": True,
-            "message": "兑换成功！详细信息已发送到您的 Telegram 私聊。",
-        }
-
-    return {"success": False, "message": result.message}
+    return await _execute_idempotent_sensitive_action(
+        request=request,
+        user_id=user_id,
+        action="redeem_code",
+        target_key=clean_code,
+        idempotency_key=x_idempotency_key,
+        client=client,
+        operation=lambda: account_service.redeem_code(user_id, username, clean_code),
+        dm_success_notice="兑换成功！详细信息已发送到您的 Telegram 私聊。",
+        dm_failed_prefix="兑换成功",
+    )
 
 
 @router.post("/signup/{server_id}", response_model=ToggleResponse)
@@ -339,10 +460,11 @@ async def signup_account(
     request: Request,
     server_id: int,
     verification_input: str = Query(default=""),
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-) -> dict[str, bool | str]:
+) -> dict[str, Any]:
     """注册账户"""
     try:
         participant = await client.get_participant(user_id)
@@ -363,33 +485,36 @@ async def signup_account(
     if not server:
         return {"success": False, "message": "服务器不存在"}
 
-    if server.registration_mode == RegistrationMode.EXTERNAL:
-        if not verification_input:
-            return {
-                "success": False,
-                "message": "该服务器需要验证字符串，请输入后重试。",
-            }
+    async def _do_signup() -> Any:
+        if server.registration_mode == RegistrationMode.EXTERNAL:
+            if not verification_input:
+                return SimpleNamespace(
+                    success=False,
+                    message="该服务器需要验证字符串，请输入后重试。",
+                )
 
-        verify_result = await account_service.verify_external_user(
-            server.id, verification_input
-        )
-        if not verify_result.success:
-            return {"success": False, "message": verify_result.message}
+            verify_result = await account_service.verify_external_user(
+                server_id, verification_input
+            )
+            if not verify_result.success:
+                return verify_result
 
-        result = await account_service.register(
-            user_id, username, server_id, skip_checks=True
-        )
-    else:
-        result = await account_service.register(user_id, username, server_id)
+            return await account_service.register(
+                user_id, username, server_id, skip_checks=True
+            )
+        return await account_service.register(user_id, username, server_id)
 
-    if result.success:
-        await client.send_message(user_id, result.message, parse_mode="markdown")
-        return {
-            "success": True,
-            "message": "注册成功！详细信息已发送到您的 Telegram 私聊。",
-        }
-
-    return {"success": False, "message": result.message}
+    return await _execute_idempotent_sensitive_action(
+        request=request,
+        user_id=user_id,
+        action="signup",
+        target_key=str(server_id),
+        idempotency_key=x_idempotency_key,
+        client=client,
+        operation=_do_signup,
+        dm_success_notice="注册成功！详细信息已发送到您的 Telegram 私聊。",
+        dm_failed_prefix="注册成功",
+    )
 
 
 @router.post("/accounts/{server_id}/toggle_nsfw", response_model=ToggleResponse)
@@ -411,22 +536,24 @@ async def toggle_account_nsfw(
 async def reset_account_password(
     request: Request,
     server_id: int,
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-) -> dict[str, bool | str]:
+) -> dict[str, Any]:
     """重置账户密码"""
     service = AccountService(request.app, session)
-    result = await service.forget_password(user_id, server_id)
-    if not result.success:
-        return {"success": False, "message": result.message}
-
-    await client.send_message(user_id, result.message, parse_mode="markdown")
-
-    return {
-        "success": True,
-        "message": "密码重置成功，新密码已发送到您的 Telegram 私聊。",
-    }
+    return await _execute_idempotent_sensitive_action(
+        request=request,
+        user_id=user_id,
+        action="reset_password",
+        target_key=str(server_id),
+        idempotency_key=x_idempotency_key,
+        client=client,
+        operation=lambda: service.forget_password(user_id, server_id),
+        dm_success_notice="密码重置成功，新密码已发送到您的 Telegram 私聊。",
+        dm_failed_prefix="密码重置成功",
+    )
 
 
 @router.post("/accounts/{server_id}/renew", response_model=ToggleResponse)
@@ -449,26 +576,27 @@ async def generate_account_code(
     request: Request,
     server_id: int,
     code_type: str,
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
-) -> dict[str, bool | str]:
+) -> dict[str, Any]:
     """生成邀请码（注册码/续期码）"""
     if code_type not in ("signup", "renew"):
         return {"success": False, "message": "无效的码类型"}
 
     service = AccountService(request.app, session)
-    result = await service.generate_code(user_id, code_type, server_id)
-
-    if result.success:
-        # 将生成的码发送到用户私聊
-        await client.send_message(user_id, result.message, parse_mode="markdown")
-        return {
-            "success": True,
-            "message": "邀请码已生成，详情已发送到您的 Telegram 私聊。",
-        }
-
-    return {"success": False, "message": result.message}
+    return await _execute_idempotent_sensitive_action(
+        request=request,
+        user_id=user_id,
+        action="generate_code",
+        target_key=f"{server_id}:{code_type}",
+        idempotency_key=x_idempotency_key,
+        client=client,
+        operation=lambda: service.generate_code(user_id, code_type, server_id),
+        dm_success_notice="邀请码已生成，详情已发送到您的 Telegram 私聊。",
+        dm_failed_prefix="邀请码生成成功",
+    )
 
 
 @router.delete("/accounts/{server_id}", response_model=ToggleResponse)

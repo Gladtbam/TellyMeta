@@ -379,9 +379,15 @@
                 tg.MainButton.show();
                 tg.MainButton.showProgress();
 
+                const idempotencyKey = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
                 const res = await fetch(`/api/miniapp/accounts/${serverId}/reset_password`, {
                     method: 'POST',
-                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                    headers: {
+                        'X-Telegram-Init-Data': tg.initData,
+                        'X-Idempotency-Key': idempotencyKey
+                    }
                 });
 
                 const data = await res.json();
@@ -423,9 +429,15 @@
                 tg.MainButton.showProgress();
 
                 const url = `/api/miniapp/accounts/${serverId}/generate_code?code_type=${codeType}`;
+                const idempotencyKey = (window.crypto && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
                 const res = await fetch(url, {
                     method: 'POST',
-                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                    headers: {
+                        'X-Telegram-Init-Data': tg.initData,
+                        'X-Idempotency-Key': idempotencyKey
+                    }
                 });
 
                 const data = await res.json();
