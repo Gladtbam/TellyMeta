@@ -54,6 +54,7 @@ def upgrade() -> None:
         ['arr_id', 'media_type', 'media_id'],
         unique=True,
         sqlite_where=sa.text("status = 'pending'"),
+        postgresql_where=sa.text("status = 'pending'"),
     )
 
 

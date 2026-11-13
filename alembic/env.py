@@ -13,7 +13,7 @@ from alembic import context
 sys.path.append(os.getcwd())
 
 import models.orm
-from core.database import DATABASE_URL
+from core.database import DATABASE_URL, is_sqlite_url
 
 def include_object(object, name, type_, reflected, compare_to):
     # 如果是 apscheduler_jobs 表，直接忽略
@@ -24,7 +24,10 @@ def include_object(object, name, type_, reflected, compare_to):
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# 允许外部脚本通过 config.attributes["sqlalchemy.url"] 指定目标库迁移地址
+_target_url = config.attributes.get("sqlalchemy.url") or DATABASE_URL
+# ConfigParser 会将 % 视为插值符，密码经 URL 编码后可能包含 %，需转义为 %%
+config.set_main_option("sqlalchemy.url", _target_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -71,7 +74,7 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        render_as_batch=True,
+        render_as_batch=is_sqlite_url(DATABASE_URL),
         include_object=include_object)
 
     with context.begin_transaction():

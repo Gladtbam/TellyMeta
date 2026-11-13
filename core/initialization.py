@@ -1,8 +1,8 @@
-from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from core.telegram_manager import TelethonClientWarper
 from repositories.telegram_repo import TelegramRepository
 
 settings = get_settings()
+
 
 def run_db_migrations():
     """
@@ -34,7 +35,8 @@ def run_db_migrations():
         alembic_cfg = Config(str(alembic_cfg_path))
         alembic_cfg.set_main_option("script_location", str(script_location))
 
-        alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+        # ConfigParser 会将 % 视为插值符，密码经 URL 编码后可能包含 %，需转义为 %%
+        alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
         command.upgrade(alembic_cfg, "head")
 
@@ -43,6 +45,7 @@ def run_db_migrations():
     except Exception as e:
         logger.error("数据库自动迁移失败: {}", e)
         sys.exit(1)
+
 
 def check_required_settings():
     """检查启动必须的配置项"""
@@ -74,12 +77,16 @@ def check_required_settings():
     else:
         logger.info("所有必要的配置项均已设置。")
 
+
 def check_sqlite_version():
     """检查SQLite版本，确保其支持所需的功能"""
     min_required_version = (3, 35, 0)  # 需要支持的最低版本
     version = sqlite3.sqlite_version_info
     if version < min_required_version:
-        logger.error("SQLite 版本过低，当前版本为 {}。请升级到 3.35.0 或更高版本以支持所需功能。", sqlite3.sqlite_version)
+        logger.error(
+            "SQLite 版本过低，当前版本为 {}。请升级到 3.35.0 或更高版本以支持所需功能。",
+            sqlite3.sqlite_version,
+        )
         sys.exit(textwrap.dedent(f"""\
             ==================================================================
             |                      错误提示                       |
@@ -102,10 +109,16 @@ def check_sqlite_version():
     else:
         logger.info("SQLite 版本检查通过，当前版本为 {}。", sqlite3.sqlite_version)
 
+
 def check_mkvtoolnix() -> bool:
     """检查mkvtoolnix是否安装"""
     try:
-        subprocess.run(["mkvmerge", "--version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(
+            ["mkvmerge", "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         logger.info("mkvtoolnix 检查通过。")
         return True
     except subprocess.CalledProcessError:
@@ -115,13 +128,18 @@ def check_mkvtoolnix() -> bool:
         logger.error("mkvtoolnix 检查失败：未找到 mkvmerge 命令，请确认是否已安装。")
         return False
     except PermissionError:
-        logger.error("mkvtoolnix 检查失败：没有执行 mkvmerge 的权限 (Permission denied)。")
+        logger.error(
+            "mkvtoolnix 检查失败：没有执行 mkvmerge 的权限 (Permission denied)。"
+        )
         return False
     except Exception as e:
         logger.error(f"mkvtoolnix 检查时发生未知异常：{e}")
         return False
 
-async def initialize_admin(session: AsyncSession, telethon_client: TelethonClientWarper):
+
+async def initialize_admin(
+    session: AsyncSession, telethon_client: TelethonClientWarper
+):
     """初始化管理员用户"""
 
     sql_service = TelegramRepository(session)
@@ -136,5 +154,7 @@ async def initialize_admin(session: AsyncSession, telethon_client: TelethonClien
         await sql_service.toggle_admin(creator_id, is_admin=True)
         return [creator_id]
 
-    logger.error("无法获取频道/群组创建者ID，请确保机器人已加入频道/群组并具有足够权限。")
+    logger.error(
+        "无法获取频道/群组创建者ID，请确保机器人已加入频道/群组并具有足够权限。"
+    )
     return []

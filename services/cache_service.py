@@ -5,13 +5,15 @@ from typing import Any, TypeVar, overload
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import delete, select
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.database import async_session
+from core.database import IS_SQLITE, async_session
 from models.orm import ApiCache
 
 T = TypeVar("T", bound=BaseModel)
+
 
 class CacheService:
     """缓存服务"""
@@ -38,8 +40,7 @@ class CacheService:
         async with async_session() as session:
             try:
                 stmt = select(ApiCache).where(
-                    ApiCache.key == key,
-                    ApiCache.expires_at > datetime.now()
+                    ApiCache.key == key, ApiCache.expires_at > datetime.now()
                 )
                 result = await session.execute(stmt)
                 cache = result.scalar_one_or_none()
@@ -72,7 +73,7 @@ class CacheService:
             ttl: 过期时间（秒），默认 1 小时
         """
         if isinstance(value, BaseModel):
-            data = value.model_dump(mode='json')
+            data = value.model_dump(mode="json")
         else:
             data = value
 
@@ -86,18 +87,23 @@ class CacheService:
 
         async with async_session() as session:
             try:
-                # 使用 upsert (sqlite specific)
-                stmt = insert(ApiCache).values(
-                    key=key,
-                    value=json_str,
-                    expires_at=expires_at,
-                    created_at=datetime.now()
-                ).on_conflict_do_update(
-                    index_elements=['key'],
-                    set_=dict(
+                # 根据当前数据库方言选择对应的 upsert 方言实现
+                insert_fn = sqlite_insert if IS_SQLITE else pg_insert
+                stmt = (
+                    insert_fn(ApiCache)
+                    .values(
+                        key=key,
                         value=json_str,
                         expires_at=expires_at,
-                        created_at=datetime.now()
+                        created_at=datetime.now(),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["key"],
+                        set_=dict(
+                            value=json_str,
+                            expires_at=expires_at,
+                            created_at=datetime.now(),
+                        ),
                     )
                 )
                 await session.execute(stmt)

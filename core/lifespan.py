@@ -19,7 +19,13 @@ from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
-from core.database import DATABASE_URL, async_engine, async_session
+from core.database import (
+    DATABASE_URL,
+    IS_SQLITE,
+    async_engine,
+    async_session,
+    get_sync_database_url,
+)
 from core.initialization import (
     check_mkvtoolnix,
     check_required_settings,
@@ -46,7 +52,8 @@ async def lifespan(app: FastAPI):
     logger.info("时区已设置为 {}", settings.timezone)
 
     check_required_settings()
-    check_sqlite_version()
+    if IS_SQLITE:
+        check_sqlite_version()
 
     logger.info("启动应用程序生命周期上下文")
 
@@ -168,7 +175,7 @@ async def lifespan(app: FastAPI):
 
     app.state.scheduler = AsyncIOScheduler(
         jobstores={
-            "default": SQLAlchemyJobStore(url=DATABASE_URL.replace("+aiosqlite", ""))
+            "default": SQLAlchemyJobStore(url=get_sync_database_url(DATABASE_URL))
         },
         timezone=settings.timezone,
     )

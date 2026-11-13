@@ -313,5 +313,6 @@ class MediaRequest(Base):
             "media_id",
             unique=True,
             sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
         ),
     )

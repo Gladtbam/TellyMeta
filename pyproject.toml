@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=25.1.0",
-    "aiosqlite>=0.22.1",
     "alembic>=1.20.1",
     "apscheduler>=3.11.3",
     "cryptg>=0.6.1",
@@ -22,6 +21,15 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.1.8",
     "telethon>=1.45.0",
     "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+sqlite = [
+    "aiosqlite>=0.22.1",
+]
+postgres = [
+    "asyncpg>=0.32.0",
+    "psycopg[binary]>=3.3.9",
 ]
 
 [tool.pyright]
