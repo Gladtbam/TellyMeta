@@ -1,12 +1,18 @@
 FROM python:slim-trixie AS builder
 
+ARG DB_EXTRA=all
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 
-RUN uv sync --frozen --no-dev --no-install-project --compile-bytecode
+RUN if [ "$DB_EXTRA" = "all" ]; then \
+        uv sync --frozen --no-dev --no-install-project --compile-bytecode --all-extras; \
+    else \
+        uv sync --frozen --no-dev --no-install-project --compile-bytecode --extra "$DB_EXTRA"; \
+    fi
 
 
 

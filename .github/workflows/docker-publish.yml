@@ -28,6 +28,22 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: all
+            db_extra: all
+            suffix: ""
+            raw_tag: latest
+          - variant: sqlite
+            db_extra: sqlite
+            suffix: "-sqlite"
+            raw_tag: sqlite
+          - variant: postgres
+            db_extra: postgres
+            suffix: "-postgres"
+            raw_tag: postgres
     permissions:
       contents: read
       packages: write
@@ -36,7 +52,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      
+
       - name: Setup Dockerignore
         run: |
           if [ -f docker/.dockerignore ]; then
@@ -63,14 +79,14 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=schedule
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=schedule,suffix=${{ matrix.suffix }}
+            type=ref,event=branch,suffix=${{ matrix.suffix }}
+            type=ref,event=pr,suffix=${{ matrix.suffix }}
+            type=semver,pattern={{version}},suffix=${{ matrix.suffix }}
+            type=semver,pattern={{major}}.{{minor}},suffix=${{ matrix.suffix }}
+            type=raw,value=${{ matrix.raw_tag }},enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (${{ matrix.variant }})
         id: build-and-push
         uses: docker/build-push-action@v6
         with:
@@ -80,12 +96,33 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      
-      - uses: actions/delete-package-versions@v5
+          build-args: DB_EXTRA=${{ matrix.db_extra }}
+          cache-from: type=gha,scope=build-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.variant }}
+
+  cleanup:
+    needs: build
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      packages: write
+
+    steps:
+      - name: Delete untagged container package versions
+        uses: actions/delete-package-versions@v5
         with:
           package-name: 'tellymeta'
           package-type: container
-          min-versions-to-keep: 4
+          min-versions-to-keep: 12
           delete-only-untagged-versions: 'true'
+
+      - name: Cleanup old GitHub Actions caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cache_ids=$(gh cache list --repo "${{ github.repository }}" --limit 100 --json id,createdAt --jq 'sort_by(.createdAt) | reverse | .[6:] | .[].id')
+          for id in $cache_ids; do
+            echo "Deleting old cache id: $id"
+            gh cache delete "$id" --repo "${{ github.repository }}" || true
+          done
