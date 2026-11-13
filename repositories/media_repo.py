@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import MediaUser
+from repositories.config_repo import ConfigRepository
 
 
 class MediaRepository:
@@ -127,11 +128,13 @@ class MediaRepository:
             MediaUser: 更新后的 Media 用户对象
         """
         media_user.is_banned = True
-        media_user.delete_at = (
-            delete_at
-            if delete_at is not None
-            else media_user.expires_at + timedelta(days=7)
-        )
+        if delete_at is not None:
+            media_user.delete_at = delete_at
+        else:
+            grace_days = (await ConfigRepository(self.session).get_policy_config())[
+                "account_delete_grace_days"
+            ]
+            media_user.delete_at = media_user.expires_at + timedelta(days=grace_days)
         await self.session.commit()
         await self.session.refresh(media_user)
         return media_user
@@ -151,8 +154,11 @@ class MediaRepository:
         users = result.scalars().all()
         if not users:
             return 0
+        grace_days = (await ConfigRepository(self.session).get_policy_config())[
+            "account_delete_grace_days"
+        ]
         for user in users:
-            user.delete_at = user.expires_at + timedelta(days=7)
+            user.delete_at = user.expires_at + timedelta(days=grace_days)
         await self.session.commit()
         return len(users)
 

@@ -27,6 +27,7 @@ from models.schemas import (
     MetadataConfigUpdateDto,
     NsfwLibraryDto,
     PointsConfigUpdateDto,
+    PolicyConfigUpdateDto,
     QualityProfileDto,
     RootFolderDto,
 )
@@ -548,6 +549,41 @@ class SettingsServices:
             await self.config_repo.set_settings(key, value)
 
         return Result(success=True, message="积分、签到与定价规则已保存并生效")
+
+    async def update_policy_config(self, payload: PolicyConfigUpdateDto) -> Result:
+        """校验并保存入群验证超时与账号/求片宽限期配置。
+
+        Args:
+            payload: 策略与宽限期配置更新请求体。
+
+        Returns:
+            操作结果。
+        """
+        if payload.verification_timeout_minutes < 1:
+            return Result(success=False, message="入群验证超时时间至少为 1 分钟")
+        if payload.account_delete_grace_days < 0:
+            return Result(success=False, message="过期账号删除宽限期不能为负数")
+        if payload.account_renew_advance_days < 0:
+            return Result(success=False, message="允许提前续期天数不能为负数")
+        if payload.request_expire_days < 1:
+            return Result(success=False, message="待审核求片超时天数至少为 1 天")
+
+        items = {
+            ConfigRepository.KEY_VERIFICATION_TIMEOUT_MINUTES: str(
+                payload.verification_timeout_minutes
+            ),
+            ConfigRepository.KEY_ACCOUNT_DELETE_GRACE_DAYS: str(
+                payload.account_delete_grace_days
+            ),
+            ConfigRepository.KEY_ACCOUNT_RENEW_ADVANCE_DAYS: str(
+                payload.account_renew_advance_days
+            ),
+            ConfigRepository.KEY_REQUEST_EXPIRE_DAYS: str(payload.request_expire_days),
+        }
+        for key, value in items.items():
+            await self.config_repo.set_settings(key, value)
+
+        return Result(success=True, message="验证超时与宽限期配置已保存并生效")
 
     async def get_nsfw_libraries_data(self, server_id: int) -> list[NsfwLibraryDto]:
         """获取服务器所有媒体库的 NSFW 状态"""

@@ -42,6 +42,12 @@ class ConfigRepository:
     KEY_POINTS_MESSAGE_DAILY_CAP = "points:message_daily_cap"
     KEY_POINTS_SPAM_THRESHOLD = "points:spam_threshold"
 
+    # Policy / Grace Period Keys
+    KEY_VERIFICATION_TIMEOUT_MINUTES = "policy:verification_timeout_minutes"
+    KEY_ACCOUNT_DELETE_GRACE_DAYS = "policy:account_delete_grace_days"
+    KEY_ACCOUNT_RENEW_ADVANCE_DAYS = "policy:account_renew_advance_days"
+    KEY_REQUEST_EXPIRE_DAYS = "policy:request_expire_days"
+
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
         """解析 MKV 排除关键词列表（支持逗号或换行分隔）"""
@@ -98,6 +104,10 @@ class ConfigRepository:
             cls.KEY_POINTS_CHECKIN_LUCKY_INTERVAL: "7",
             cls.KEY_POINTS_MESSAGE_DAILY_CAP: "20",
             cls.KEY_POINTS_SPAM_THRESHOLD: "5",
+            cls.KEY_VERIFICATION_TIMEOUT_MINUTES: "5",
+            cls.KEY_ACCOUNT_DELETE_GRACE_DAYS: "7",
+            cls.KEY_ACCOUNT_RENEW_ADVANCE_DAYS: "7",
+            cls.KEY_REQUEST_EXPIRE_DAYS: "7",
         }
 
         new_items = []
@@ -321,3 +331,41 @@ class ConfigRepository:
             if val is not None:
                 source[key] = val
         return self._build_points_config(source)
+
+    @classmethod
+    def _build_policy_config(cls, source: dict[str, str]) -> dict[str, int]:
+        """从配置键值字典解析验证超时与账号/求片宽限期配置。"""
+        return {
+            "verification_timeout_minutes": cls._parse_int(
+                source.get(cls.KEY_VERIFICATION_TIMEOUT_MINUTES), 5, 1
+            ),
+            "account_delete_grace_days": cls._parse_int(
+                source.get(cls.KEY_ACCOUNT_DELETE_GRACE_DAYS), 7, 0
+            ),
+            "account_renew_advance_days": cls._parse_int(
+                source.get(cls.KEY_ACCOUNT_RENEW_ADVANCE_DAYS), 7, 0
+            ),
+            "request_expire_days": cls._parse_int(
+                source.get(cls.KEY_REQUEST_EXPIRE_DAYS), 7, 1
+            ),
+        }
+
+    @classmethod
+    def get_policy_config_from_cache(cls) -> dict[str, int]:
+        """同步读取内存缓存中的验证超时与账号/求片宽限期配置。"""
+        return cls._build_policy_config(cls.cache)
+
+    async def get_policy_config(self) -> dict[str, int]:
+        """读取数据库/缓存中的验证超时与账号/求片宽限期配置。"""
+        keys = (
+            self.KEY_VERIFICATION_TIMEOUT_MINUTES,
+            self.KEY_ACCOUNT_DELETE_GRACE_DAYS,
+            self.KEY_ACCOUNT_RENEW_ADVANCE_DAYS,
+            self.KEY_REQUEST_EXPIRE_DAYS,
+        )
+        source: dict[str, str] = {}
+        for key in keys:
+            val = await self.get_settings(key)
+            if val is not None:
+                source[key] = val
+        return self._build_policy_config(source)

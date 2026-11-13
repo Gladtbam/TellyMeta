@@ -27,6 +27,7 @@ from models.schemas import (
     MkvConfigUpdateDto,
     NsfwLibraryDto,
     PointsConfigUpdateDto,
+    PolicyConfigUpdateDto,
     ServerCreate,
     ServerDto,
     ServerUpdate,
@@ -95,6 +96,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
     llm_cfg = await repo.get_llm_config()
     meta_cfg = await repo.get_metadata_config()
     points_cfg = await repo.get_points_config()
+    policy_cfg = await repo.get_policy_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -129,6 +131,29 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         "tmdb_api_key_masked": "******" if meta_cfg["tmdb_api_key"] else "",
         "tvdb_api_key_masked": "******" if meta_cfg["tvdb_api_key"] else "",
         **points_cfg,
+        **policy_cfg,
+    }
+
+
+@router.post(
+    "/system/policy",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_policy_config_endpoint(
+    request: Request,
+    payload: PolicyConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新入群验证超时与账号/求片宽限期配置"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_policy_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "policy_config",
+        "message": result.message,
     }
 
 

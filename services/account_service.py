@@ -521,7 +521,9 @@ class AccountService:
         if not isinstance(media_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
-        if media_user.expires_at > datetime.now() + timedelta(days=7):
+        policy_cfg = await self.config_repo.get_policy_config()
+        renew_advance_days = policy_cfg["account_renew_advance_days"]
+        if media_user.expires_at > datetime.now() + timedelta(days=renew_advance_days):
             return Result(
                 False,
                 f"续期失败，您的账户有效期还有 {(media_user.expires_at - datetime.now()).days} 天，无需续期。",

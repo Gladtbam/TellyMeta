@@ -394,7 +394,12 @@
                             class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content"><span class="item-title">入群验证</span></div><label class="switch"><input
+                    <div class="item-content" style="cursor:pointer;" onclick="openModal('verification-modal')">
+                        <span class="item-title">入群验证</span>
+                        <span class="item-subtitle" id="verification-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="verification-config-btn" onclick="openModal('verification-modal')">配置 ›</span>
+                    <label class="switch"><input
                             type="checkbox" id="toggle-verification"
                             onchange="toggleSystem('enable_verification')"><span class="slider"></span></label>
                 </div>
@@ -430,6 +435,13 @@
                     <div class="item-content">
                         <span class="item-title">元数据 API (TMDB / TVDB)</span>
                         <span class="item-subtitle" id="metadata-summary">加载中...</span>
+                    </div>
+                    <span class="item-arrow">›</span>
+                </div>
+                <div class="item" style="cursor:pointer;" onclick="openModal('policy-modal')">
+                    <div class="item-content">
+                        <span class="item-title">账号与求片宽限期</span>
+                        <span class="item-subtitle" id="policy-summary">加载中...</span>
                     </div>
                     <span class="item-arrow">›</span>
                 </div>
@@ -597,6 +609,52 @@
                         placeholder="输入 TVDB API Key">
                 </div>
                 <button type="button" class="btn btn-primary" onclick="saveMetadataConfig()">保存元数据配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 入群验证超时配置弹窗 -->
+    <div class="modal-overlay" id="verification-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>入群验证配置</span>
+                <span class="modal-close" onclick="closeModal('verification-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">入群验证超时 (分钟)</label>
+                    <input type="number" min="1" id="policy-verification-timeout" class="form-input">
+                </div>
+                <span class="item-subtitle">新成员加群后若超过该时间未完成私聊人机验证，将被自动移出群组。</span>
+                <button type="button" class="btn btn-primary" onclick="savePolicyConfig('verification-modal')">保存验证配置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 账号与求片宽限期弹窗 -->
+    <div class="modal-overlay" id="policy-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>账号与求片宽限期</span>
+                <span class="modal-close" onclick="closeModal('policy-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">过期删号宽限期 (天)</label>
+                        <input type="number" min="0" id="policy-delete-grace" class="form-input">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">提前续期窗口 (天)</label>
+                        <input type="number" min="0" id="policy-renew-advance" class="form-input">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">求片审核超时 (天)</label>
+                    <input type="number" min="1" id="policy-request-expire" class="form-input">
+                </div>
+                <span class="item-subtitle">提前续期窗口指账户距离到期多少天内允许用户主动续期；过期删号宽限期指封禁到期后延迟几天删除媒体账户。</span>
+                <button type="button" class="btn btn-primary" onclick="savePolicyConfig('policy-modal')">保存宽限期配置</button>
             </div>
         </div>
     </div>
@@ -920,6 +978,13 @@
                 document.getElementById('tmdb-api-key').value = s.tmdb_api_key_masked || '';
                 document.getElementById('tvdb-api-key').value = s.tvdb_api_key_masked || '';
                 updateMetadataSummary();
+
+                document.getElementById('policy-verification-timeout').value = s.verification_timeout_minutes ?? 5;
+                document.getElementById('policy-delete-grace').value = s.account_delete_grace_days ?? 7;
+                document.getElementById('policy-renew-advance').value = s.account_renew_advance_days ?? 7;
+                document.getElementById('policy-request-expire').value = s.request_expire_days ?? 7;
+                updateVerificationVisibility(!!s.enable_verification);
+                updatePolicySummary();
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
@@ -1085,6 +1150,47 @@
             updateMetadataSummary();
             closeModal('metadata-modal');
             tg.showAlert('✅ ' + (res.message || 'TMDB/TVDB 元数据配置已保存'));
+        }
+
+        function updateVerificationVisibility(enabled) {
+            const btn = document.getElementById('verification-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('verification-summary');
+            if (!summary) return;
+            if (!enabled) {
+                summary.innerText = '已关闭';
+                return;
+            }
+            const vt = document.getElementById('policy-verification-timeout').value || 5;
+            summary.innerText = `超时 ${vt} 分钟`;
+        }
+
+        function updatePolicySummary() {
+            const summary = document.getElementById('policy-summary');
+            if (!summary) return;
+            const dg = document.getElementById('policy-delete-grace').value || 7;
+            const ra = document.getElementById('policy-renew-advance').value || 7;
+            const re = document.getElementById('policy-request-expire').value || 7;
+            summary.innerText = `删号 ${dg}天 · 续期 ${ra}天 · 求片 ${re}天`;
+        }
+
+        async function savePolicyConfig(modalId = 'policy-modal') {
+            const parseIntOr = (id, def) => {
+                const raw = document.getElementById(id).value.trim();
+                const val = parseInt(raw, 10);
+                return Number.isNaN(val) ? def : val;
+            };
+            const payload = {
+                verification_timeout_minutes: parseIntOr('policy-verification-timeout', 5),
+                account_delete_grace_days: parseIntOr('policy-delete-grace', 7),
+                account_renew_advance_days: parseIntOr('policy-renew-advance', 7),
+                request_expire_days: parseIntOr('policy-request-expire', 7)
+            };
+            const res = await api('/system/policy', 'POST', payload);
+            updateVerificationVisibility(document.getElementById('toggle-verification').checked);
+            updatePolicySummary();
+            closeModal(modalId);
+            tg.showAlert('✅ ' + (res.message || '策略配置已保存'));
         }
 
         function renderAdmins(data) {
@@ -1478,6 +1584,8 @@
                 const res = await api(`/system/${key}/toggle`, 'POST');
                 if (key === 'enable_points') {
                     updatePointsConfigVisibility(!!res.new_state);
+                } else if (key === 'enable_verification') {
+                    updateVerificationVisibility(!!res.new_state);
                 } else if (key === 'enable_mkv_process') {
                     updateMkvExcludeVisibility(res.new_state !== false);
                 } else if (key === 'enable_llm_translate') {
@@ -1488,6 +1596,8 @@
                     el.checked = !el.checked;
                     if (key === 'enable_points') {
                         updatePointsConfigVisibility(el.checked);
+                    } else if (key === 'enable_verification') {
+                        updateVerificationVisibility(el.checked);
                     } else if (key === 'enable_mkv_process') {
                         updateMkvExcludeVisibility(el.checked);
                     } else if (key === 'enable_llm_translate') {

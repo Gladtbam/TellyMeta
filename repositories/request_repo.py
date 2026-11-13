@@ -5,9 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import MediaRequest
-
-# 求片待审核自动超时天数
-REQUEST_EXPIRE_DAYS = 7
+from repositories.config_repo import ConfigRepository
 
 
 class RequestRepository:
@@ -73,6 +71,9 @@ class RequestRepository:
     ) -> MediaRequest:
         """创建一条待审核求片记录并提交事务"""
         created_at = now or datetime.now()
+        expire_days = (await ConfigRepository(self.session).get_policy_config())[
+            "request_expire_days"
+        ]
         req = MediaRequest(
             user_id=user_id,
             media_server_id=media_server_id,
@@ -85,7 +86,7 @@ class RequestRepository:
             status="pending",
             cost_status="reserved",
             created_at=created_at,
-            expires_at=created_at + timedelta(days=REQUEST_EXPIRE_DAYS),
+            expires_at=created_at + timedelta(days=expire_days),
         )
         self.session.add(req)
         await self.session.commit()

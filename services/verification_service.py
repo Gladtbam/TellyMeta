@@ -16,6 +16,7 @@ from bot.utils import generate_captcha
 from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
+from repositories.config_repo import ConfigRepository
 from repositories.verification_repo import VerificationRepository
 from services.user_service import Result, UserService
 
@@ -27,6 +28,7 @@ class VerificationService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.client: TelethonClientWarper = app.state.telethon_client
         self.scheduler: AsyncIOScheduler = app.state.scheduler
+        self.config_repo = ConfigRepository(session)
         self.verification_repo = VerificationRepository(session)
 
     async def start_verification(self, user_id: int) -> Result:
@@ -38,10 +40,12 @@ class VerificationService:
             logger.info("非法用户名用户 {} 试图加入群组，拒绝验证。", user_id)
             await self.client.kick_participant(user_id)
             return Result(success=False, message="")
+        policy_cfg = await self.config_repo.get_policy_config()
+        timeout_minutes = policy_cfg["verification_timeout_minutes"]
         welcome_message = textwrap.dedent(f"""\
             欢迎新成员 [{user_name}](tg://user?id={user_id})！
 
-            请在 **5 分钟内私聊我** 点击开始并完成人机验证，否则您将会被移出群组。
+            请在 **{timeout_minutes} 分钟内私聊我** 点击开始并完成人机验证，否则您将会被移出群组。
         """)
         # buttons = [Button.url("➡️ 前往验证", url)]
         keyboard = [
@@ -52,7 +56,7 @@ class VerificationService:
             ],
         ]
 
-        kick_time = datetime.now() + timedelta(minutes=5)
+        kick_time = datetime.now() + timedelta(minutes=timeout_minutes)
         job = self.scheduler.add_job(
             kick_unverified_user,
             "date",

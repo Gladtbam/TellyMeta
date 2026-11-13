@@ -196,6 +196,10 @@ class SystemConfigResponse(BaseModel):
     points_checkin_lucky_interval: int = 7
     points_message_daily_cap: int = 20
     points_spam_threshold: int = 5
+    verification_timeout_minutes: int = 5
+    account_delete_grace_days: int = 7
+    account_renew_advance_days: int = 7
+    request_expire_days: int = 7
 
 
 class PointsConfigUpdateDto(BaseModel):
@@ -214,6 +218,15 @@ class PointsConfigUpdateDto(BaseModel):
     points_checkin_lucky_interval: int = 7
     points_message_daily_cap: int = 20
     points_spam_threshold: int = 5
+
+
+class PolicyConfigUpdateDto(BaseModel):
+    """验证超时与账号/求片宽限期配置更新请求"""
+
+    verification_timeout_minutes: int = 5
+    account_delete_grace_days: int = 7
+    account_renew_advance_days: int = 7
+    request_expire_days: int = 7
 
 
 class MkvConfigUpdateDto(BaseModel):

@@ -616,17 +616,25 @@ class RequestService:
         )
 
     async def expire_pending_requests(self, now: datetime | None = None) -> int:
-        """超时清理：自动取消待审核满 7 天的求片请求并释放全部预留积分"""
+        """超时清理：自动取消超过配置天数的待审核求片请求并释放全部预留积分"""
         current_time = now or datetime.now()
+        default_expire_days = (await self.config_repo.get_policy_config())[
+            "request_expire_days"
+        ]
         expired_list = await self.request_repo.find_expired_pending(now=current_time)
         expired_count = 0
         for req in expired_list:
+            req_days = (
+                max(1, (req.expires_at - req.created_at).days)
+                if req.expires_at and req.created_at
+                else default_expire_days
+            )
             updated = await self.request_repo.atomic_transition(
                 req.id,
                 from_status="pending",
                 to_status="expired",
                 cost_status="released",
-                fail_reason="待审核超过7天自动取消",
+                fail_reason=f"待审核超过{req_days}天自动取消",
                 now=current_time,
             )
             if not updated:
@@ -650,7 +658,7 @@ class RequestService:
                 text=(
                     f"⏰ <b>求片已超时自动取消</b>\n\n"
                     f"您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）"
-                    f"待审核已满 7 天未处理，系统已自动取消。\n"
+                    f"待审核已满 {req_days} 天未处理，系统已自动取消。\n"
                     f"已全额释放预留积分 <b>{updated.reserved_cost}</b>。"
                 ),
             )
