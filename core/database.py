@@ -1,7 +1,6 @@
 import sqlite3
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import HTTPException
 from loguru import logger

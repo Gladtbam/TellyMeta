@@ -2,7 +2,6 @@ import asyncio
 import os
 import sys
 from logging.config import fileConfig
-from pathlib import Path
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection

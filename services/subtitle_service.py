@@ -1,9 +1,8 @@
-import os
-import pathlib
 import re
 import shutil
 import zipfile
 from collections.abc import Callable
+from pathlib import Path
 
 import aiofiles.tempfile
 from loguru import logger
@@ -218,10 +217,10 @@ class SubtitleService:
         )
 
     def _process_series_file(
-        self, sub_file_path: str, episode_map: dict[str, str]
+        self, sub_file_path: Path, episode_map: dict[str, str]
     ) -> str | None:
         """剧集单文件处理逻辑：返回错误信息或 None(成功)"""
-        sub_filename = os.path.basename(sub_file_path)
+        sub_filename = sub_file_path.name
 
         # 匹配 SxxExx
         ep_match = re.search(r"[sS](\d+)[eE](\d+)", sub_filename)
@@ -235,10 +234,10 @@ class SubtitleService:
         if key not in episode_map:
             return f"已跳过 {sub_filename}：媒体库中未找到 {key} 对应的视频文件"
 
-        media_path = episode_map[key]
-        media_dir = os.path.dirname(media_path)
+        media_path = Path(episode_map[key])
+        media_dir = media_path.parent
         # 获取媒体文件的基础名称 (无后缀)，例如 "Show.S01E01"
-        media_basename = os.path.splitext(os.path.basename(media_path))[0]
+        media_basename = media_path.stem
 
         # 截取 SxxExx 之后的部分，例如 ".zh.comment.ass" 或 " - Title.zh.ass"
         remainder = sub_filename[ep_match.end() :]
@@ -247,13 +246,12 @@ class SubtitleService:
             suffixes = suffix_match.group()
         else:
             # 兜底：如果没提取到后缀，直接取原文件后缀
-            suffixes = "".join(pathlib.Path(sub_filename).suffixes)
+            suffixes = "".join(sub_file_path.suffixes)
 
         if not self._is_allowed_extension(suffixes):
             return f"跳过 {sub_filename}: 不支持的字幕格式"
 
-        new_sub_name = f"{media_basename}{suffixes}"
-        new_sub_path = os.path.join(media_dir, new_sub_name)
+        new_sub_path = media_dir / f"{media_basename}{suffixes}"
 
         return self._safe_move(sub_file_path, new_sub_path)
 
@@ -307,9 +305,9 @@ class SubtitleService:
         if not movie.hasFile or not movie.movieFile or not movie.movieFile.path:
             return Result(False, "该电影在库中尚无视频文件，无法上传字幕。")
 
-        movie_path = movie.movieFile.path
-        media_dir = os.path.dirname(movie_path)
-        media_basename = os.path.splitext(os.path.basename(movie_path))[0]
+        movie_path = Path(movie.movieFile.path)
+        media_dir = movie_path.parent
+        media_basename = movie_path.stem
 
         # 2. 解压并处理
         return await self._extract_and_process(
@@ -319,20 +317,17 @@ class SubtitleService:
         )
 
     def _process_movie_file(
-        self, sub_file_path: str, media_dir: str, media_basename: str
+        self, sub_file_path: Path, media_dir: Path, media_basename: str
     ) -> str | None:
         """电影单文件处理逻辑"""
-        sub_filename = os.path.basename(sub_file_path)
+        sub_filename = sub_file_path.name
         # 获取所有后缀 (如 .chi.srt)
-        suffixes = "".join(pathlib.Path(sub_filename).suffixes)
-        if not suffixes:
-            suffixes = ".srt"
+        suffixes = "".join(sub_file_path.suffixes) or ".srt"
 
         if not self._is_allowed_extension(suffixes):
             return f"跳过 {sub_filename}: 不支持的字幕格式"
 
-        new_sub_name = f"{media_basename}{suffixes}"
-        new_sub_path = os.path.join(media_dir, new_sub_name)
+        new_sub_path = media_dir / f"{media_basename}{suffixes}"
 
         return self._safe_move(sub_file_path, new_sub_path)
 
@@ -340,17 +335,17 @@ class SubtitleService:
         """检查后缀是否在白名单中 (检查最后一个点后的部分)"""
         if not suffix_str:
             return False
-        ext = pathlib.Path(suffix_str).suffix.lower()
+        ext = Path(suffix_str).suffix.lower()
         return ext in ALLOWED_EXTENSIONS
 
-    def _safe_move(self, src: str, dst: str) -> str | None:
+    def _safe_move(self, src: Path, dst: Path) -> str | None:
         """安全移动文件：检查存在性、防止覆盖、设置权限"""
-        if os.path.exists(dst):
-            return f"跳过: 目标位置已存在文件 {os.path.basename(dst)}"
+        if dst.exists():
+            return f"跳过: 目标位置已存在文件 {dst.name}"
 
         try:
-            shutil.move(src, dst)
-            os.chmod(dst, 0o644)
+            shutil.move(str(src), str(dst))
+            dst.chmod(0o644)
             return None
         except OSError as e:
             return f"文件移动失败: {e}"
@@ -359,7 +354,7 @@ class SubtitleService:
         self,
         zip_path: str,
         media_title: str | None,
-        process_func: Callable[[str], str | None],
+        process_func: Callable[[Path], str | None],
     ) -> Result:
         """通用解压和遍历逻辑"""
         async with aiofiles.tempfile.TemporaryDirectory() as temp_dir:
@@ -393,22 +388,20 @@ class SubtitleService:
             files_processed = 0
             errors = []
 
-            for root, _, files in os.walk(temp_dir):
-                if "__MACOSX" in pathlib.Path(root).parts:
+            for full_path in sorted(
+                p for p in Path(temp_dir).rglob("*") if p.is_file()
+            ):
+                if "__MACOSX" in full_path.parts or full_path.name.startswith("."):
                     continue
-                for file in files:
-                    if file.startswith(".") or file.startswith("__MACOSX"):
-                        continue
 
-                    full_path = os.path.join(root, file)
-                    try:
-                        error = process_func(full_path)
-                        if error:
-                            errors.append(error)
-                        else:
-                            files_processed += 1
-                    except (OSError, ValueError) as e:
-                        errors.append(f"处理文件 {file} 时出错: {str(e)}")
+                try:
+                    error = process_func(full_path)
+                    if error:
+                        errors.append(error)
+                    else:
+                        files_processed += 1
+                except (OSError, ValueError) as e:
+                    errors.append(f"处理文件 {full_path.name} 时出错: {str(e)}")
 
             if files_processed == 0:
                 if not errors:

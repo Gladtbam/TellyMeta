@@ -1,7 +1,6 @@
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
-from pathlib import Path
 from typing import Any, Literal, cast
 
 import python_socks
