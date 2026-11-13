@@ -19,7 +19,12 @@ from core.dependencies import (
     get_telethon_client,
 )
 from core.telegram_manager import TelethonClientWarper
-from core.webapp_auth import get_current_user_id, validate_admin_access
+from core.webapp_auth import (
+    get_current_user_id,
+    require_group_member,
+    require_owned_media_account,
+    validate_admin_access,
+)
 from models.orm import RegistrationMode
 from models.schemas import (
     AdminActionResponse,
@@ -431,7 +436,7 @@ async def redeem_code(
     request: Request,
     code: str = Query(...),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_group_member),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> dict[str, Any]:
@@ -461,19 +466,11 @@ async def signup_account(
     server_id: int,
     verification_input: str = Query(default=""),
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_group_member),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> dict[str, Any]:
     """注册账户"""
-    try:
-        participant = await client.get_participant(user_id)
-        if not participant:
-            return {"success": False, "message": "您必须先加入群组才能注册账户。"}
-    except Exception as e:
-        logger.error(f"验证用户 {user_id} 群组身份失败: {e}")
-        return {"success": False, "message": "验证群组身份时发生错误，请联系管理员。"}
-
     username = await client.get_user_name(user_id, need_username=True)
     if not username or username is False:
         return {"success": False, "message": "请先设置 Telegram 用户名后再注册。"}
@@ -521,7 +518,7 @@ async def signup_account(
 async def toggle_account_nsfw(
     request: Request,
     server_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """切换账户 NSFW 状态"""
@@ -537,7 +534,7 @@ async def reset_account_password(
     request: Request,
     server_id: int,
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> dict[str, Any]:
@@ -560,7 +557,7 @@ async def reset_account_password(
 async def renew_account(
     request: Request,
     server_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """续期账户"""
@@ -577,7 +574,7 @@ async def generate_account_code(
     server_id: int,
     code_type: str,
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
 ) -> dict[str, Any]:
@@ -603,7 +600,7 @@ async def generate_account_code(
 async def delete_account(
     request: Request,
     server_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """删除账户绑定"""
@@ -617,7 +614,7 @@ async def delete_account(
 @router.post("/tools/{server_id}/upload_subtitle", response_model=ToggleResponse)
 async def trigger_upload_subtitle(
     server_id: int,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
     radarr_clients: dict[int, RadarrClient] = Depends(get_radarr_clients),
@@ -653,6 +650,7 @@ async def trigger_upload_subtitle(
 async def get_request_libraries(
     request: Request,
     server_id: int,
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ):
     """获取可求片的媒体库列表"""
@@ -674,6 +672,7 @@ async def search_media(
     server_id: int,
     library: str,
     query: str,
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ):
     """搜索媒体"""
@@ -694,7 +693,7 @@ async def submit_request(
     request: Request,
     server_id: int,
     payload: RequestSubmitDto,
-    user_id: int = Depends(get_current_user_id),
+    user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """提交求片请求"""
