@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import contextlib
-import re
 import textwrap
 
 import aiofiles.tempfile
@@ -289,7 +288,7 @@ async def run_subtitle_upload_flow(
             )
         except asyncio.TimeoutError:
             await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(f"Conversation error: {e}")
             await client.send_message(chat_id, f"❌ 发生未知错误: {str(e)}")
 

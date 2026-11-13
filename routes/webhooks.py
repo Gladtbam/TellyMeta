@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Response
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from telethon import errors
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
@@ -178,7 +179,7 @@ async def sonarr_webhook(
                                 else None
                             ),
                         )
-                    except Exception as e:
+                    except (errors.RPCError, ValueError) as e:
                         logger.warning("发送 MKV 路径映射告警失败: {}", e)
 
         await _schedule_qb_share_limit(
@@ -248,7 +249,7 @@ async def radarrarr_webhook(
                                 else None
                             ),
                         )
-                    except Exception as e:
+                    except (errors.RPCError, ValueError) as e:
                         logger.warning("发送 MKV 路径映射告警失败: {}", e)
 
         if getattr(server_instance, "allow_nfo", True) and (

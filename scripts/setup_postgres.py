@@ -15,6 +15,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -80,7 +81,7 @@ async def _test_postgres_connection(database_url: str) -> tuple[bool, str]:
         return True, "连接测试成功！"
     except ModuleNotFoundError as e:
         return False, f"缺少 PostgreSQL 驱动 ({e})，请先执行: uv sync --extra postgres"
-    except Exception as e:
+    except (SQLAlchemyError, OSError, ValueError) as e:
         return False, f"连接失败: {e}"
     finally:
         await engine.dispose()
@@ -132,7 +133,7 @@ async def create_postgresql_user_and_database(
             return True, f"数据库 '{target_database}' 已存在。"
     except ModuleNotFoundError as e:
         return False, f"缺少 PostgreSQL 驱动 ({e})，请先执行: uv sync --extra postgres"
-    except Exception as e:
+    except (SQLAlchemyError, OSError, ValueError) as e:
         return False, f"创建用户或数据库失败: {e}"
     finally:
         await engine.dispose()

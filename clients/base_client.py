@@ -142,7 +142,7 @@ class BaseClient(ABC):
             except httpx2.RequestError as e:
                 logger.error("请求错误：{}", e)
                 raise
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("未知错误：{}", e)
                 raise
 
@@ -358,7 +358,7 @@ class AuthenticatedClient(BaseClient):
             except httpx2.RequestError as e:
                 logger.error("登录期间请求错误：{}", e)
                 raise
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("登录期间出现意外错误：{}", e)
                 raise
 

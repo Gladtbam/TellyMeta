@@ -5,6 +5,7 @@ from typing import Any
 
 from httpx2 import HTTPError, HTTPStatusError
 from loguru import logger
+from telethon import errors
 
 from core.config import get_settings
 from core.database import async_session, backup_database
@@ -162,7 +163,7 @@ async def ban_expired_users() -> None:
                             e.response.status_code,
                         )
                     continue
-                except Exception as e:
+                except (HTTPError, ValueError) as e:
                     logger.error(
                         "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，错误: {}",
                         user.id,
@@ -172,7 +173,7 @@ async def ban_expired_users() -> None:
                     continue
 
                 await media_repo.mark_banned(user)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("封禁过期用户时出错: {}", e)
             await session.rollback()
         finally:
@@ -235,7 +236,7 @@ async def delete_expired_banned_users() -> None:
                     continue
 
                 await media_repo.delete(user)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()
         finally:
@@ -272,7 +273,7 @@ async def retry_pending_nsfw_revokes() -> None:
                     revoked,
                     failed,
                 )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("重试 NSFW 撤权任务时出错: {}", e)
             await session.rollback()
         finally:
@@ -324,7 +325,7 @@ async def settle_scores() -> None:
                     total_lines.append(
                         f"{medal} [{user_name}](tg://user?id={user.id}) — `{user.score}`"
                     )
-                except Exception as e:
+                except (errors.RPCError, ValueError) as e:
                     logger.warning("获取{}的名称失败: {}", user.id, e)
                     total_lines.append(f"{idx}. `Unknown` — `{user.score}`")
 
@@ -340,7 +341,7 @@ async def settle_scores() -> None:
 
             await client.send_message(settings.telegram_chat_id, msg)
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("结算用户积分时出错: {}", e)
             await session.rollback()
             await session.close()
@@ -382,7 +383,7 @@ async def cleanup_inactive_users() -> None:
                         logger.info("用户 {} 清理成功: {}", user.id, result.message)
                     else:
                         logger.error("用户 {} 清理失败: {}", user.id, result.message)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("清理非群组成员任务出错: {}", e)
             await session.rollback()
         finally:
@@ -418,7 +419,7 @@ async def expire_pending_media_requests() -> None:
             expired_count = await service.expire_pending_requests()
             if expired_count > 0:
                 logger.info("本次自动取消超时求片数量: {}", expired_count)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("清理超时求片任务出错: {}", e)
             await session.rollback()
         finally:

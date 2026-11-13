@@ -21,6 +21,7 @@ from typing import Any
 
 from sqlalchemy import BigInteger, Integer, literal_column, select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
@@ -51,7 +52,7 @@ def mask_database_url(url: str) -> str:
     """隐藏数据库 URL 中的密码，避免日志或终端输出泄露敏感凭据"""
     try:
         return make_url(url).render_as_string(hide_password=True)
-    except Exception:
+    except (ArgumentError, ValueError):
         return url
 
 

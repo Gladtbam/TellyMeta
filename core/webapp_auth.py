@@ -6,6 +6,7 @@ from urllib.parse import parse_qsl
 
 from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from telethon import errors
 
 from core.config import get_settings
 from core.database import get_db
@@ -88,7 +89,7 @@ async def require_group_member(
     """验证当前用户属于主 Telegram 群组成员，否则拒绝成员自助操作。"""
     try:
         participant = await client.get_participant(user_id)
-    except Exception as e:
+    except (errors.RPCError, ConnectionError, TimeoutError, ValueError) as e:
         raise HTTPException(
             status_code=503, detail="验证主群成员身份失败，请稍后重试"
         ) from e

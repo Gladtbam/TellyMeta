@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import aiofiles.tempfile
+from httpx2 import HTTPError
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,7 +85,7 @@ class SubtitleService:
                     series = await client.get_series_by_tvdb(media_id)
                     if series and series.id:
                         matched_ids.append(arr_id)
-                except Exception as e:
+                except (HTTPError, ValueError) as e:
                     logger.warning("查询绑定 Sonarr 实例 {} 失败: {}", arr_id, e)
         elif media_type == "tmdb":
             for arr_id in bound_arr_ids:
@@ -95,7 +96,7 @@ class SubtitleService:
                     movie = await client.get_movie_by_tmdb(media_id)
                     if movie and movie.id:
                         matched_ids.append(arr_id)
-                except Exception as e:
+                except (HTTPError, ValueError) as e:
                     logger.warning("查询绑定 Radarr 实例 {} 失败: {}", arr_id, e)
 
         return await self._format_arr_labels(matched_ids)
@@ -180,7 +181,7 @@ class SubtitleService:
                 series = await client.get_series_by_tvdb(tvdb_id)
                 if series and series.id:
                     matches.append((arr_id, client, series))
-            except Exception as e:
+            except (HTTPError, ValueError) as e:
                 logger.warning("查询 Sonarr 实例 {} 失败: {}", arr_id, e)
                 continue
 
@@ -282,7 +283,7 @@ class SubtitleService:
                 movie = await client.get_movie_by_tmdb(tmdb_id)
                 if movie and movie.id:
                     matches.append((arr_id, client, movie))
-            except Exception as e:
+            except (HTTPError, ValueError) as e:
                 logger.warning("查询 Radarr 实例 {} 失败: {}", arr_id, e)
                 continue
 

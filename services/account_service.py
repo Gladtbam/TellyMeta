@@ -313,7 +313,7 @@ class AccountService:
                 请尽快登录并修改密码，祝您观影愉快！
             """),
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("{}: {} 注册失败: {}", username, user_id, e)
             await self.media_repo.session.rollback()
 
@@ -397,7 +397,7 @@ class AccountService:
                 media_id,
                 e.response.status_code,
             )
-        except Exception as e:
+        except (HTTPError, ValueError) as e:
             logger.error(
                 "清理外部孤儿账户失败: server_id={}, user_id={}, username={}, media_id={}, err={}",
                 server_id,
@@ -416,7 +416,7 @@ class AccountService:
                 user_id,
                 media_id,
             )
-        except Exception as ban_err:
+        except (HTTPError, ValueError) as ban_err:
             logger.critical(
                 "外部孤儿账户删除与禁用均失败，请管理员立即核对: server_id={}, user_id={}, username={}, media_id={}, err={}",
                 server_id,
@@ -594,7 +594,7 @@ class AccountService:
             else:
                 await self.code_repo.release_claim(claimed_id, claimed_used_at)
                 return Result(False, "无效的码类型，请联系管理员。")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(
                 "激活码兑换异常，释放占用: code_id={}, code={}, user_id={}, err={}",
                 claimed_id,
@@ -778,7 +778,7 @@ class AccountService:
 
         try:
             all_libs = await client.get_libraries() or []
-        except Exception as e:
+        except (HTTPError, ValueError) as e:
             pending.setdefault(server_id, set()).update(media_ids)
             logger.warning(
                 "获取服务器 {} 媒体库失败，{} 个账户的 NSFW 撤权已加入待重试队列: {}",
@@ -809,7 +809,7 @@ class AccountService:
                     e.response.status_code,
                 )
                 continue
-            except Exception as e:
+            except (HTTPError, ValueError, KeyError, TypeError) as e:
                 server_pending.add(media_id)
                 failed_count += 1
                 logger.error(
@@ -836,7 +836,7 @@ class AccountService:
                 )
                 server_pending.discard(media_id)
                 revoked_count += 1
-            except Exception as e:
+            except (HTTPError, ValueError, KeyError, TypeError) as e:
                 server_pending.add(media_id)
                 failed_count += 1
                 logger.error(

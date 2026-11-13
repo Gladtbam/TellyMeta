@@ -203,7 +203,7 @@ class SettingsServices:
             try:
                 await self._init_and_add_client(server)
                 return Result(True, f"✅ 服务器 **{server.name}** 已启用并连接。")
-            except Exception as e:
+            except (httpx2.HTTPError, ValueError, OSError) as e:
                 await self.server_repo.toggle_enabled(server_id)
                 return Result(False, f"❌ 启用失败，无法连接到服务器: {str(e)}")
         else:
@@ -427,7 +427,7 @@ class SettingsServices:
 
             status_text = "开启" if new_state_str == "true" else "关闭"
             return Result(success=True, message=f"已{status_text}该功能。")
-        except Exception as e:
+        except (SQLAlchemyError, ValueError) as e:
             return Result(success=False, message=f"设置失败: {str(e)}")
 
     async def update_llm_config(self, payload: LlmConfigUpdateDto) -> Result:
@@ -819,7 +819,7 @@ class SettingsServices:
         except SQLAlchemyError as e:
             logger.error("数据库错误 when add_server: {}", e)
             return Result(False, "系统数据库错误，请联系管理员")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             return Result(False, f"添加失败: {str(e)}")
 
         try:
@@ -849,7 +849,7 @@ class SettingsServices:
             # 初始化连接失败
             await self.server_repo.delete(instance.id)
             return Result(False, f"❌ 连接服务器失败 (已回滚): {e}")
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             # 其他初始化失败，回滚数据库
             await self.server_repo.delete(instance.id)
             return Result(False, f"❌ 客户端初始化失败 (已回滚): {str(e)}")

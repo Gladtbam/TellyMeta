@@ -6,8 +6,9 @@ from random import choice, choices, randint
 from typing import Any, Literal
 
 from fastapi import FastAPI
-from httpx2 import HTTPStatusError
+from httpx2 import HTTPError, HTTPStatusError
 from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
@@ -165,7 +166,7 @@ class UserService:
                     if client and (mu.is_banned or mu.delete_at is not None):
                         try:
                             await client.ban_or_unban(mu.media_id, is_ban=False)
-                        except Exception as e:
+                        except (HTTPError, ValueError) as e:
                             logger.error(
                                 "签到续期恢复媒体账户失败: user_id={}, server_id={}, err={}",
                                 user.id,
@@ -405,7 +406,7 @@ class UserService:
                                 f"删除 {server_name} 账户失败 (API错误)，保留本地记录以便重试。"
                             )
                             continue
-                    except Exception as e:
+                    except (HTTPError, ValueError) as e:
                         has_media_failure = True
                         logger.error(f"Failed to delete user on {server_name}: {e}")
                         logs.append(
@@ -427,6 +428,6 @@ class UserService:
             msg = "\n".join(logs) if logs else "无关联账户需要删除。"
             return Result(not has_media_failure, msg)
 
-        except Exception as e:
+        except (SQLAlchemyError, HTTPError, ValueError) as e:
             logger.exception(f"Delete account error for {user_id}: {e}")
             return Result(False, f"删除过程中发生错误: {str(e)}")

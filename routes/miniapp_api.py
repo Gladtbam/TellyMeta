@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from telethon import errors
 
 from bot.media import run_subtitle_upload_flow
 from clients.radarr_client import RadarrClient
@@ -86,7 +87,7 @@ async def _deliver_sensitive_result(
     dm_delivered = True
     try:
         await client.send_message(user_id, raw_message, parse_mode="markdown")
-    except Exception as e:
+    except (errors.RPCError, ValueError) as e:
         dm_delivered = False
         logger.warning(
             "Telegram 私聊交付敏感结果失败，降级为前端一次性展示: user_id={}, action={}, err={}",
@@ -224,7 +225,7 @@ async def get_my_info(
             ],
         )
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -303,7 +304,7 @@ async def get_target_user_info_for_admin(
                 AvailableServerDto(**item) for item in available_servers_data
             ],
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("获取目标用户信息失败: {}", e)
         raise HTTPException(status_code=500, detail="获取目标用户信息失败") from e
 
@@ -328,7 +329,7 @@ async def admin_warn_user(
             success=True,
             message=f"已警告用户，当前警告次数: {user.warning_count} 次",
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("警告用户失败: {}", e)
         raise HTTPException(status_code=500, detail="警告用户操作失败") from e
 
@@ -355,7 +356,7 @@ async def admin_change_user_score(
             success=True,
             message=f"已修改积分 ({prefix}{body.score_change})，当前积分: {user.score}",
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("修改积分失败: {}", e)
         raise HTTPException(status_code=500, detail="修改用户积分失败") from e
 
@@ -378,7 +379,7 @@ async def admin_delete_user_account(
             success=result.success,
             message=result.message or "媒体账户已成功删除",
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("删除媒体账户失败: {}", e)
         raise HTTPException(status_code=500, detail="删除用户媒体账户失败") from e
 
@@ -405,7 +406,7 @@ async def admin_kick_user(
             success=True,
             message=f"已踢出群组并清理媒体账户。{result.message}",
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("踢出用户失败: {}", e)
         raise HTTPException(status_code=500, detail="踢出用户操作失败") from e
 
@@ -427,7 +428,7 @@ async def admin_ban_user(
             success=True,
             message=f"已成功封禁该用户（ID: {target_user_id}）",
         )
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("封禁用户失败: {}", e)
         raise HTTPException(status_code=500, detail="封禁用户操作失败") from e
 

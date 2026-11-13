@@ -1,7 +1,12 @@
 from pathlib import Path
 
-from jinja2 import (Environment, FileSystemLoader, TemplateNotFound,
-                    select_autoescape)
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    TemplateError,
+    TemplateNotFound,
+    select_autoescape,
+)
 from loguru import logger
 
 
@@ -26,7 +31,7 @@ class TemplateManager:
 
         self._env = Environment(
             loader=FileSystemLoader(template_dir),
-            autoescape=select_autoescape(['html', 'xml']),
+            autoescape=select_autoescape(["html", "xml"]),
             enable_async=True,
             trim_blocks=True,
             lstrip_blocks=True,
@@ -51,8 +56,9 @@ class TemplateManager:
         except TemplateNotFound:
             logger.info("缺少通知模板文件：{}", template_name)
             return None
-        except Exception as e:
+        except TemplateError as e:
             logger.error("渲染模板 {} 失败: {}", template_name, e)
             return None
+
 
 template_manager = TemplateManager()

@@ -42,7 +42,7 @@ def run_db_migrations():
 
         logger.info("数据库迁移检查完成。")
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("数据库自动迁移失败: {}", e)
         sys.exit(1)
 
@@ -132,7 +132,7 @@ def check_mkvtoolnix() -> bool:
             "mkvtoolnix 检查失败：没有执行 mkvmerge 的权限 (Permission denied)。"
         )
         return False
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         logger.error(f"mkvtoolnix 检查时发生未知异常：{e}")
         return False
 

@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
                 if server.path_mappings:
                     try:
                         mappings = json.loads(server.path_mappings)
-                    except Exception as e:
+                    except (json.JSONDecodeError, TypeError, ValueError) as e:
                         logger.error("解析服务器 {} 的路径映射失败: {}", server.name, e)
                 match server.server_type:
                     case ServerType.SONARR:

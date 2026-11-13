@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button, events
+from telethon import Button, errors, events
 from telethon.tl.types import InlineButtonTypeWebView, KeyboardInlineButton
 
 from bot.decorators import provide_db_session, require_admin, require_real_reply
@@ -94,7 +94,7 @@ async def info_handler(
                 delete_after=30,
             )
 
-        except Exception as e:
+        except (errors.RPCError, ValueError) as e:
             logger.warning("未能向管理员发送私聊消息（可能未私聊启动过机器人）: {}", e)
             user_service = UserService(app, session)
             result = await user_service.get_user_info(target_user_id)

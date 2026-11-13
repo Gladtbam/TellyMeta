@@ -109,7 +109,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except HTTPException:
             await session.rollback()
             raise
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             await session.rollback()
             logger.exception("数据库会话错误：{}", e)
             raise

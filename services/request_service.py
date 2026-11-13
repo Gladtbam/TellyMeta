@@ -6,7 +6,7 @@ from httpx2 import HTTPError
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button
+from telethon import Button, errors
 
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
@@ -76,7 +76,7 @@ class RequestService:
                 title, overview = await self._fetch_movie_metadata(
                     item, title, overview
                 )
-        except Exception as e:
+        except (HTTPError, ValueError, KeyError, TypeError) as e:
             logger.debug(f"元数据增强失败，降级使用原始数据: {e}")
 
         return title, overview, poster_url
@@ -349,7 +349,7 @@ class RequestService:
             if result:
                 return True, getattr(result, "title", str(media_id)), ""
             return False, "添加失败，接口未返回确认数据。", ""
-        except Exception as e:
+        except (HTTPError, ValueError, KeyError, TypeError) as e:
             return False, f"添加失败: {e}", str(e)
 
     async def handle_approval(
@@ -404,7 +404,7 @@ class RequestService:
                     stage,
                 )
             return ok
-        except Exception as e:
+        except (errors.RPCError, ValueError, OSError) as e:
             logger.warning(
                 "求片结果私聊通知异常（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}, err={}",
                 request_id,
@@ -728,7 +728,7 @@ class RequestService:
                 results.append(item)
                 if len(results) >= 20:  # Limit for API
                     break
-        except Exception as e:
+        except (HTTPError, ValueError, KeyError, TypeError) as e:
             logger.error("API Search failed: {}", e)
             return []
 

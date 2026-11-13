@@ -56,7 +56,7 @@ class TelethonClientWarper:
                     "password": password,
                     "rdns": True,
                 }
-            except Exception as e:
+            except (ValueError, KeyError, TypeError) as e:
                 logger.error("无法解析代理URL {}: {}", settings.proxy, e)
 
         kwargs = {}
@@ -126,7 +126,7 @@ class TelethonClientWarper:
             await self.connect()
         try:
             await self.client.run_until_disconnected()  # type: ignore
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("运行 Telethon 客户端时出错：{}", e)
             raise
 

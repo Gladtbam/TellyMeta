@@ -79,7 +79,7 @@ class EmbyClient(
             logger.info("创建用户 {} 成功", name)
             try:
                 pw = await self.post_password(response.Id)
-            except Exception:
+            except (httpx2.HTTPError, ValueError):
                 logger.error(
                     "用户 {} 密码设置异常，尝试清理已创建的 Emby 账户 {}",
                     name,
@@ -87,7 +87,7 @@ class EmbyClient(
                 )
                 try:
                     await self.delete_user(response.Id)
-                except Exception as cleanup_err:
+                except (httpx2.HTTPError, ValueError) as cleanup_err:
                     logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
                 raise
             if not pw:
@@ -98,7 +98,7 @@ class EmbyClient(
                 )
                 try:
                     await self.delete_user(response.Id)
-                except Exception as cleanup_err:
+                except (httpx2.HTTPError, ValueError) as cleanup_err:
                     logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
                 return None, None
             return response, pw

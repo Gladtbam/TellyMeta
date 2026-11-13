@@ -82,7 +82,7 @@ class NotificationService:
         except RPCError as e:
             logger.error("Telegram API 错误: {}", e)
             return None
-        except Exception as e:
+        except (ValueError, TypeError, OSError) as e:
             logger.error("无法发送通知 ({})：{}", event_type.value, e)
             return None
 
@@ -105,7 +105,7 @@ class NotificationService:
             )
             logger.debug("发送的用户通知：{} -> 用户 {}", event_type.value, user_id)
             return True
-        except Exception as e:
+        except (RPCError, ValueError, TypeError, OSError) as e:
             logger.error(
                 "无法向 {} 发送用户通知 ({})：{}", user_id, event_type.value, e
             )
@@ -124,6 +124,6 @@ class NotificationService:
             )
             logger.debug("发送的用户文本通知 -> 用户 {}", user_id)
             return True
-        except Exception as e:
+        except (RPCError, ValueError, TypeError, OSError) as e:
             logger.error("无法向 {} 发送用户文本通知：{}", user_id, e)
             return False

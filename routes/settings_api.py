@@ -569,7 +569,7 @@ async def get_nsfw_libs(
     service = SettingsServices(request.app, session)
     try:
         return await service.get_nsfw_libraries_data(server_id)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -589,7 +589,7 @@ async def toggle_nsfw_lib(
     try:
         result = await service.toggle_nsfw_library(server_id, lib_id)
         return {"success": True, "message": result.message}
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -608,7 +608,7 @@ async def get_libraries(
     service = SettingsServices(request.app, session)
     try:
         return await service.get_libraries_data(server_id)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -634,7 +634,7 @@ async def get_arr_resources(
     try:
         profiles, folders = await service.get_arr_resources(server_id)
         return {"profiles": profiles, "folders": folders}
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -661,7 +661,7 @@ async def save_binding(
             data.root_folder,
         )
         return {"success": True, "message": "绑定已保存"}
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
@@ -681,7 +681,7 @@ async def delete_binding(
     try:
         await service.unbind_library(server_id, library_name)
         return {"success": True, "message": "已解除绑定"}
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
