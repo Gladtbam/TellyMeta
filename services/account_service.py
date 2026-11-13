@@ -568,23 +568,54 @@ class AccountService:
             user_id (int): 用户的 Telegram ID
             code_str (str): 注册码或续期码
         """
-        code = await self.code_repo.get_by_code(code_str)
-        if not code or code.used_at or code.expires_at < datetime.now():
+        claimed = await self.code_repo.try_claim(code_str)
+        if not claimed or claimed.used_at is None:
             return Result(False, "无效的注册码或续期码，请检查后重试。")
 
-        server = await self.server_repo.get_by_id(code.server_id)
-        if not server:
-            return Result(False, "该激活码对应的服务器已失效或被删除，无法使用。")
+        # 提取纯值，避免后续 session.commit()/rollback() 导致 ORM 对象过期
+        claimed_id = claimed.id
+        claimed_used_at = claimed.used_at
+        code_type = claimed.type
+        code_server_id = claimed.server_id
 
-        if code.type == "signup":
-            result = await self.register(user_id, username, code.server_id, True)
-        elif code.type == "renew":
-            result = await self.renew(user_id, code.server_id, False)
-        else:
-            return Result(False, "无效的码类型，请联系管理员。")
+        try:
+            server = await self.server_repo.get_by_id(code_server_id)
+            if not server:
+                await self.code_repo.release_claim(claimed_id, claimed_used_at)
+                return Result(False, "该激活码对应的服务器已失效或被删除，无法使用。")
 
-        if result.success:
-            await self.code_repo.mark_used(code)
+            if code_type == "signup":
+                result = await self.register(user_id, username, code_server_id, True)
+            elif code_type == "renew":
+                result = await self.renew(user_id, code_server_id, False)
+            else:
+                await self.code_repo.release_claim(claimed_id, claimed_used_at)
+                return Result(False, "无效的码类型，请联系管理员。")
+        except Exception as e:
+            logger.error(
+                "激活码兑换异常，释放占用: code_id={}, code={}, user_id={}, err={}",
+                claimed_id,
+                code_str,
+                user_id,
+                e,
+            )
+            await self.code_repo.session.rollback()
+            await self.code_repo.release_claim(claimed_id, claimed_used_at)
+            return Result(False, "兑换过程中发生错误，请稍后重试。")
+
+        if not result.success:
+            await self.code_repo.release_claim(claimed_id, claimed_used_at)
+            return result
+
+        logger.info(
+            "激活码兑换成功: code_id={}, code={}, type={}, server_id={}, user_id={}, used_at={}",
+            claimed_id,
+            code_str,
+            code_type,
+            code_server_id,
+            user_id,
+            claimed_used_at.isoformat(),
+        )
         return result
 
     async def generate_code(
