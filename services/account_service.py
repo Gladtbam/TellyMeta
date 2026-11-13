@@ -9,7 +9,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
-from httpx2 import AsyncClient, HTTPError, RequestError
+from httpx2 import AsyncClient, HTTPError, HTTPStatusError, RequestError
 from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -395,7 +395,10 @@ class AccountService:
         if not client:
             return Result(False, f"客户端未运行: {server.name}")
 
-        media_info = await client.get_user_info(media_user.media_id)
+        try:
+            media_info = await client.get_user_info(media_user.media_id)
+        except HTTPError:
+            return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
         if not isinstance(media_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
@@ -405,6 +408,7 @@ class AccountService:
                 f"续期失败，您的账户有效期还有 {(media_user.expires_at - datetime.now()).days} 天，无需续期。",
             )
 
+        renew_score = 0
         if use_score:
             user = await self.telegram_repo.get_or_create(user_id)
             renew_score = int(await self.telegram_repo.get_renew_score())
@@ -412,13 +416,26 @@ class AccountService:
                 return Result(
                     False, f"续期失败，您的积分不足，续期需要 {renew_score} 积分。"
                 )
+
+        # 宽限期内续期时，先在媒体服务器上恢复账户，再清除待删除状态与扣减积分
+        if media_info.Policy.IsDisabled or media_user.is_banned:
+            try:
+                await client.ban_or_unban(media_user.media_id, is_ban=False)
+            except (HTTPError, ValueError) as e:
+                logger.error(
+                    "续期恢复媒体账户失败: user_id={}, server_id={}, err={}",
+                    user_id,
+                    server_id,
+                    e,
+                )
+                return Result(False, "续期失败，恢复媒体账户状态时出错，请联系管理员。")
+
+        if use_score:
             await self.telegram_repo.update_score(user_id, -renew_score)
 
         media_user = await self.media_repo.extend_expiry(
             media_user, server.registration_expiry_days
         )
-        if media_info.Policy.IsDisabled:
-            await client.ban_or_unban(media_user.media_id, is_ban=False)
 
         return Result(
             True,
@@ -589,6 +606,20 @@ class AccountService:
 
         try:
             await client.delete_user(media_user.media_id)
+        except HTTPStatusError as e:
+            if e.response.status_code != 404:
+                logger.error(
+                    "删除账户失败: user_id={}, server_id={}, status={}",
+                    user_id,
+                    server_id,
+                    e.response.status_code,
+                )
+                return Result(False, "账户删除失败，请联系管理员。")
+            logger.info(
+                "媒体服务器账户已不存在(404)，清理本地记录: user_id={}, server_id={}",
+                user_id,
+                server_id,
+            )
         except HTTPError:
             logger.error("删除账户失败: user_id={}, server_id={}", user_id, server_id)
             return Result(False, "账户删除失败，请联系管理员。")

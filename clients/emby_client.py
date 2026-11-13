@@ -220,7 +220,9 @@ class EmbyClient(
         if user is not None:
             policy = user.Policy.model_copy(update={"IsDisabled": is_ban}).model_dump()
             await self.update_policy(user_id, policy)
-        logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
+        else:
+            logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
+            raise ValueError(f"未找到用户 {user_id}，无法进行封禁或解封操作")
 
     async def get_session_list(self) -> int:
         """获取用户在线数量"""

@@ -1,9 +1,9 @@
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass
-import textwrap
 from typing import Any
 
-from httpx2 import HTTPError
+from httpx2 import HTTPError, HTTPStatusError
 from loguru import logger
 
 from core.config import get_settings
@@ -48,7 +48,7 @@ def scheduled_job(trigger: str, **kwargs):
 @scheduled_job("cron", hour=0, minute=15, id="ban_expired_users", replace_existing=True)
 async def ban_expired_users() -> None:
     """封禁过期用户
-    检查所有用户的订阅状态，封禁那些订阅已过期的用户。
+    检查所有用户的订阅状态，先在媒体服务器上禁用已过期账户，再标记本地封禁状态并设置7天宽限期后的删除时间。
     """
     from main import app  # 避免循环导入
 
@@ -56,6 +56,9 @@ async def ban_expired_users() -> None:
         try:
             media_repo = MediaRepository(session)
             media_clients: dict[int, MediaService] = app.state.media_clients
+
+            # 兼容历史数据：为已封禁但未设置删除时间的过期账户补全删除时间
+            await media_repo.backfill_missing_delete_at()
 
             users = await media_repo.find_expired_for_ban()
             if not users:
@@ -72,13 +75,41 @@ async def ban_expired_users() -> None:
                         user.media_id,
                     )
                     continue
-                logger.info(
-                    "封禁用户: {} (ID: {}) Server: {}",
-                    user.id,
-                    user.media_id,
-                    user.server_id,
-                )
-                await client.ban_or_unban(user_id=user.media_id, is_ban=True)
+                try:
+                    logger.info(
+                        "封禁用户: {} (ID: {}) Server: {}",
+                        user.id,
+                        user.media_id,
+                        user.server_id,
+                    )
+                    await client.ban_or_unban(user_id=user.media_id, is_ban=True)
+                except HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        # 媒体服务器账户已不存在时，仍标记封禁并按到期时间+7天进入待删除队列
+                        logger.warning(
+                            "封禁用户时媒体服务器账户不存在(404)，标记待删除: {} (ID: {})",
+                            user.id,
+                            user.media_id,
+                        )
+                        await media_repo.mark_banned(user)
+                    else:
+                        logger.error(
+                            "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，状态码: {}",
+                            user.id,
+                            user.media_id,
+                            e.response.status_code,
+                        )
+                    continue
+                except Exception as e:
+                    logger.error(
+                        "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，错误: {}",
+                        user.id,
+                        user.media_id,
+                        e,
+                    )
+                    continue
+
+                await media_repo.mark_banned(user)
         except Exception as e:
             logger.exception("封禁过期用户时出错: {}", e)
             await session.rollback()
@@ -91,7 +122,7 @@ async def ban_expired_users() -> None:
 )
 async def delete_expired_banned_users() -> None:
     """删除已封禁且过期的用户
-    删除那些已经被封禁且订阅过期的用户，以释放系统资源。
+    对到期满七天仍未续期的账户，先删除媒体服务器账户，确认已删除或已不存在后再移除本地记录。
     """
     from main import app  # 避免循环导入
 
@@ -109,7 +140,7 @@ async def delete_expired_banned_users() -> None:
                 client = media_clients.get(user.server_id)
                 if not client:
                     logger.warning(
-                        "未找到服务器实例(ID: {})，仅清理数据库记录: {} (ID: {})",
+                        "未找到服务器实例(ID: {})，保留本地记录以便重试: {} (ID: {})",
                         user.server_id,
                         user.id,
                         user.media_id,
@@ -117,10 +148,31 @@ async def delete_expired_banned_users() -> None:
                     continue
                 try:
                     await client.delete_user(user.media_id)
-                except HTTPError:
+                except HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        logger.info(
+                            "媒体服务器账户已不存在(404)，清理本地记录: {} (ID: {})",
+                            user.id,
+                            user.media_id,
+                        )
+                    else:
+                        logger.error(
+                            "删除封禁用户失败，保留本地记录以便重试: {} (ID: {})，状态码: {}",
+                            user.id,
+                            user.media_id,
+                            e.response.status_code,
+                        )
+                        continue
+                except (HTTPError, Exception) as e:
                     logger.error(
-                        "删除封禁用户失败: {} (ID: {})", user.id, user.media_id
+                        "删除封禁用户失败，保留本地记录以便重试: {} (ID: {})，错误: {}",
+                        user.id,
+                        user.media_id,
+                        e,
                     )
+                    continue
+
+                await media_repo.delete(user)
         except Exception as e:
             logger.exception("删除封禁用户时出错: {}", e)
             await session.rollback()

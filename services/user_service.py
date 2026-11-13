@@ -6,6 +6,7 @@ from random import choice, choices, randint
 from typing import Any, Literal
 
 from fastapi import FastAPI
+from httpx2 import HTTPStatusError
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,11 +150,19 @@ class UserService:
             if user.media_users:
                 extended_servers = []
                 for mu in user.media_users:
-                    await self.media_repo.extend_expiry(mu, days)
-
                     client = self.media_clients.get(mu.server_id)
-                    if client:
-                        await client.ban_or_unban(mu.media_id, is_ban=False)
+                    if client and (mu.is_banned or mu.delete_at is not None):
+                        try:
+                            await client.ban_or_unban(mu.media_id, is_ban=False)
+                        except Exception as e:
+                            logger.error(
+                                "签到续期恢复媒体账户失败: user_id={}, server_id={}, err={}",
+                                user.id,
+                                mu.server_id,
+                                e,
+                            )
+
+                    await self.media_repo.extend_expiry(mu, days)
 
                     server = await self.server_repo.get_by_id(mu.server_id)
                     extended_servers.append(
@@ -354,9 +363,10 @@ class UserService:
             return Result(True, "未找到该 Telegram 账户，无需删除。")
 
         logs = []
+        has_media_failure = False
         try:
             if account_type in ["media", "both"] and user.media_users:
-                for mu in user.media_users:
+                for mu in list(user.media_users):
                     client = self.media_clients.get(mu.server_id)
                     server_name = f"Server {mu.server_id}"
 
@@ -364,24 +374,47 @@ class UserService:
                     if server:
                         server_name = server.name
 
-                    if client:
-                        try:
-                            await client.delete_user(mu.media_id)
-                            logs.append(f"已删除 {server_name} 上的账户。")
-                        except Exception as e:
+                    if not client:
+                        has_media_failure = True
+                        logs.append(f"{server_name} 实例未连接，保留本地记录以便重试。")
+                        continue
+
+                    try:
+                        await client.delete_user(mu.media_id)
+                        logs.append(f"已删除 {server_name} 上的账户。")
+                    except HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            logs.append(
+                                f"{server_name} 上的账户已不存在，已清理本地记录。"
+                            )
+                        else:
+                            has_media_failure = True
                             logger.error(f"Failed to delete user on {server_name}: {e}")
-                            logs.append(f"删除 {server_name} 账户失败 (API错误)。")
-                    else:
-                        logs.append(f"{server_name} 实例未连接，仅删除数据库记录。")
+                            logs.append(
+                                f"删除 {server_name} 账户失败 (API错误)，保留本地记录以便重试。"
+                            )
+                            continue
+                    except Exception as e:
+                        has_media_failure = True
+                        logger.error(f"Failed to delete user on {server_name}: {e}")
+                        logs.append(
+                            f"删除 {server_name} 账户失败 (API错误)，保留本地记录以便重试。"
+                        )
+                        continue
 
                     await self.media_repo.delete(mu)
 
             if account_type in ["tg", "both"]:
-                await self.telegram_repo.delete_by_id(user_id)
-                logs.append("Telegram 绑定记录已清除。")
+                if has_media_failure:
+                    logs.append(
+                        "存在未删除的媒体账户记录，已保留 Telegram 绑定记录以便重试。"
+                    )
+                else:
+                    await self.telegram_repo.delete_by_id(user_id)
+                    logs.append("Telegram 绑定记录已清除。")
 
             msg = "\n".join(logs) if logs else "无关联账户需要删除。"
-            return Result(True, msg)
+            return Result(not has_media_failure, msg)
 
         except Exception as e:
             logger.exception(f"Delete account error for {user_id}: {e}")
