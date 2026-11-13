@@ -426,7 +426,14 @@
                     headers: { 'X-Telegram-Init-Data': tg.initData }
                 });
 
-                if (!res.ok) throw new Error("加载媒体库失败");
+                if (!res.ok) {
+                    let errMsg = "加载媒体库失败";
+                    try {
+                        const err = await res.json();
+                        errMsg = err.message || err.detail || errMsg;
+                    } catch (_) {}
+                    throw new Error(errMsg);
+                }
                 libraries = await res.json();
                 renderLibraries();
             } catch (e) {
@@ -497,7 +504,14 @@
                 const res = await fetch(url, {
                     headers: { 'X-Telegram-Init-Data': tg.initData }
                 });
-                if (!res.ok) throw new Error("搜索失败");
+                if (!res.ok) {
+                    let errMsg = "搜索失败";
+                    try {
+                        const err = await res.json();
+                        errMsg = err.message || err.detail || errMsg;
+                    } catch (_) {}
+                    throw new Error(errMsg);
+                }
                 const data = await res.json();
                 renderSearchResults(data);
             } catch (e) {

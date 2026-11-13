@@ -18,6 +18,7 @@ from core.dependencies import (
     get_sonarr_clients,
     get_telethon_client,
 )
+from core.errors import ApiError
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import (
     get_current_user_id,
@@ -656,6 +657,17 @@ async def trigger_upload_subtitle(
 # --- Request API (求片) ---
 
 
+async def _require_requestable_server(session: AsyncSession, server_id: int):
+    """校验目标服务器存在且已开启求片功能，否则抛出统一 HTTP 业务异常。"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
+    if not server:
+        raise ApiError(404, "SERVER_NOT_FOUND", "服务器不存在")
+    if not server.allow_request:
+        raise ApiError(403, "REQUEST_DISABLED", "该服务器未开启求片功能")
+    return server
+
+
 @router.get(
     "/tools/{server_id}/request/libraries", response_model=list[RequestLibraryDto]
 )
@@ -666,13 +678,7 @@ async def get_request_libraries(
     session: AsyncSession = Depends(get_db),
 ):
     """获取可求片的媒体库列表"""
-    server_repo = ServerRepository(session)
-    server = await server_repo.get_by_id(server_id)
-    if not server:
-        return {"success": False, "message": "服务器不存在"}
-
-    if not server.allow_request:
-        return {"success": False, "message": "该服务器未开启求片功能"}
+    await _require_requestable_server(session, server_id)
 
     service = RequestService(request.app, session)
     return await service.get_requestable_libraries(server_id)
@@ -688,13 +694,7 @@ async def search_media(
     session: AsyncSession = Depends(get_db),
 ):
     """搜索媒体"""
-    server_repo = ServerRepository(session)
-    server = await server_repo.get_by_id(server_id)
-    if not server:
-        return {"success": False, "message": "服务器不存在"}
-
-    if not server.allow_request:
-        return {"success": False, "message": "该服务器未开启求片功能"}
+    await _require_requestable_server(session, server_id)
 
     service = RequestService(request.app, session)
     return await service.search_media_items(server_id, library, query)
@@ -709,20 +709,14 @@ async def submit_request(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """提交求片请求"""
-    server_repo = ServerRepository(session)
-    server = await server_repo.get_by_id(server_id)
-    if not server:
-        return {"success": False, "message": "服务器不存在"}
-
-    if not server.allow_request:
-        return {"success": False, "message": "该服务器未开启求片功能"}
+    await _require_requestable_server(session, server_id)
 
     service = RequestService(request.app, session)
     result = await service.submit_request_api(
         user_id, server_id, payload.library_name, payload.media_id
     )
     if not result.success:
-        return {"success": False, "message": result.message}
+        raise ApiError(400, "REQUEST_SUBMIT_FAILED", result.message)
     return {"success": True, "message": result.message}
 
 
@@ -748,4 +742,6 @@ async def cancel_my_request(
     """申请人撤销待审核求片并释放全部预留积分"""
     service = RequestService(request.app, session)
     result = await service.cancel_request(request_id, user_id)
-    return {"success": result.success, "message": result.message}
+    if not result.success:
+        raise ApiError(400, "REQUEST_CANCEL_FAILED", result.message)
+    return {"success": True, "message": result.message}
