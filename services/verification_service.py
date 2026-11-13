@@ -22,6 +22,7 @@ from services.user_service import Result, UserService
 settings = get_settings()
 KICK_TASK_SEMAPHORE = asyncio.Semaphore(3)  # 限制同时踢人任务的数量
 
+
 class VerificationService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
         self.client: TelethonClientWarper = app.state.telethon_client
@@ -46,31 +47,25 @@ class VerificationService:
         keyboard = [
             [Button.url("➡️ 前往验证", url)],
             [
-                Button.inline("⛔ 踢出", f"kick_{user_id}".encode('utf-8')),
-                Button.inline("🚫 封禁", f"ban_{user_id}".encode('utf-8'))
-            ]
+                Button.inline("⛔ 踢出", f"kick_{user_id}".encode("utf-8")),
+                Button.inline("🚫 封禁", f"ban_{user_id}".encode("utf-8")),
+            ],
         ]
 
         kick_time = datetime.now() + timedelta(minutes=5)
         job = self.scheduler.add_job(
             kick_unverified_user,
-            'date',
+            "date",
             run_date=kick_time,
             args=[user_id],
             id=f"kick_{user_id}",
-            replace_existing=True
+            replace_existing=True,
         )
 
-        await self.verification_repo.create(
-            user_id=user_id,
-            job_id=job.id
-        )
+        await self.verification_repo.create(user_id=user_id, job_id=job.id)
 
         await self.client.ban_user(user_id, None)  # 先禁言，防止其在验证前发送消息
-        return Result(
-            success=True,
-            message=welcome_message,
-            keyboard=keyboard)
+        return Result(success=True, message=welcome_message, keyboard=keyboard)
 
     async def create_get_challenge_details(self, user_id: int):
         """生成验证码并返回图片和选项按钮"""
@@ -90,18 +85,26 @@ class VerificationService:
 
         shuffled_options = sample(list(options), len(options))
 
-        buttons = [Button.inline(str(opt), b"verify_" + str(opt).encode()) for opt in shuffled_options]
-        keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        buttons = [
+            Button.inline(str(opt), b"verify_" + str(opt).encode())
+            for opt in shuffled_options
+        ]
+        keyboard = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
         return image_data, keyboard
 
     async def process_verifocation_attempt(self, user_id: int, answer: str) -> Result:
         """处理用户的验证码答案"""
         challenge = await self.verification_repo.get(user_id)
         if not challenge:
-            return Result(success=False, message="未找到您的验证记录，可能已过期。请重新加入群组以获取新的验证机会。")
+            return Result(
+                success=False,
+                message="未找到您的验证记录，可能已过期。请重新加入群组以获取新的验证机会。",
+            )
 
         if challenge.captcha_answer != answer:
-            await kick_unverified_user( user_id)
+            with contextlib.suppress(JobLookupError):
+                self.scheduler.remove_job(challenge.scheduler_job_id)
+            await kick_unverified_user(user_id)
             return Result(success=False, message="验证码错误，请重新加入群组重试。")
 
         # 删除定时任务
@@ -112,23 +115,30 @@ class VerificationService:
         await self.verification_repo.delete(user_id)
         await self.client.unban_user(user_id)  # 解除用户禁言
 
-        return Result(success=True, message="验证成功！您现在可以在群组中发言了。", private_message=challenge.message_id) # type: ignore
+        return Result(success=True, message="验证成功！您现在可以在群组中发言了。", private_message=challenge.message_id)  # type: ignore
 
     async def reject_verification(self, user_id: int, is_ban: bool = False) -> Result:
         """拒绝用户的验证请求并将其移出群组"""
         user_name = await self.client.get_user_name(user_id)
         challenge = await self.verification_repo.get(user_id)
         if not challenge:
-            return Result(success=False, message=f"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。")
+            return Result(
+                success=False,
+                message=f"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。",
+            )
         await kick_unverified_user(user_id, is_ban=is_ban)
         with contextlib.suppress(JobLookupError):
             self.scheduler.remove_job(challenge.scheduler_job_id)
 
-        return Result(success=True, message=f"[{user_name}](tg://user?id={user_id})已被移出群组。")
+        return Result(
+            success=True, message=f"[{user_name}](tg://user?id={user_id})已被移出群组。"
+        )
+
 
 async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
     """将未通过验证的用户移出群组"""
     from main import app
+
     session_factory: async_sessionmaker[AsyncSession] = async_session
     client: TelethonClientWarper = app.state.telethon_client
 
@@ -146,7 +156,7 @@ async def kick_unverified_user(user_id: int, is_ban: bool = False) -> None:
                 user_service = UserService(app, session)
                 verification_repo = VerificationRepository(session)
 
-                await user_service.delete_account(user_id, 'tg')
+                await user_service.delete_account(user_id, "both")
                 logger.info("用户 {} 未通过验证，已被移出群组。", user_id)
 
                 await verification_repo.delete(user_id)

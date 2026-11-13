@@ -97,67 +97,88 @@ async def chat_id_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
         await safe_reply(event, f"当前群组ID: `{event.chat_id}`")
 
 
+async def _get_bot_self_id(tg_client: TelethonClientWarper) -> int | None:
+    """获取并缓存 Bot 自身的 Telegram 用户 ID，避免每次入/退群重复发起 RPC。"""
+    cached = getattr(tg_client, "_cached_me_id", None)
+    if cached is not None:
+        return cached
+    me = await tg_client.client.get_me()
+    me_id = getattr(me, "id", None)
+    if me_id is not None:
+        setattr(tg_client, "_cached_me_id", me_id)
+    return me_id
+
+
+def _extract_action_user_ids(event: events.ChatAction.Event) -> list[int]:
+    """从群成员变动事件中提取去重后的目标用户 ID 列表（兼容批量拉人）。"""
+    users = getattr(event, "users", None) or []
+    ids: list[int] = []
+    for u in users:
+        uid = getattr(u, "id", None)
+        if isinstance(uid, int) and uid not in ids:
+            ids.append(uid)
+    if not ids and isinstance(event.user_id, int):
+        ids.append(event.user_id)
+    return ids
+
+
 @TelethonClientWarper.handler(events.ChatAction(chats=settings.telegram_chat_id))
 @provide_db_session
 async def user_join_handler(
     app: FastAPI, event: events.ChatAction.Event, session: AsyncSession
 ) -> None:
-    """群组成员变动处理器
-    处理新成员加入群组的事件
-    """
-    user_id: Any = event.user_id
-    if not user_id:
-        return
-    if (
-        user_id == (await app.state.telethon_client.client.get_me()).id
-        or user_id in app.state.admin_ids
-        or user_id is None
-    ):
+    """群组成员变动处理器：处理新成员入群验证与成员退群/被踢清理。"""
+    target_ids = _extract_action_user_ids(event)
+    if not target_ids:
         return
 
-    if (
+    me_id = await _get_bot_self_id(app.state.telethon_client)
+    admin_ids = app.state.admin_ids
+    effective_ids = [uid for uid in target_ids if uid != me_id and uid not in admin_ids]
+    if not effective_ids:
+        return
+
+    verification_enabled = (
         ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_VERIFICATION, "true")
-        != "true"
-    ):
-        return
+        == "true"
+    )
 
-    if event.user_joined or event.user_added:
-        if (
-            event.user_added
-            and event.added_by
-            and event.added_by.id in app.state.admin_ids
-        ):
+    if (event.user_joined or event.user_added) and verification_enabled:
+        added_by_id = getattr(getattr(event, "added_by", None), "id", None)
+        if event.user_added and added_by_id in admin_ids:
             logger.info(
-                "用户 {} 由管理员 {} 邀请，已跳过验证流程。", user_id, event.added_by.id
+                "用户 {} 由管理员 {} 邀请，已跳过验证流程。", effective_ids, added_by_id
             )
             return
-        logger.info("用户 {} 加入", user_id)
+
         verification_service = VerificationService(app, session)
-        result = await verification_service.start_verification(user_id)
-
-        if not result.success:
-            return
-
-        message = await safe_respond_keyboard(
-            event, result.message, result.keyboard, 300
-        )
-        if message and message.id:
-            await verification_service.verification_repo.update_message_id(
-                user_id, message.id
+        for user_id in effective_ids:
+            logger.info("用户 {} 加入", user_id)
+            result = await verification_service.start_verification(user_id)
+            if not result.success:
+                continue
+            message = await safe_respond_keyboard(
+                event, result.message, result.keyboard, 300
             )
+            if message and message.id:
+                await verification_service.verification_repo.update_message_id(
+                    user_id, message.id
+                )
 
     if event.user_left or event.user_kicked:
-        logger.info("用户 {} 离开", user_id)
-
         verification_service = VerificationService(app, session)
-        challenge = await verification_service.verification_repo.get(user_id)
-        if challenge:
-            with contextlib.suppress(JobLookupError):
-                verification_service.scheduler.remove_job(challenge.scheduler_job_id)
-            await verification_service.verification_repo.delete(user_id)
-
         user_service = UserService(app, session)
-        await user_service.delete_account(user_id, "both")
+        for user_id in effective_ids:
+            logger.info("用户 {} 离开", user_id)
+            challenge = await verification_service.verification_repo.get(user_id)
+            if challenge:
+                with contextlib.suppress(JobLookupError):
+                    verification_service.scheduler.remove_job(
+                        challenge.scheduler_job_id
+                    )
+                await verification_service.verification_repo.delete(user_id)
+
+            await user_service.delete_account(user_id, "both")
 
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b"verify_(\\d+)"))
@@ -181,11 +202,18 @@ async def verify_handler(
         and result.private_message
         and isinstance(result.private_message, int)
     ):
-        await client.edit_message(
-            settings.telegram_chat_id,
-            result.private_message,
-            "您已通过验证，可以在群组中发言了。",
-        )
+        try:
+            await client.edit_message(
+                settings.telegram_chat_id,
+                result.private_message,
+                "您已通过验证，可以在群组中发言了。",
+            )
+        except (
+            errors.MessageIdInvalidError,
+            errors.MessageNotModifiedError,
+            errors.RPCError,
+        ) as e:
+            logger.warning("更新群组验证欢迎消息失败: {}", e)
 
 
 @TelethonClientWarper.handler(

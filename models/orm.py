@@ -208,7 +208,7 @@ class PendingVerification(Base):
     __tablename__ = "pending_verifications"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    captcha_answer: Mapped[str] = mapped_column(String(16), nullable=True)
+    captcha_answer: Mapped[str | None] = mapped_column(String(16), nullable=True)
     scheduler_job_id: Mapped[str] = mapped_column(String(255), nullable=False)
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 

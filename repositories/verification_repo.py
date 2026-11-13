@@ -8,15 +8,19 @@ class VerificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(
-        self, user_id: int, job_id: str
-    ) -> PendingVerification:
-        """创建一个新的待验证用户记录"""
-        challenge = PendingVerification(
-            id=user_id,
-            scheduler_job_id=job_id,
-        )
-        self.session.add(challenge)
+    async def create(self, user_id: int, job_id: str) -> PendingVerification:
+        """创建或重置待验证用户记录（幂等写入，避免重复入群触发主键冲突）。"""
+        challenge = await self.get(user_id)
+        if challenge is not None:
+            challenge.scheduler_job_id = job_id
+            challenge.captcha_answer = None
+            challenge.message_id = None
+        else:
+            challenge = PendingVerification(
+                id=user_id,
+                scheduler_job_id=job_id,
+            )
+            self.session.add(challenge)
         await self.session.commit()
         await self.session.refresh(challenge)
         return challenge
