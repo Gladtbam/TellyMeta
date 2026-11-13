@@ -381,6 +381,8 @@ class SubtitleService:
             errors = []
 
             for root, _, files in os.walk(temp_dir):
+                if "__MACOSX" in pathlib.Path(root).parts:
+                    continue
                 for file in files:
                     if file.startswith(".") or file.startswith("__MACOSX"):
                         continue
@@ -395,13 +397,32 @@ class SubtitleService:
                     except (OSError, ValueError) as e:
                         errors.append(f"处理文件 {file} 时出错: {str(e)}")
 
-            if files_processed == 0 and not errors:
-                return Result(False, "压缩包内未找到有效文件。")
+            if files_processed == 0:
+                if not errors:
+                    return Result(False, "压缩包内未找到有效文件。")
+                reasons = "\n".join(f"• {err}" for err in errors)
+                return Result(
+                    False,
+                    f"❌ **字幕写入失败**（写入 0 个，失败/跳过 {len(errors)} 个）\n"
+                    f"🎬 媒体: {media_title}\n\n"
+                    f"**原因明细**:\n{reasons}",
+                )
 
-            msg = f"✅ **字幕处理完成**\n🎬 媒体: {media_title}\n📥 成功上传: {files_processed} 个文件"
             if errors:
-                msg += "\n\n⚠️ **部分错误**:\n" + "\n".join(errors[:5])
+                reasons = "\n".join(f"• {err}" for err in errors[:5])
                 if len(errors) > 5:
-                    msg += f"\n...等 {len(errors)} 个错误"
+                    reasons += f"\n• ...等共 {len(errors)} 个失败/跳过原因"
+                msg = (
+                    f"⚠️ **字幕部分成功**\n"
+                    f"🎬 媒体: {media_title}\n"
+                    f"📥 成功写入: {files_processed} 个 | ❌ 失败/跳过: {len(errors)} 个\n\n"
+                    f"**主要原因**:\n{reasons}"
+                )
+                return Result(True, msg)
 
+            msg = (
+                f"✅ **字幕处理成功**\n"
+                f"🎬 媒体: {media_title}\n"
+                f"📥 成功写入: {files_processed} 个文件"
+            )
             return Result(True, msg)
