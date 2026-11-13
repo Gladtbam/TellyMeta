@@ -27,6 +27,12 @@ MAX_TOTAL_EXTRACT_SIZE = 50 * 1024 * 1024
 
 
 class SubtitleService:
+    # 允许 Telegram 重复发送/转存时自动附加的序号后缀，如 tvdb-123 (1).zip、tmdb-456(2).zip
+    ZIP_NAME_PATTERN = re.compile(
+        r"^(tvdb|tmdb)-(\d+)(?:\s*\(\d+\))*\.zip$",
+        re.IGNORECASE,
+    )
+
     def __init__(
         self,
         session: AsyncSession,
@@ -38,6 +44,14 @@ class SubtitleService:
         self.server_repo = ServerRepository(session)
         self.radarr_clients: dict[int, RadarrClient] = radarr_clients
         self.sonarr_clients: dict[int, SonarrClient] = sonarr_clients
+
+    @staticmethod
+    def parse_subtitle_zip_filename(file_name: str) -> tuple[str, int] | None:
+        """解析字幕压缩包文件名中的媒体类型与外部 ID，兼容 Telegram 自动重命名后缀"""
+        match = SubtitleService.ZIP_NAME_PATTERN.search((file_name or "").strip())
+        if not match:
+            return None
+        return match.group(1).lower(), int(match.group(2))
 
     async def _get_bound_arr_ids(self, media_server_id: int) -> list[int]:
         """获取指定媒体服务器已绑定的去重 Arr 实例 ID 列表"""
@@ -99,16 +113,15 @@ class SubtitleService:
         if media_server_id is None:
             return Result(False, "未指定所属媒体服务器，无法定位已绑定的 Arr 实例。")
 
-        # 1. 检查文件名格式
-        match = re.search(r"^(tvdb|tmdb)-(\d+)\.zip$", file_name, re.IGNORECASE)
-        if not match:
+        # 1. 检查文件名格式（兼容 Telegram 重传时附加的 (1) 等副本后缀）
+        parsed = self.parse_subtitle_zip_filename(file_name)
+        if not parsed:
             return Result(
                 False,
                 "文件名格式错误。请使用 `tvdb-ID.zip` 或 `tmdb-ID.zip` 命名 (例如 `tvdb-842675.zip`)。",
             )
 
-        media_type = match.group(1).lower()
-        media_id = int(match.group(2))
+        media_type, media_id = parsed
 
         bound_arr_ids = await self._get_bound_arr_ids(media_server_id)
         if not bound_arr_ids:

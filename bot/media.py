@@ -232,12 +232,9 @@ async def run_subtitle_upload_flow(
                     target_arr_id: int | None = None
 
                     # 若多个已绑定实例均匹配同一外部媒体 ID，先让用户明确目标实例再写入
-                    match = re.search(
-                        r"^(tvdb|tmdb)-(\d+)\.zip$", file_name, re.IGNORECASE
-                    )
-                    if match:
-                        m_type = match.group(1).lower()
-                        m_id = int(match.group(2))
+                    parsed = SubtitleService.parse_subtitle_zip_filename(file_name)
+                    if parsed:
+                        m_type, m_id = parsed
                         targets = await subtitle_service.find_matching_arr_targets(
                             media_server_id, m_type, m_id
                         )
