@@ -215,8 +215,14 @@ class AccountService:
         if await self.media_repo.get_by_id(user_id, server_id):
             return Result(False, f"您已经在 **{server.name}** 注册过了，无需重复注册。")
 
+        media_service: MediaService | None = self.media_clients.get(server_id)
+        if not media_service:
+            return Result(False, "服务器连接实例未找到，请联系管理员。")
+
         can_register = False
         mode = server.registration_mode
+        reserved_score = 0
+        reserved_count = False
 
         if skip_checks:
             can_register = True
@@ -226,6 +232,7 @@ class AccountService:
                 await self.server_repo.update_policy_config(
                     server.id, count=server.registration_count_limit - 1
                 )
+                reserved_count = True
             else:
                 await self.server_repo.update_policy_config(
                     server.id, mode=RegistrationMode.DEFAULT
@@ -248,6 +255,7 @@ class AccountService:
             if user.score >= register_score:
                 can_register = True
                 await self.telegram_repo.update_score(user_id, -register_score)
+                reserved_score = register_score
             else:
                 return Result(
                     False, f"您的积分不足，注册该服务器需要 **{register_score}** 积分。"
@@ -258,36 +266,36 @@ class AccountService:
         if not can_register:
             return Result(False, "注册失败，当前未开放注册或您不满足注册条件。")
 
-        media_service: MediaService | None = self.media_clients.get(server_id)
-        if not media_service:
-            # 回滚积分扣除（如果是积分注册）
-            if mode == RegistrationMode.DEFAULT:
-                await self.telegram_repo.update_score(
-                    user_id, int(await self.telegram_repo.get_renew_score())
-                )
-            return Result(False, "服务器连接实例未找到，请联系管理员。")
+        created_media_id: str | None = None
         try:
             media_user_dto, pw = await media_service.create(username)
             if not media_user_dto:
+                await self._rollback_registration_cost(
+                    user_id, server_id, reserved_score, reserved_count
+                )
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
+
+            media_user_id: str = media_user_dto.Id
+            created_media_id = media_user_id
+
+            # 先应用初始权限/NSFW策略，若失败则尚未写入本地记录，可直接清理外部账户
+            if not server.nsfw_enabled:
+                await self._apply_nsfw_policy(
+                    media_service, media_user_id, server, enable_nsfw=False
+                )
+            else:
+                await media_service.update_policy(
+                    media_user_id, {"EnableAllFolders": True}, is_none=True
+                )
 
             expires_at = server.registration_expiry_days
             media_user = await self.media_repo.create(
                 user_id=user_id,
-                server_id=server.id,
-                media_id=media_user_dto.Id,
+                server_id=server_id,
+                media_id=media_user_id,
                 media_name=username,
                 expires_at=expires_at,
             )
-
-            if not server.nsfw_enabled:
-                await self._apply_nsfw_policy(
-                    media_service, media_user_dto.Id, server, enable_nsfw=False
-                )
-            else:
-                await media_service.update_policy(
-                    media_user_dto.Id, {"EnableAllFolders": True}, is_none=True
-                )
 
             return Result(
                 True,
@@ -303,9 +311,119 @@ class AccountService:
                 请尽快登录并修改密码，祝您观影愉快！
             """),
             )
-        except HTTPError:
-            logger.error("{}: {} 注册失败", username, user_id)
+        except Exception as e:
+            logger.error("{}: {} 注册失败: {}", username, user_id, e)
+            await self.media_repo.session.rollback()
+
+            cleanup_ok = True
+            if created_media_id is not None:
+                cleanup_ok = await self._cleanup_orphan_media_user(
+                    media_service, server_id, user_id, username, created_media_id
+                )
+
+            await self._rollback_registration_cost(
+                user_id, server_id, reserved_score, reserved_count
+            )
+
+            if not cleanup_ok:
+                return Result(
+                    False,
+                    "注册失败，本地记录保存或初始化异常且外部账户清理未完成，请联系管理员核对处理。",
+                )
             return Result(False, "注册失败，请联系管理员")
+
+    async def _rollback_registration_cost(
+        self,
+        user_id: int,
+        server_id: int,
+        reserved_score: int,
+        reserved_count: bool,
+    ) -> None:
+        """全额恢复注册失败时本次占用的积分或名额。
+
+        Args:
+            user_id (int): 用户的 Telegram ID
+            server_id (int): 服务器 ID
+            reserved_score (int): 本次扣减的积分数
+            reserved_count (bool): 本次是否扣减了名额
+        """
+        if reserved_score > 0:
+            await self.telegram_repo.update_score(user_id, reserved_score)
+        if reserved_count:
+            latest_server = await self.server_repo.get_by_id(server_id)
+            if latest_server:
+                await self.server_repo.update_policy_config(
+                    server_id, count=latest_server.registration_count_limit + 1
+                )
+
+    async def _cleanup_orphan_media_user(
+        self,
+        media_service: MediaService,
+        server_id: int,
+        user_id: int,
+        username: str,
+        media_id: str,
+    ) -> bool:
+        """清理或协调外部建号成功但本地保存/初始化失败遗留的外部账户。
+
+        若外部删除成功或返回 404（已不存在），返回 True；
+        若外部删除失败，尝试禁用该账户并记录核对日志后返回 False。
+        """
+        try:
+            await media_service.delete_user(media_id)
+            logger.info(
+                "注册失败已清理外部媒体账户: server_id={}, user_id={}, media_id={}",
+                server_id,
+                user_id,
+                media_id,
+            )
+            return True
+        except HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.info(
+                    "注册失败清理时外部账户已不存在(404): server_id={}, user_id={}, media_id={}",
+                    server_id,
+                    user_id,
+                    media_id,
+                )
+                return True
+            logger.error(
+                "清理外部孤儿账户失败: server_id={}, user_id={}, username={}, media_id={}, status={}",
+                server_id,
+                user_id,
+                username,
+                media_id,
+                e.response.status_code,
+            )
+        except Exception as e:
+            logger.error(
+                "清理外部孤儿账户失败: server_id={}, user_id={}, username={}, media_id={}, err={}",
+                server_id,
+                user_id,
+                username,
+                media_id,
+                e,
+            )
+
+        # 外部删除失败时，先禁用该账户，避免留下可正常使用的未纳管账户
+        try:
+            await media_service.ban_or_unban(media_id, is_ban=True)
+            logger.warning(
+                "外部孤儿账户删除失败，已先行禁用等待核对: server_id={}, user_id={}, media_id={}",
+                server_id,
+                user_id,
+                media_id,
+            )
+        except Exception as ban_err:
+            logger.critical(
+                "外部孤儿账户删除与禁用均失败，请管理员立即核对: server_id={}, user_id={}, username={}, media_id={}, err={}",
+                server_id,
+                user_id,
+                username,
+                media_id,
+                ban_err,
+            )
+        return False
 
     async def _apply_nsfw_policy(
         self,

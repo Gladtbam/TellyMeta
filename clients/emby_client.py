@@ -77,10 +77,30 @@ class EmbyClient(
 
         if response is not None:
             logger.info("创建用户 {} 成功", name)
-            pw = await self.post_password(response.Id)
+            try:
+                pw = await self.post_password(response.Id)
+            except Exception:
+                logger.error(
+                    "用户 {} 密码设置异常，尝试清理已创建的 Emby 账户 {}",
+                    name,
+                    response.Id,
+                )
+                try:
+                    await self.delete_user(response.Id)
+                except Exception as cleanup_err:
+                    logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
+                raise
             if not pw:
-                logger.error("用户 {} 密码设置失败", name)
-                return response, pw
+                logger.error(
+                    "用户 {} 密码设置失败，尝试清理已创建的 Emby 账户 {}",
+                    name,
+                    response.Id,
+                )
+                try:
+                    await self.delete_user(response.Id)
+                except Exception as cleanup_err:
+                    logger.error("清理 Emby 账户 {} 失败: {}", response.Id, cleanup_err)
+                return None, None
             return response, pw
 
         logger.error("创建用户 {} 失败: {}", name, response)
