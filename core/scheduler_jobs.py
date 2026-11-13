@@ -337,3 +337,27 @@ async def cleanup_api_cache_task() -> None:
 async def auto_backup_db() -> None:
     """自动备份数据库"""
     await backup_database()
+
+
+@scheduled_job(
+    "interval",
+    hours=1,
+    id="expire_pending_media_requests",
+    replace_existing=True,
+)
+async def expire_pending_media_requests() -> None:
+    """定时清理超过 7 天未审批的求片请求并释放全部预留积分"""
+    from main import app  # 避免循环导入
+    from services.request_service import RequestService
+
+    async with async_session() as session:
+        try:
+            service = RequestService(app, session)
+            expired_count = await service.expire_pending_requests()
+            if expired_count > 0:
+                logger.info("本次自动取消超时求片数量: {}", expired_count)
+        except Exception as e:
+            logger.exception("清理超时求片任务出错: {}", e)
+            await session.rollback()
+        finally:
+            await session.close()

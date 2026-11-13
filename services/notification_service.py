@@ -11,13 +11,16 @@ from models.events import NotificationEvent
 
 settings = get_settings()
 
+
 class NotificationService:
     def __init__(self, app: FastAPI):
         """初始化通知服务"""
         self.app = app
         self.client: TelethonClientWarper = app.state.telethon_client
 
-    async def _render(self, event_type: NotificationEvent, context: dict[str, Any]) -> str | None:
+    async def _render(
+        self, event_type: NotificationEvent, context: dict[str, Any]
+    ) -> str | None:
         """内部方法：根据事件类型渲染对应的 .j2 模板"""
         # 映射规则: NotificationEvent.SONARR_DOWNLOAD -> "sonarr_download.j2"
         template_name = f"{event_type.value}.j2"
@@ -30,11 +33,11 @@ class NotificationService:
         event_type: NotificationEvent,
         image: Any = None,
         buttons: list | None = None,
-        **kwargs
-    ) -> None:
+        **kwargs,
+    ) -> Any:
         """
         发送通知到指定的 Topic 或 Channel (通用)
-        
+
         Args:
             topic_id: 目标 ID (从 Server 配置中读取传入)
                       < 0: 直接发送到该 ID (作为 Channel/Group ID)
@@ -45,14 +48,14 @@ class NotificationService:
             **kwargs: 模板变量 (需包含 server_name 等)
         """
         if not topic_id:
-            return
+            return None
 
         context = kwargs.copy()
-        context['event_type'] = event_type.value
+        context["event_type"] = event_type.value
 
         message_text = await self._render(event_type, context)
         if not message_text:
-            return
+            return None
 
         target_chat = settings.telegram_chat_id
         target_reply = None
@@ -65,27 +68,26 @@ class NotificationService:
             target_reply = topic_id
 
         try:
-            await self.client.send_message(
+            sent_msg = await self.client.send_message(
                 chat_id=target_chat,
                 message=message_text,
                 file=image,
                 buttons=buttons,
                 reply_to=target_reply,
-                parse_mode='html',
-                link_preview=False
+                parse_mode="html",
+                link_preview=False,
             )
             logger.info("已发送通知：{}（目标：{}）", event_type.value, topic_id)
+            return sent_msg
         except RPCError as e:
             logger.error("Telegram API 错误: {}", e)
+            return None
         except Exception as e:
             logger.error("无法发送通知 ({})：{}", event_type.value, e)
+            return None
 
     async def send_to_user(
-        self,
-        user_id: int,
-        event_type: NotificationEvent,
-        image: Any = None,
-        **kwargs
+        self, user_id: int, event_type: NotificationEvent, image: Any = None, **kwargs
     ) -> None:
         """
         发送通知给特定用户 (私聊)
@@ -96,10 +98,7 @@ class NotificationService:
 
         try:
             await self.client.send_message(
-                chat_id=user_id,
-                message=message_text,
-                file=image,
-                parse_mode='html'
+                chat_id=user_id, message=message_text, file=image, parse_mode="html"
             )
             logger.debug("发送的用户通知：{} -> 用户 {}", event_type.value, user_id)
         except Exception as e:

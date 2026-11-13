@@ -712,3 +712,28 @@ async def submit_request(
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
+
+
+@router.get("/tools/requests")
+async def list_my_requests(
+    request: Request,
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """查询当前成员的求片记录及积分预留/结算/释放状态"""
+    service = RequestService(request.app, session)
+    items = await service.get_user_requests(user_id)
+    return {"success": True, "items": items}
+
+
+@router.post("/tools/requests/{request_id}/cancel")
+async def cancel_my_request(
+    request: Request,
+    request_id: int,
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """申请人撤销待审核求片并释放全部预留积分"""
+    service = RequestService(request.app, session)
+    result = await service.cancel_request(request_id, user_id)
+    return {"success": result.success, "message": result.message}

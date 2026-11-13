@@ -243,6 +243,91 @@
             background: var(--secondary-bg-color);
             color: var(--text-color);
         }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            padding: 8px 16px 4px;
+            background: var(--bg-color);
+        }
+
+        .tab-btn {
+            flex: 1;
+            text-align: center;
+            padding: 8px 12px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            background: var(--secondary-bg-color);
+            color: var(--hint-color);
+            cursor: pointer;
+        }
+
+        .tab-btn.active {
+            background: var(--button-color);
+            color: var(--button-text-color);
+        }
+
+        .req-list {
+            padding: 12px 16px 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .req-card {
+            background: var(--secondary-bg-color);
+            border-radius: 12px;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .req-card-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .req-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .req-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(128, 128, 128, 0.18);
+            color: var(--text-color);
+            white-space: nowrap;
+        }
+
+        .req-meta {
+            font-size: 12px;
+            color: var(--hint-color);
+            line-height: 1.4;
+        }
+
+        .req-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 4px;
+        }
+
+        .btn-cancel-req {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(255, 59, 48, 0.14);
+            color: var(--destructive-text-color);
+            cursor: pointer;
+        }
     </style>
 </head>
 
@@ -252,17 +337,30 @@
         <div class="page-title">求片中心</div>
     </div>
 
-    <div class="search-area">
-        <input type="text" class="search-input" id="search-input" placeholder="输入关键词搜索 (例如: 权力的游戏)..."
-            oninput="debounceSearch()">
+    <div class="tabs">
+        <div class="tab-btn active" id="tab-search" onclick="switchTab('search')">搜索求片</div>
+        <div class="tab-btn" id="tab-my" onclick="switchTab('my')">我的求片</div>
     </div>
 
-    <div class="library-scroll" id="lib-list">
-        <!-- Chips -->
+    <div id="search-panel">
+        <div class="search-area">
+            <input type="text" class="search-input" id="search-input" placeholder="输入关键词搜索 (例如: 权力的游戏)..."
+                oninput="debounceSearch()">
+        </div>
+
+        <div class="library-scroll" id="lib-list">
+            <!-- Chips -->
+        </div>
+
+        <div class="poster-grid" id="search-results">
+            <div class="loader">正在加载媒体库...</div>
+        </div>
     </div>
 
-    <div class="poster-grid" id="search-results">
-        <div class="loader">正在加载媒体库...</div>
+    <div id="my-requests-panel" style="display:none;">
+        <div class="req-list" id="my-requests-list">
+            <div class="loader">正在加载求片记录...</div>
+        </div>
     </div>
 
     <!-- Modal -->
@@ -497,6 +595,97 @@
                 tg.showAlert("提交失败: " + e.message);
                 btn.innerText = '重试';
                 btn.style.opacity = '1';
+            }
+        }
+
+        const STATUS_LABELS = {
+            pending: '待审核',
+            processing: '处理中',
+            approved: '已批准',
+            rejected: '已拒绝',
+            canceled: '已撤销',
+            expired: '超时自动取消',
+            failed: '提交/添加失败'
+        };
+
+        const COST_LABELS = {
+            reserved: '已预留',
+            settled: '已结算',
+            released: '已释放'
+        };
+
+        function switchTab(tab) {
+            const isSearch = tab === 'search';
+            document.getElementById('tab-search').classList.toggle('active', isSearch);
+            document.getElementById('tab-my').classList.toggle('active', !isSearch);
+            document.getElementById('search-panel').style.display = isSearch ? 'block' : 'none';
+            document.getElementById('my-requests-panel').style.display = isSearch ? 'none' : 'block';
+            if (!isSearch) {
+                loadMyRequests();
+            }
+        }
+
+        async function loadMyRequests() {
+            const container = document.getElementById('my-requests-list');
+            container.innerHTML = '<div class="loader">正在加载求片记录...</div>';
+            try {
+                const res = await fetch('/api/miniapp/tools/requests', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || '加载失败');
+                renderMyRequests(data.items || []);
+            } catch (e) {
+                container.innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
+            }
+        }
+
+        function renderMyRequests(items) {
+            const container = document.getElementById('my-requests-list');
+            container.innerHTML = '';
+            if (!items.length) {
+                container.innerHTML = '<div class="loader">暂无求片记录</div>';
+                return;
+            }
+            items.forEach((item) => {
+                const card = document.createElement('div');
+                card.className = 'req-card';
+                const statusText = STATUS_LABELS[item.status] || item.status;
+                const costText = COST_LABELS[item.cost_status] || item.cost_status;
+                const createdStr = item.created_at ? item.created_at.replace('T', ' ').slice(0, 16) : '';
+                const reasonLine = item.fail_reason ? `<div>说明：${item.fail_reason}</div>` : '';
+                const cancelBtn = item.status === 'pending'
+                    ? `<div class="req-actions"><div class="btn-cancel-req" onclick="cancelMyRequest(${item.id})">撤销申请</div></div>`
+                    : '';
+                card.innerHTML = `
+                    <div class="req-card-head">
+                        <div class="req-title">#${item.id} ${item.title || (item.media_type.toUpperCase() + ':' + item.media_id)}</div>
+                        <div class="req-badge">${statusText}</div>
+                    </div>
+                    <div class="req-meta">
+                        <div>媒体库：${item.library_name} • 积分：${item.reserved_cost} (${costText})</div>
+                        <div>提交时间：${createdStr}</div>
+                        ${reasonLine}
+                    </div>
+                    ${cancelBtn}
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function cancelMyRequest(requestId) {
+            try {
+                const res = await fetch(`/api/miniapp/tools/requests/${requestId}/cancel`, {
+                    method: 'POST',
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                const data = await res.json();
+                tg.showAlert(data.message || (data.success ? '已撤销' : '撤销失败'));
+                if (data.success) {
+                    loadMyRequests();
+                }
+            } catch (e) {
+                tg.showAlert('撤销失败: ' + e.message);
             }
         }
 

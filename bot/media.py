@@ -29,6 +29,44 @@ async def request_cancel_handler(
     await safe_delete(event)
 
 
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"^req_ap_(\\d+)$"))
+@provide_db_session
+@require_admin
+async def request_approve_by_id_handler(
+    app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession
+) -> None:
+    """求片-按请求 ID 批准处理器"""
+    request_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
+    sender = await event.get_sender()
+    approver_name = (
+        getattr(sender, "first_name", None)
+        or getattr(sender, "username", None)
+        or "管理员"
+    )
+
+    request_service = RequestService(app, session)
+    await event.answer("正在处理审批...", alert=False)
+
+    result = await request_service.handle_approval_by_request_id(
+        request_id, approver_name=approver_name
+    )
+
+    msg = await event.get_message()
+    original_text = msg.text if msg else ""
+    if result.success:
+        new_text = original_text + f"\n\n✅ **已批准**: {result.message}"
+        await event.edit(new_text, buttons=None)
+    else:
+        await event.answer(result.message, alert=True)
+        # 若请求已不再处于 pending（例如失败释分、已撤销或已超时），移除操作按钮避免误点
+        req = await request_service.request_repo.get_by_id(request_id)
+        if req and req.status != "pending":
+            await event.edit(
+                original_text + f"\n\n⚠️ **{result.message}**",
+                buttons=None,
+            )
+
+
 @TelethonClientWarper.handler(
     events.CallbackQuery(pattern=b"^req_ap_(\\d+)_([^_]+)_(\\d+)")
 )
@@ -37,7 +75,7 @@ async def request_cancel_handler(
 async def request_approve_handler(
     app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession
 ) -> None:
-    """求片-批准处理器"""
+    """求片-批准处理器（兼容旧版回调格式）"""
     media_server_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
     library_name_base64 = event.pattern_match.group(2).decode("utf-8")  # type: ignore
     media_id = int(event.pattern_match.group(3).decode("utf-8"))  # type: ignore
@@ -61,15 +99,46 @@ async def request_approve_handler(
         await event.answer(result.message, alert=True)
 
 
-@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"^req_deny_(\\d+)"))
+@TelethonClientWarper.handler(events.CallbackQuery(pattern=b"^req_deny_(\\d+)$"))
+@provide_db_session
 @require_admin
-async def request_deny_handler(app: FastAPI, event: events.CallbackQuery.Event) -> None:
+async def request_deny_handler(
+    app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession
+) -> None:
     """求片-拒绝处理器"""
-    # user_id = int(event.pattern_match.group(1).decode('utf-8'))
-    # Optional: Notify user
-    original_text = (await event.get_message()).text  # type: ignore
-    new_text = original_text + "\n\n❌ **已拒绝**"
-    await event.edit(new_text, buttons=None)
+    target_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
+    sender = await event.get_sender()
+    approver_name = (
+        getattr(sender, "first_name", None)
+        or getattr(sender, "username", None)
+        or "管理员"
+    )
+
+    request_service = RequestService(app, session)
+    req = await request_service.request_repo.get_by_id(target_id)
+    msg = await event.get_message()
+    original_text = msg.text if msg else ""
+
+    if not req:
+        # 兼容旧版 req_deny_{user_id} 回调格式
+        await event.edit(original_text + "\n\n❌ **已拒绝**", buttons=None)
+        return
+
+    result = await request_service.handle_rejection(
+        target_id, approver_name=approver_name
+    )
+    if result.success:
+        await event.edit(
+            original_text + f"\n\n❌ **已拒绝**: {result.message}", buttons=None
+        )
+    else:
+        await event.answer(result.message, alert=True)
+        latest = await request_service.request_repo.get_by_id(target_id)
+        if latest and latest.status != "pending":
+            await event.edit(
+                original_text + f"\n\n⚠️ **{result.message}**",
+                buttons=None,
+            )
 
 
 MAX_FILE_SIZE = 20 * 1024 * 1024

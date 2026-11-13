@@ -138,6 +138,36 @@ class TelegramRepository:
         await self.session.refresh(user)
         return user
 
+    async def deduct_score_if_sufficient(self, user_id: int, cost: int) -> bool:
+        """原子校验并预留扣除用户积分，防止并发超扣
+
+        Args:
+            user_id (int): Telegram 用户 ID
+            cost (int): 需要扣除的积分数（必须 >= 0）
+
+        Returns:
+            bool: 积分充足并扣除成功返回 True，否则返回 False
+        """
+        if cost < 0:
+            raise ValueError("扣除积分不能为负数")
+        await self.get_or_create(user_id)
+        if cost == 0:
+            return True
+
+        stmt = (
+            update(TelegramUser)
+            .where(TelegramUser.id == user_id, TelegramUser.score >= cost)
+            .values(score=TelegramUser.score - cost)
+            .returning(TelegramUser.id)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            await self.session.rollback()
+            return False
+        await self.session.commit()
+        return True
+
     async def get_top_users(self, limit: int = 10) -> Sequence[TelegramUser]:
         """获取积分排行榜"""
         stmt = select(TelegramUser).order_by(TelegramUser.score.desc()).limit(limit)

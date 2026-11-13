@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -240,3 +241,62 @@ class ApiCache(Base):
     value: Mapped[str] = mapped_column(String, nullable=False)  # JSON data
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+
+class MediaRequest(Base):
+    """求片申请与积分预留追踪模型"""
+
+    __tablename__ = "media_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("telegram_users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    media_server_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    arr_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    library_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    media_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    # 提交时锁定的预留积分，后续动态改价不追补或改扣
+    reserved_cost: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 请求状态：pending / approved / rejected / canceled / expired / failed
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", index=True
+    )
+    # 积分状态：reserved / settled / released
+    cost_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="reserved"
+    )
+    topic_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    approver_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    fail_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.now
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        # 同一 Arr 实例对同一媒体同时仅允许一条待审核求片
+        Index(
+            "uq_pending_arr_media",
+            "arr_id",
+            "media_type",
+            "media_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+        ),
+    )
