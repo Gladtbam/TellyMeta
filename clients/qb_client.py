@@ -1,4 +1,5 @@
 import json
+from typing import override
 
 import httpx2
 from loguru import logger
@@ -20,6 +21,7 @@ class QbittorrentClient(AuthenticatedClient):
         self.password = password
         self.api_key = api_key
 
+    @override
     async def _login(self) -> None | str:
         if self.api_key:
             self._is_logged_in = True
@@ -31,6 +33,7 @@ class QbittorrentClient(AuthenticatedClient):
         response.raise_for_status()
         return response.text  # Returns the session cookie on successful login
 
+    @override
     async def _apply_auth(self) -> dict:
         if self.api_key:
             return {"Authorization": f"Bearer {self.api_key}"}

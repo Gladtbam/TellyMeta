@@ -1,3 +1,5 @@
+from typing import override
+
 import httpx2
 from loguru import logger
 
@@ -15,6 +17,7 @@ class CachedTmdbClient(TmdbClient):
         super().__init__(client, api_key)
         self.cache_ttl = cache_ttl  # 默认缓存 7 天
 
+    @override
     async def find_info_by_external_id(
         self, external_source: str, external_id: str
     ) -> TmdbFindPayload | None:
@@ -32,6 +35,7 @@ class CachedTmdbClient(TmdbClient):
 
         return result
 
+    @override
     async def get_tv_series_details(self, tmdb_id: int) -> TmdbTvSeries | None:
         key = f"tmdb:tv:{tmdb_id}"
 
@@ -47,6 +51,7 @@ class CachedTmdbClient(TmdbClient):
 
         return result
 
+    @override
     async def get_tv_seasons_details(
         self, tmdb_id: int, season_number: int
     ) -> TmdbSeason | None:
@@ -64,6 +69,7 @@ class CachedTmdbClient(TmdbClient):
 
         return result
 
+    @override
     async def get_movie_details(self, tmdb_id: int) -> TmdbMovie | None:
         key = f"tmdb:movie:{tmdb_id}"
 

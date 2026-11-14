@@ -1,13 +1,11 @@
 """Radarr Webhook 回调数据模型（手写维护，与 OpenAPI REST 模型解耦）。"""
 
 from datetime import datetime
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 from core.config import genre_mapping
-
-EventT = TypeVar("EventT", bound=str)
 
 
 class Languages(BaseModel):
@@ -34,7 +32,7 @@ class CustomFormatResource(BaseModel):
     specifications: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class customFormatInfoDto(BaseModel):
+class CustomFormatInfoDto(BaseModel):
     """自定义格式汇总信息。"""
 
     customFormats: list[CustomFormatResource] = Field(default_factory=list)
@@ -145,7 +143,7 @@ class DownloadInfo(BaseModel):
     size: int
 
 
-class WebhookBase(BaseModel, Generic[EventT]):
+class WebhookBase[EventT: str](BaseModel):
     """Arr Webhook 通用基类。"""
 
     eventType: EventT
@@ -163,7 +161,7 @@ class RadarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
     downloadClient: str
     downloadClientType: str
     downloadId: str
-    customFormatInfo: customFormatInfoDto
+    customFormatInfo: CustomFormatInfoDto
 
 
 class RadarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
@@ -178,7 +176,7 @@ class RadarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
     downloadClient: str | None = None
     downloadClientType: str | None = None
     downloadId: str
-    customFormatInfo: customFormatInfoDto
+    customFormatInfo: CustomFormatInfoDto
 
 
 class RadarrWebhookAddedPayload(WebhookBase[Literal["MovieAdded"]]):
@@ -246,7 +244,7 @@ class RadarrWebhookManualInteractionPayload(
     downloadClientType: str | None = None
     downloadId: str
     downloadStatus: str
-    customFormatInfo: customFormatInfoDto
+    customFormatInfo: CustomFormatInfoDto
 
 
 class RadarrWebhookTestPayload(WebhookBase[Literal["Test"]]):

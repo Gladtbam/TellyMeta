@@ -19,13 +19,13 @@ import argparse
 import copy
 import json
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+lazy import shutil
+lazy import subprocess
+lazy from urllib.request import Request, urlopen
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 

@@ -1,4 +1,5 @@
 import asyncio
+from typing import override
 
 import httpx2
 from loguru import logger
@@ -13,10 +14,12 @@ class TmdbClient(AuthenticatedClient):
         self.api_key = api_key
         self._limiter = RateLimiter(rate=30, per=1.0)
 
+    @override
     async def _login(self) -> None:
         # TMDB 使用 Bearer Token 进行认证，无需登录
         self._is_logged_in = True
 
+    @override
     async def _apply_auth(self):
         return {"Authorization": f"Bearer {self.api_key}", "accept": "application/json"}
 
@@ -41,7 +44,7 @@ class TmdbClient(AuthenticatedClient):
                 retry_after = e.response.headers.get("Retry-After")
                 try:
                     sleep_time = int(retry_after) + 1 if retry_after else 1
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     sleep_time = 1
 
                 await asyncio.sleep(sleep_time)

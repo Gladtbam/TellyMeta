@@ -10,8 +10,6 @@ Emby Webhook Pydantic Models
 Python 3.11+ 兼容
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from enum import IntEnum, StrEnum
 from typing import Annotated, Literal

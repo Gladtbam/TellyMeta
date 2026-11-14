@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import override
 
 import httpx2
 from pydantic import TypeAdapter
@@ -35,10 +36,12 @@ class RadarrClient(AuthenticatedClient):
         self.notify_topic_id = notify_topic_id
         self.request_notify_topic_id = request_notify_topic_id
 
+    @override
     async def _login(self) -> None:
         # Radarr 使用 API Key 进行认证，无需登录
         self._is_logged_in = True
 
+    @override
     async def _apply_auth(self):
         return {
             "X-Api-Key": self.api_key,

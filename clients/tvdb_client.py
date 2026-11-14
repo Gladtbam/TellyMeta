@@ -1,4 +1,5 @@
 import asyncio
+from typing import override
 
 import httpx2
 from loguru import logger
@@ -15,6 +16,7 @@ class TvdbClient(AuthenticatedClient):
         self._token: str | None = None
         self._limiter = RateLimiter(rate=20, per=1.0)
 
+    @override
     async def _login(self):
         payload = {"apikey": self.api_key}
         headers = {"accept": "application/json", "Content-Type": "application/json"}
@@ -46,13 +48,14 @@ class TvdbClient(AuthenticatedClient):
                 retry_after = e.response.headers.get("Retry-After")
                 try:
                     sleep_time = int(retry_after) + 1 if retry_after else 1
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     sleep_time = 1
 
                 await asyncio.sleep(sleep_time)
                 return await self._request(*args, **kwargs)
             raise
 
+    @override
     async def _apply_auth(self):
         if self._token:
             return {"Authorization": f"Bearer {self._token}"}

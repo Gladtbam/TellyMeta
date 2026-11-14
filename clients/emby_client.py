@@ -1,6 +1,6 @@
 import random
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, override
 
 import httpx2
 from loguru import logger
@@ -50,10 +50,12 @@ class EmbyClient(
         self.server_name = server_name
         self.notify_topic_id = notify_topic_id
 
+    @override
     async def _login(self) -> None:
         # Emby 使用 API Key 进行认证，无需登录
         self._is_logged_in = True
 
+    @override
     async def _apply_auth(self):
         return {
             "X-Emby-Token": self._api_key,
@@ -61,6 +63,7 @@ class EmbyClient(
             "Content-Type": "application/json",
         }
 
+    @override
     async def create(self, name: str) -> tuple[UserDto | None, str | None]:
         """创建用户。
         Args:
@@ -78,7 +81,7 @@ class EmbyClient(
             logger.info("创建用户 {} 成功", name)
             try:
                 pw = await self.post_password(user_id)
-            except (httpx2.HTTPError, ValueError):
+            except httpx2.HTTPError, ValueError:
                 logger.error(
                     "用户 {} 密码设置异常，尝试清理已创建的 Emby 账户 {}",
                     name,
@@ -105,6 +108,7 @@ class EmbyClient(
         logger.error("创建用户 {} 失败: {}", name, response)
         return None, None
 
+    @override
     async def delete_user(self, user_id: str) -> None:
         """删除用户。
         Args:
@@ -113,6 +117,7 @@ class EmbyClient(
         url = f"/Users/{user_id}"
         await self.delete(url)
 
+    @override
     async def update_policy(
         self, user_id: str, policy: dict[str, Any], is_none: bool = False
     ) -> None:
@@ -132,6 +137,7 @@ class EmbyClient(
 
         await self.post(url, json=payload)
 
+    @override
     async def get_item_info(self, item_id: str) -> None | BaseItemDto:
         """获取指定媒体项的信息。
 
@@ -181,6 +187,7 @@ class EmbyClient(
             return None
         return response.Items[0]
 
+    @override
     async def post_item_info(self, item_id: str, item_info: BaseItem) -> None:
         """更新指定媒体项的信息。
 
@@ -195,6 +202,7 @@ class EmbyClient(
 
         await self.post(url, json=item_info.model_dump(exclude_unset=True, mode="json"))
 
+    @override
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取指定用户的信息。
 
@@ -207,6 +215,7 @@ class EmbyClient(
         url = f"/Users/{user_id}"
         return await self.get(url, response_model=UserDto)
 
+    @override
     async def post_password(self, user_id: str, reset_password: bool = False) -> str:
         """更新用户密码。
 
@@ -228,6 +237,7 @@ class EmbyClient(
         await self.post(url, json=payload)
         return passwd
 
+    @override
     async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> None:
         """封禁或解封用户。
 
@@ -243,6 +253,7 @@ class EmbyClient(
             logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
             raise ValueError(f"未找到用户 {user_id}，无法进行封禁或解封操作")
 
+    @override
     async def get_session_list(self) -> int:
         """获取用户在线数量"""
         url = "/Sessions"
@@ -254,6 +265,7 @@ class EmbyClient(
             return 0
         return len([session for session in response if session.NowPlayingItem])
 
+    @override
     async def get_libraries(self) -> list[VirtualFolderInfo] | None:
         """获取 Emby 的媒体库列表。
         Returns:
@@ -265,6 +277,7 @@ class EmbyClient(
             return None
         return response.Items
 
+    @override
     async def get_selectable_media_folders(self) -> list[MediaFolder] | None:
         """获取 Emby 媒体文件夹"""
         url = "/Library/SelectableMediaFolders"
@@ -273,6 +286,7 @@ class EmbyClient(
             parser=lambda data: TypeAdapter(list[MediaFolder]).validate_python(data),
         )
 
+    @override
     async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfo | None:
         """通过设备 ID 获取用户 ID
         Args:
@@ -284,11 +298,13 @@ class EmbyClient(
         params = {"Id": device_id}
         return await self.get(url, params=params, response_model=DeviceInfo)
 
+    @override
     async def get_system_info_public(self) -> PublicSystemInfo | None:
         """获取 Emby 公开信息"""
         url = "System/Info/Public"
         return await self.get(url, response_model=PublicSystemInfo)
 
+    @override
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Emby 媒体库中的所有媒体项。
         Yields:

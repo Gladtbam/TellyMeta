@@ -1,3 +1,5 @@
+from typing import override
+
 import httpx2
 from loguru import logger
 
@@ -15,6 +17,7 @@ class CachedTvdbClient(TvdbClient):
         super().__init__(client, api_key)
         self.cache_ttl = cache_ttl  # 默认缓存 7 天
 
+    @override
     async def episodes_translations(
         self, episode_id: int, language: str = "zho"
     ) -> TvdbPayload | None:
@@ -32,6 +35,7 @@ class CachedTvdbClient(TvdbClient):
 
         return result
 
+    @override
     async def episodes_extended(self, episode_id: int) -> TvdbEpisodesData | None:
         key = f"tvdb:episode:{episode_id}:extended"
 
@@ -47,6 +51,7 @@ class CachedTvdbClient(TvdbClient):
 
         return result
 
+    @override
     async def seasons_translations(
         self, season_id: int, language: str = "zho"
     ) -> TvdbPayload | None:
@@ -64,6 +69,7 @@ class CachedTvdbClient(TvdbClient):
 
         return result
 
+    @override
     async def seasons_extended(self, season_id: int) -> TvdbPayload | None:
         key = f"tvdb:season:{season_id}:extended"
 
@@ -79,6 +85,7 @@ class CachedTvdbClient(TvdbClient):
 
         return result
 
+    @override
     async def series_extended(
         self, series_id: int, meta: str = "translations"
     ) -> TvdbSeriesData | None:
@@ -96,6 +103,7 @@ class CachedTvdbClient(TvdbClient):
 
         return result
 
+    @override
     async def series_translations(
         self, series_id: int, language: str = "zho"
     ) -> TvdbPayload | None:

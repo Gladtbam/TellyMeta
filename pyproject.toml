@@ -41,6 +41,7 @@ dev = [
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+pythonVersion = "3.15"
 exclude = ["**/__pycache__", "**/.venv", "**/.env", ".git", "**/data", "**/logs"]
 typeCheckingMode = "standard"
 strictDictionaryInference = true

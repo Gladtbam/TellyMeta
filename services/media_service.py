@@ -1,21 +1,18 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
-from typing import Any, Generic
+from typing import Any
 
 from models.emby import MediaFolder
-from models.protocols import (
-    BaseItem,
-    BaseItemT_co,
-    DeviceInfoT,
-    LibraryT,
-    PublicSystemInfoT,
-    UserT,
-)
+from models.protocols import BaseItem, DeviceInfo, Library, PublicSystemInfo, User
 
 
-class MediaService(
-    ABC, Generic[UserT, BaseItemT_co, LibraryT, DeviceInfoT, PublicSystemInfoT]
-):
+class MediaService[
+    UserT: User,
+    BaseItemT_co: BaseItem,
+    LibraryT: Library,
+    DeviceInfoT: DeviceInfo,
+    PublicSystemInfoT: PublicSystemInfo,
+](ABC):
     """定义媒体服务的抽象基类"""
 
     server_name: str = "Unknown"

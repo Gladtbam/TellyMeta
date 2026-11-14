@@ -1,9 +1,7 @@
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
+from typing import Any, Literal, Protocol, Self, runtime_checkable
 from uuid import UUID
-
-from typing_extensions import Self
 
 
 @runtime_checkable
@@ -39,9 +37,6 @@ class Library(Dumpable, Protocol):
     ItemId: str | None
 
 
-LibraryT = TypeVar("LibraryT", bound=Library)
-
-
 @runtime_checkable
 class BaseItem(Dumpable, Protocol):
     """定义媒体项的协议"""
@@ -70,9 +65,6 @@ class BaseItem(Dumpable, Protocol):
         ...
 
 
-BaseItemT_co = TypeVar("BaseItemT_co", bound=BaseItem, covariant=True)
-
-
 @runtime_checkable
 class Policy(Dumpable, Protocol):
     """定义用户策略的协议"""
@@ -83,11 +75,10 @@ class Policy(Dumpable, Protocol):
     BlockedTags: list[str] | None
 
 
-PolicyT = TypeVar("PolicyT", bound=Policy)
-
-
 @runtime_checkable
-class User(Dumpable, Protocol[PolicyT]):
+class User[PolicyT: Policy](
+    Dumpable, Protocol
+):  # pylint: disable=used-before-assignment
     """定义用户的协议"""
 
     Name: str | None
@@ -98,9 +89,6 @@ class User(Dumpable, Protocol[PolicyT]):
     def Id(self) -> str | UUID | None:
         """用户唯一标识（兼容 Emby 字符串与 Jellyfin UUID）。"""
         ...
-
-
-UserT = TypeVar("UserT", bound=User)
 
 
 @runtime_checkable
@@ -115,15 +103,9 @@ class DeviceInfo(Dumpable, Protocol):
         ...
 
 
-DeviceInfoT = TypeVar("DeviceInfoT", bound=DeviceInfo)
-
-
 @runtime_checkable
 class PublicSystemInfo(Dumpable, Protocol):
     """定义公共信息的协议"""
 
     Version: str | None
     Id: str | None
-
-
-PublicSystemInfoT = TypeVar("PublicSystemInfoT", bound=PublicSystemInfo)

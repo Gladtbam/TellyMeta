@@ -1,6 +1,6 @@
 import random
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, override
 
 import httpx2
 from loguru import logger
@@ -50,10 +50,12 @@ class JellyfinClient(
         self.server_name = server_name
         self.notify_topic_id = notify_topic_id
 
+    @override
     async def _login(self) -> None:
         # Jellyfin 使用 API Key 进行认证，无需登录
         self._is_logged_in = True
 
+    @override
     async def _apply_auth(self):
         return {
             "Authorization": f"MediaBrowser Token={self._api_key}",
@@ -61,6 +63,7 @@ class JellyfinClient(
             "Content-Type": "application/json",
         }
 
+    @override
     async def create(self, name: str) -> tuple[UserDto | None, str | None]:
         """创建用户。
         Args:
@@ -84,6 +87,7 @@ class JellyfinClient(
         logger.info("创建用户 {} 成功", name)
         return response, pw
 
+    @override
     async def delete_user(self, user_id: str) -> None:
         """删除用户。
         Args:
@@ -92,6 +96,7 @@ class JellyfinClient(
         url = f"/Users/{user_id}"
         await self.delete(url)
 
+    @override
     async def update_policy(
         self, user_id: str, policy: dict[str, Any], is_none: bool = False
     ) -> None:
@@ -111,6 +116,7 @@ class JellyfinClient(
 
         await self.post(url, json=payload)
 
+    @override
     async def get_item_info(self, item_id: str) -> BaseItemDto | None:
         """获取媒体项信息。
         Args:
@@ -185,6 +191,7 @@ class JellyfinClient(
             return None
         return response.Items[0]
 
+    @override
     async def post_item_info(self, item_id: str, item_info: BaseItem) -> None:
         """更新媒体项信息。
         Args:
@@ -196,6 +203,7 @@ class JellyfinClient(
         url = f"/Items/{item_id}"
         await self.post(url, json=item_info.model_dump(exclude_unset=True, mode="json"))
 
+    @override
     async def get_user_info(self, user_id: str) -> UserDto | None:
         """获取用户信息。
         Args:
@@ -206,6 +214,7 @@ class JellyfinClient(
         url = f"/Users/{user_id}"
         return await self.get(url, response_model=UserDto)
 
+    @override
     async def post_password(self, user_id: str, reset_password: bool = False) -> str:
         """更新用户密码。
         Args:
@@ -225,6 +234,7 @@ class JellyfinClient(
         await self.post(url, params=params, json=payload)
         return passwd
 
+    @override
     async def ban_or_unban(self, user_id: str, is_ban: bool = True) -> None:
         """封禁或解封用户。
         Args:
@@ -239,6 +249,7 @@ class JellyfinClient(
             logger.error("获取用户 {} 信息失败，无法进行封禁或解封操作", user_id)
             raise ValueError(f"未找到用户 {user_id}，无法进行封禁或解封操作")
 
+    @override
     async def get_session_list(self) -> int:
         """获取用户在线数量。
         Returns:
@@ -253,6 +264,7 @@ class JellyfinClient(
             return 0
         return len([session for session in response if session.NowPlayingItem])
 
+    @override
     async def get_libraries(self) -> list[VirtualFolderInfo] | None:
         """获取 Jellyfin 的媒体库列表。
         Returns:
@@ -269,9 +281,11 @@ class JellyfinClient(
             return None
         return response
 
+    @override
     async def get_selectable_media_folders(self):
         raise NotImplementedError
 
+    @override
     async def get_user_id_by_device_id(self, device_id: str) -> DeviceInfoDto | None:
         """通过设备 ID 获取用户 ID
         Args:
@@ -283,11 +297,13 @@ class JellyfinClient(
         params = {"id": device_id}
         return await self.get(url, params=params, response_model=DeviceInfoDto)
 
+    @override
     async def get_system_info_public(self) -> PublicSystemInfo | None:
         """获取 Jellyfin 公开信息"""
         url = "System/Info/Public"
         return await self.get(url, response_model=PublicSystemInfo)
 
+    @override
     async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
         """获取 Jellyfin 媒体库中的所有媒体项。
         Yields:
