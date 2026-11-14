@@ -1,5 +1,5 @@
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Callable
 from time import monotonic
 from typing import Any, Literal, TypeVar, overload
@@ -41,8 +41,8 @@ class RateLimiter:
                 self.allowance -= amount
 
 
-class BaseClient(ABC):
-    """抽象基类，定义了基本的HTTP客户端接口"""
+class BaseClient:
+    """HTTP 客户端基类，提供通用的请求发送、重试与响应解析能力"""
 
     def __init__(self, client: httpx2.AsyncClient):
         self._client = client
@@ -145,6 +145,8 @@ class BaseClient(ABC):
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("未知错误：{}", e)
                 raise
+
+        return None
 
     @overload
     async def get(

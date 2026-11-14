@@ -19,13 +19,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alembic.config import Config
 from sqlalchemy import BigInteger, Integer, literal_column, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
-from alembic.config import Config
 from core.database import (
     DATA_DIR,
     DATABASE_URL,
@@ -52,7 +52,7 @@ def mask_database_url(url: str) -> str:
     """隐藏数据库 URL 中的密码，避免日志或终端输出泄露敏感凭据"""
     try:
         return make_url(url).render_as_string(hide_password=True)
-    except (ArgumentError, ValueError):
+    except ArgumentError, ValueError:
         return url
 
 

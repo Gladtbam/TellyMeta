@@ -31,7 +31,7 @@ class ScoreService:
 
     async def process_message(
         self, user_id: int, admin_ids: list | set, count_score: bool = True
-    ) -> None | Result:
+    ) -> Result | None:
         """处理用户消息，检测是否为刷屏行为并按需累计消息积分。
 
         Args:
@@ -67,16 +67,17 @@ class ScoreService:
                     success=True,
                     message=textwrap.dedent(f"""\
                         用户 [{user_id}](tg://user?id={user_id}) 由于刷屏行为已被警告一次。
-                        
+
                         当前警告次数: **{updated_user.warning_count}**
                         当前积分: **{updated_user.score}**
                     """),
                 )
-            else:
-                return Result(
-                    success=False,
-                    message=f"用户 {user_id} 刷屏警告失败，请管理员关注。",
-                )
+            return Result(
+                success=False,
+                message=f"用户 {user_id} 刷屏警告失败，请管理员关注。",
+            )
+
+        return None
 
     def _calculate_distribution(self) -> tuple[dict[int, int], int]:
         """积分计算逻辑: 简单线性模型
@@ -100,11 +101,11 @@ class ScoreService:
     async def settle_and_clear_scores(self):
         """结算积分并清理状态"""
         if not self.state.message_counts:
-            return
+            return None
 
         score_deltas, total_score = self._calculate_distribution()
         if not score_deltas:
-            return
+            return None
 
         await self.telegram_repo.batch_update_scores(score_deltas)
 

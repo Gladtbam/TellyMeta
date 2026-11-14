@@ -95,7 +95,7 @@ class Base(DeclarativeBase):
         return f"{self.__class__.__name__}({', '.join(f'{col.name}={getattr(self, col.name)}' for col in self.__table__.columns)})"
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """提供异步数据库会话的生成器。
     用于依赖注入，确保每次请求都能获取到一个新的会话，并在请求结束时关闭会话。
     Yields:
@@ -132,9 +132,11 @@ async def backup_database() -> None:
     db_path = DATA_DIR / "tellymeta.db"
 
     try:
-        async with aiosqlite.connect(db_path) as src_db:
-            async with aiosqlite.connect(backup_file) as dst_db:
-                await src_db.backup(dst_db)
+        async with (
+            aiosqlite.connect(db_path) as src_db,
+            aiosqlite.connect(backup_file) as dst_db,
+        ):
+            await src_db.backup(dst_db)
         logger.info("数据库备份成功: {}", backup_file.name)
     except (sqlite3.Error, OSError) as e:
         logger.exception("备份数据库时出错: {}", e)

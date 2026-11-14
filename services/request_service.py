@@ -246,8 +246,8 @@ class RequestService:
         req_id = req.id
         buttons = [
             [
-                Button.inline("✅ 批准", data=f"req_ap_{req_id}".encode("utf-8")),
-                Button.inline("❌ 拒绝", data=f"req_deny_{req_id}".encode("utf-8")),
+                Button.inline("✅ 批准", data=f"req_ap_{req_id}".encode()),
+                Button.inline("❌ 拒绝", data=f"req_deny_{req_id}".encode()),
             ]
         ]
 

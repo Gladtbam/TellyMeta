@@ -20,6 +20,7 @@ from core.dependencies import (
     get_telethon_client,
 )
 from core.errors import ApiError
+from core.task_utils import create_background_task
 from core.telegram_manager import TelethonClientWarper
 from core.webapp_auth import (
     get_current_user_id,
@@ -647,7 +648,7 @@ async def trigger_upload_subtitle(
             "message": "该媒体服务器未绑定可用的 Sonarr/Radarr 实例，无法上传字幕",
         }
 
-    asyncio.create_task(
+    create_background_task(
         run_subtitle_upload_flow(
             user_id, client, None, radarr_clients, sonarr_clients, server_id
         )

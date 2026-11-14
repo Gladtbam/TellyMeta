@@ -51,7 +51,7 @@ class TelegramRepository:
         """
         user = await self.get_by_id(user_id)
         if user is None:
-            return
+            return None
         await self.session.delete(user)
         await self.session.commit()
         return user

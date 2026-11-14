@@ -40,8 +40,8 @@ async def get_mkv_info(
     episode_path: Path,
     *,
     stability_wait: float = 2.0,
-    timeout: float = 600.0,
-) -> None | dict[str, list[dict[str, Any]]]:
+    timeout: float = 600.0,  # noqa: ASYNC109 - 显式保留 timeout 参数以兼容调用方
+) -> dict[str, list[dict[str, Any]]] | None:
     """获取 MKV 文件的轨道和附件信息，确保文件存在且大小稳定后再进行处理"""
     start_time = time.time()
     while not await aio_os.path.exists(episode_path):
@@ -149,7 +149,7 @@ async def mkv_merge(
     episode_path: Path,
     *,
     stability_wait: float = 2.0,
-    timeout: float = 600.0,
+    timeout: float = 600.0,  # noqa: ASYNC109 - 显式保留 timeout 参数以兼容调用方
 ) -> tuple[bool, str | None]:
     """安全清理 MKV 冗余字幕：先校验路径与目录权限，再生成并验证独立输出文件，最后原子替换原文件
 

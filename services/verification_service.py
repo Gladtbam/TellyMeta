@@ -51,8 +51,8 @@ class VerificationService:
         keyboard = [
             [Button.url("➡️ 前往验证", url)],
             [
-                Button.inline("⛔ 踢出", f"kick_{user_id}".encode("utf-8")),
-                Button.inline("🚫 封禁", f"ban_{user_id}".encode("utf-8")),
+                Button.inline("⛔ 踢出", f"kick_{user_id}".encode()),
+                Button.inline("🚫 封禁", f"ban_{user_id}".encode()),
             ],
         ]
 
@@ -119,7 +119,11 @@ class VerificationService:
         await self.verification_repo.delete(user_id)
         await self.client.unban_user(user_id)  # 解除用户禁言
 
-        return Result(success=True, message="验证成功！您现在可以在群组中发言了。", private_message=challenge.message_id)  # type: ignore
+        return Result(
+            success=True,
+            message="验证成功！您现在可以在群组中发言了。",
+            private_message=challenge.message_id,
+        )  # type: ignore
 
     async def reject_verification(self, user_id: int, is_ban: bool = False) -> Result:
         """拒绝用户的验证请求并将其移出群组"""

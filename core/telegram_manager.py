@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 import python_socks
 from fastapi import FastAPI
@@ -38,7 +38,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class TelethonClientWarper:
-    _handlers: list[tuple[Callable, EventBuilder]] = []
+    _handlers: ClassVar[list[tuple[Callable, EventBuilder]]] = []
 
     def __init__(self, app: FastAPI) -> None:
         self.app = app
@@ -70,6 +70,8 @@ class TelethonClientWarper:
             **kwargs,
         )
         self.chat_id = settings.telegram_chat_id
+        # 缓存当前 Bot 自身的用户 ID，避免频繁调用 get_me()
+        self._cached_me_id: int | None = None
         self._register_handlers()
 
     @staticmethod
@@ -132,7 +134,7 @@ class TelethonClientWarper:
 
     async def get_user_name(
         self, user_id: int | str, need_username: bool = False
-    ) -> str | None | Literal[False]:
+    ) -> str | Literal[False] | None:
         """获取用户的名称或用户名
         Args:
             user_id (int | str): 用户的ID或用户名
@@ -233,13 +235,12 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            participant = await self.client(
+            return await self.client(
                 functions.channels.GetParticipantRequest(
                     channel=self.chat_id,  # type: ignore
                     participant=await self.client.get_input_entity(user_id),
                 )
             )
-            return participant
         except UserNotParticipantError:
             logger.warning("用户 {} 不是频道/群组 {} 的成员。", user_id, self.chat_id)
             return None
@@ -261,7 +262,7 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            msg = await self.client.send_message(
+            return await self.client.send_message(
                 chat_id,
                 message,
                 file=file,
@@ -269,7 +270,6 @@ class TelethonClientWarper:
                 reply_to=reply_to,  # type: ignore
                 **kwargs,
             )
-            return msg
         except errors.FloodWaitError as e:
             logger.error("Failed to send message: {}", e)
             raise
@@ -300,8 +300,7 @@ class TelethonClientWarper:
         if not self.client.is_connected():
             await self.connect()
         try:
-            msg = await self.client.edit_message(chat_id, message_id, new_content)
-            return msg
+            return await self.client.edit_message(chat_id, message_id, new_content)
         except errors.MessageEditTimeExpiredError as e:
             logger.error("无法编辑消息 {}：{}", message_id, e)
             raise

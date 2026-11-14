@@ -105,7 +105,7 @@ async def _get_bot_self_id(tg_client: TelethonClientWarper) -> int | None:
     me = await tg_client.client.get_me()
     me_id = getattr(me, "id", None)
     if me_id is not None:
-        setattr(tg_client, "_cached_me_id", me_id)
+        tg_client._cached_me_id = me_id
     return me_id
 
 

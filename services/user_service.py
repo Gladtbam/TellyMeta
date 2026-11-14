@@ -45,7 +45,7 @@ class UserService:
         self.media_clients: dict[int, MediaService] = app.state.media_clients or {}
 
     async def perform_checkin(
-        self, user_id: int, username: str | None | Literal[False]
+        self, user_id: int, username: str | Literal[False] | None
     ) -> Result:
         """用户签到"""
         user = await self.telegram_repo.get_or_create(user_id)
@@ -90,15 +90,13 @@ class UserService:
                 if is_consecutive:
                     msg += f"\n(基础 {base_score} + 连签 {bonus})"
                 return Result(success=True, message=msg)
-            else:
-                return Result(success=False, message="签到失败，请稍后再试。")
-        else:
-            return await self._perform_lucky_checkin(user, username, is_consecutive)
+            return Result(success=False, message="签到失败，请稍后再试。")
+        return await self._perform_lucky_checkin(user, username, is_consecutive)
 
     async def _perform_lucky_checkin(
         self,
         user: TelegramUser,
-        username: str | None | Literal[False],
+        username: str | Literal[False] | None,
         is_consecutive: bool,
     ) -> Result:
         """幸运签到逻辑"""
@@ -430,4 +428,4 @@ class UserService:
 
         except (SQLAlchemyError, HTTPError, ValueError) as e:
             logger.exception(f"Delete account error for {user_id}: {e}")
-            return Result(False, f"删除过程中发生错误: {str(e)}")
+            return Result(False, f"删除过程中发生错误: {e!s}")

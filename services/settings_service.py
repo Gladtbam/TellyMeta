@@ -184,12 +184,9 @@ class SettingsServices:
                 return Result(
                     success=True, message=f"已撤销用户 {user_id} 的管理员权限。"
                 )
-            else:
-                await self.telegram_repo.toggle_admin(user_id, is_admin=True)
-                self.app.state.admin_ids.add(user_id)
-                return Result(
-                    success=True, message=f"已授予用户 {user_id} 管理员权限。"
-                )
+            await self.telegram_repo.toggle_admin(user_id, is_admin=True)
+            self.app.state.admin_ids.add(user_id)
+            return Result(success=True, message=f"已授予用户 {user_id} 管理员权限。")
         except (ValueError, KeyError) as e:
             return Result(success=False, message=str(e))
 
@@ -205,7 +202,7 @@ class SettingsServices:
                 return Result(True, f"✅ 服务器 **{server.name}** 已启用并连接。")
             except (httpx2.HTTPError, ValueError, OSError) as e:
                 await self.server_repo.toggle_enabled(server_id)
-                return Result(False, f"❌ 启用失败，无法连接到服务器: {str(e)}")
+                return Result(False, f"❌ 启用失败，无法连接到服务器: {e!s}")
         else:
             await self._remove_and_close_client(server)
             return Result(True, f"🔴 服务器 **{server.name}** 已停用并断开连接。")
@@ -432,7 +429,7 @@ class SettingsServices:
             status_text = "开启" if new_state_str == "true" else "关闭"
             return Result(success=True, message=f"已{status_text}该功能。")
         except (SQLAlchemyError, ValueError) as e:
-            return Result(success=False, message=f"设置失败: {str(e)}")
+            return Result(success=False, message=f"设置失败: {e!s}")
 
     async def update_llm_config(self, payload: LlmConfigUpdateDto) -> Result:
         """保存 Mini App 提交的 LLM 翻译参数并热重载 AI 客户端。
@@ -824,7 +821,7 @@ class SettingsServices:
             logger.error("数据库错误 when add_server: {}", e)
             return Result(False, "系统数据库错误，请联系管理员")
         except Exception as e:  # pylint: disable=broad-exception-caught
-            return Result(False, f"添加失败: {str(e)}")
+            return Result(False, f"添加失败: {e!s}")
 
         try:
             new_client = None
@@ -856,7 +853,7 @@ class SettingsServices:
         except Exception as e:  # pylint: disable=broad-exception-caught
             # 其他初始化失败，回滚数据库
             await self.server_repo.delete(instance.id)
-            return Result(False, f"❌ 客户端初始化失败 (已回滚): {str(e)}")
+            return Result(False, f"❌ 客户端初始化失败 (已回滚): {e!s}")
 
     async def delete_server(self, server_id: int) -> Result:
         """删除服务器"""

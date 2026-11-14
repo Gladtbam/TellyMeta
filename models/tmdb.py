@@ -11,19 +11,18 @@ class TmdbTvSeries(BaseModel):
     first_air_date: str
     genre_ids: list[int | str] = Field(default_factory=list)
     genres: list[str] = Field(default_factory=list)
-    seasons: list['TmdbSeason'] = Field(default_factory=list)
+    seasons: list[TmdbSeason] = Field(default_factory=list)
 
-    @field_validator('genre_ids', mode='before')
+    @field_validator("genre_ids", mode="before")
     @classmethod
     def validate_genre_ids(cls, value):
         if isinstance(value, list):
             return [genre_mapping.get(genre, genre) for genre in value]
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return [genre_mapping.get(value, value)]
-        else:
-            raise ValueError("无效的genre_ids格式，预期的列表或字符串")
+        raise ValueError("无效的genre_ids格式，预期的列表或字符串")
 
-    @field_validator('genres', mode='before')
+    @field_validator("genres", mode="before")
     @classmethod
     def validate_genres(cls, value):
         if isinstance(value, list):
@@ -31,24 +30,24 @@ class TmdbTvSeries(BaseModel):
             for genre in value:
                 key = None
                 if isinstance(genre, dict):
-                    key = genre.get('id') or genre.get('name')
+                    key = genre.get("id") or genre.get("name")
                 else:
                     key = genre
 
                 if key is not None:
                     results.append(genre_mapping.get(key, key))
             return results
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return [genre_mapping.get(value, value)]
-        else:
-            raise ValueError("类型格式、预期列表或字符串无效")
+        raise ValueError("类型格式、预期列表或字符串无效")
 
-    @field_validator('seasons', mode='before')
+    @field_validator("seasons", mode="before")
     @classmethod
     def validate_seasons(cls, value):
         if isinstance(value, list):
             return [TmdbSeason.model_validate(season) for season in value]
         return []
+
 
 class TmdbEpisode(BaseModel):
     id: int
@@ -64,6 +63,7 @@ class TmdbEpisode(BaseModel):
     vote_average: float | None = None
     vote_count: int | None = None
 
+
 class TmdbSeason(BaseModel):
     _id: str | None = None
     air_date: str | None = None
@@ -74,35 +74,36 @@ class TmdbSeason(BaseModel):
     vote_average: float | None = None
     episodes: list[TmdbEpisode] = Field(default_factory=list)
 
-    @field_validator('episodes', mode='before')
+    @field_validator("episodes", mode="before")
     @classmethod
     def validate_episodes(cls, value):
         if isinstance(value, list):
             return [TmdbEpisode.model_validate(episode) for episode in value]
         return []
 
+
 class TmdbFindPayload(BaseModel):
     tv_results: list[TmdbTvSeries] = Field(default_factory=list)
     tv_episode_results: list[TmdbEpisode] = Field(default_factory=list)
 
-    @field_validator('tv_results', mode='before')
+    @field_validator("tv_results", mode="before")
     @classmethod
     def validate_tv_results(cls, value):
         if isinstance(value, list):
             return [TmdbTvSeries.model_validate(tv) for tv in value]
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             return [TmdbTvSeries.model_validate(value)]
-        else:
-            raise ValueError("tv_results 格式无效，需要列表或字典")
-    @field_validator('tv_episode_results', mode='before')
+        raise ValueError("tv_results 格式无效，需要列表或字典")
+
+    @field_validator("tv_episode_results", mode="before")
     @classmethod
     def validate_tv_episode_results(cls, value):
         if isinstance(value, list):
             return [TmdbEpisode.model_validate(episode) for episode in value]
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             return [TmdbEpisode.model_validate(value)]
-        else:
-            raise ValueError("tv_episode_results 格式、预期列表或字典无效")
+        raise ValueError("tv_episode_results 格式、预期列表或字典无效")
+
 
 class TmdbMovie(BaseModel):
     id: int
@@ -121,7 +122,7 @@ class TmdbMovie(BaseModel):
     vote_count: int | None = None
     genres: list[str] = Field(default_factory=list)
 
-    @field_validator('genres', mode='before')
+    @field_validator("genres", mode="before")
     @classmethod
     def validate_genres(cls, value):
         if isinstance(value, list):
@@ -129,17 +130,17 @@ class TmdbMovie(BaseModel):
             for genre in value:
                 key = None
                 if isinstance(genre, dict):
-                    key = genre.get('id') or genre.get('name')
+                    key = genre.get("id") or genre.get("name")
                 else:
                     key = genre
 
                 if key is not None:
                     results.append(genre_mapping.get(key, key))
             return results
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return [genre_mapping.get(value, value)]
-        else:
-            raise ValueError("类型格式、预期列表或字符串无效")
+        raise ValueError("类型格式、预期列表或字符串无效")
+
 
 TmdbTvSeries.model_rebuild()
 TmdbEpisode.model_rebuild()

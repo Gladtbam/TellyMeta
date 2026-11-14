@@ -7,11 +7,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from core.config import genre_mapping
 from models.radarr_webhook import (
+    CustomFormatInfoDto,
     Languages,
     MediaCover,
     MediaInfoDto,
     WebhookBase,
-    customFormatInfoDto,
 )
 
 
@@ -118,7 +118,7 @@ class SonarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
     downloadClient: str
     downloadClientType: str
     downloadId: str
-    customFormatInfo: customFormatInfoDto
+    customFormatInfo: CustomFormatInfoDto
 
 
 class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
@@ -134,7 +134,7 @@ class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
     downloadClient: str | None = None
     downloadClientType: str | None = None
     downloadId: str | None = None
-    customFormatInfo: customFormatInfoDto | None = None
+    customFormatInfo: CustomFormatInfoDto | None = None
     deletedFiles: list[FileInfoDto] = Field(default_factory=list)
 
     sourcePath: str | None = None
@@ -206,7 +206,7 @@ class SonarrWebhookManualInteractionPayload(
     downloadClientType: str | None = None
     downloadId: str
     downloadStatus: str
-    customFormatInfo: customFormatInfoDto
+    customFormatInfo: CustomFormatInfoDto
 
 
 class SonarrWebhookTestPayload(WebhookBase[Literal["Test"]]):

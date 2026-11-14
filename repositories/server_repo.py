@@ -186,8 +186,8 @@ class ServerRepository:
     async def update_notify_config(
         self,
         server_id: int,
-        notify_topic_id: int | None | object = _UNSET,
-        request_notify_topic_id: int | None | object = _UNSET,
+        notify_topic_id: int | object | None = _UNSET,
+        request_notify_topic_id: int | object | None = _UNSET,
     ) -> ServerInstance | None:
         """更新通知话题配置"""
         server = await self.get_by_id(server_id)

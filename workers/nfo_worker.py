@@ -16,7 +16,6 @@ from core.template_manager import template_manager
 from models.radarr import MovieResource
 from models.radarr_webhook import (
     RadarrWebhookAddedPayload,
-    RadarrWebhookDownloadPayload,
 )
 from models.sonarr import EpisodeResource, SeriesResource
 from models.sonarr_webhook import (
@@ -384,6 +383,15 @@ async def create_movie_nfo(
     await _generate_and_save_nfo("movie.nfo.j2", context, nfo_path)
 
 
+def _iter_video_files(folder_path: Path) -> list[Path]:
+    """同步扫描目录下的视频文件列表，供异步任务通过线程池调用。"""
+    return [
+        file
+        for file in folder_path.iterdir()
+        if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS
+    ]
+
+
 async def handle_movie_add_metadata(
     payload: RadarrWebhookAddedPayload, tmdb: TmdbClient | None
 ) -> None:
@@ -392,11 +400,11 @@ async def handle_movie_add_metadata(
     async with _temporary_ignore_file(folder_path):
         logger.info("正在为新添加的电影 {} 检查现有文件...", payload.movie.title)
         try:
-            for file in folder_path.iterdir():
-                if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS:
-                    await create_movie_nfo(
-                        file.with_suffix(".nfo"), payload.movie.tmdbId, tmdb, False
-                    )
+            video_files = await asyncio.to_thread(_iter_video_files, folder_path)
+            for file in video_files:
+                await create_movie_nfo(
+                    file.with_suffix(".nfo"), payload.movie.tmdbId, tmdb, False
+                )
         except Exception as e:
             logger.error("为新电影生成 NFO 失败: {}", e)
 
@@ -410,9 +418,9 @@ async def create_movie_nfo_from_resource(
     folder_path = Path(movie.path)
     async with _temporary_ignore_file(folder_path):
         try:
-            for file in folder_path.iterdir():
-                if file.is_file() and file.suffix.lower() in VIDEO_EXTENSIONS:
-                    await create_movie_nfo(file.with_suffix(".nfo"), movie.tmdbId, tmdb)
+            video_files = await asyncio.to_thread(_iter_video_files, folder_path)
+            for file in video_files:
+                await create_movie_nfo(file.with_suffix(".nfo"), movie.tmdbId, tmdb)
         except OSError as e:
             logger.error("为电影生成 NFO 失败: {}", e)
 
@@ -439,12 +447,15 @@ async def rebuild_radarr_metadata_task(
             if movie.id is None:
                 continue
             logger.info("[{}/{}] 处理电影: {}", index, total, movie.title)
-            if movie.path:
-                if mapped_dir := radarr_client.to_local_path(movie.path):
-                    movie.path = mapped_dir
-            if movie.hasFile and movie.movieFile and movie.movieFile.path:
-                if mapped_path := radarr_client.to_local_path(movie.movieFile.path):
-                    movie.movieFile.path = mapped_path
+            if movie.path and (mapped_dir := radarr_client.to_local_path(movie.path)):
+                movie.path = mapped_dir
+            if (
+                movie.hasFile
+                and movie.movieFile
+                and movie.movieFile.path
+                and (mapped_path := radarr_client.to_local_path(movie.movieFile.path))
+            ):
+                movie.movieFile.path = mapped_path
 
             await create_movie_nfo_from_resource(movie, tmdb_client)
 

@@ -64,9 +64,7 @@ def setup_logging():
     logger.remove()
 
     def console_filter(record):
-        if "POST /webhook/" in record["message"]:
-            return False
-        return True
+        return "POST /webhook/" not in record["message"]
 
     logger.add(
         sys.stderr,

@@ -158,17 +158,18 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
             translated_text = tmdb_overview
 
         # 如果 TMDB 没有数据，使用 AI 翻译
-        if text.endswith("（AI翻译）"):
-            text = text[:-6]
+        source_text = text[:-6] if text.endswith("（AI翻译）") else text
 
         if not translated_text:
-            translated_text = await ai_client.translate(field, text)
+            translated_text = await ai_client.translate(field, source_text)
 
         if translated_text:
             updates[field] = f"{translated_text}（AI翻译）"
         else:
-            updates[field] = text
-            logger.warning("项目 {} 中的字段 {} 翻译失败：{}", field, item_id, text)
+            updates[field] = source_text
+            logger.warning(
+                "项目 {} 中的字段 {} 翻译失败：{}", field, item_id, source_text
+            )
 
     if item.Genres:
         updates["Genres"] = [genre_mapping.get(genre, genre) for genre in item.Genres]

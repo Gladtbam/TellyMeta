@@ -102,10 +102,7 @@ class AccountService:
 
         prefix_path = parsed_prefix.path or "/"
         url_path = parsed_url.path or "/"
-        if not url_path.startswith(prefix_path):
-            return False
-
-        return True
+        return url_path.startswith(prefix_path)
 
     async def verify_external_user(self, server_id: int, user_input: str) -> Result:
         """执行外部验证"""
@@ -122,7 +119,7 @@ class AccountService:
 
         user_input = user_input.strip()
 
-        if user_input.startswith("http://") or user_input.startswith("https://"):
+        if user_input.startswith(("http://", "https://")):
             for prefix in prefixes:
                 if self._matches_prefix(user_input, prefix):
                     target_url = user_input
@@ -171,8 +168,7 @@ class AccountService:
                         is_valid = expr(**context)
                         if is_valid:
                             return Result(True, "验证通过")
-                        else:
-                            return Result(False, "验证失败 (解析未通过)。")
+                        return Result(False, "验证失败 (解析未通过)。")
                     except (
                         NameError,
                         TypeError,
@@ -185,18 +181,15 @@ class AccountService:
                 else:
                     if response.is_success:
                         return Result(True, "验证通过")
-                    else:
-                        return Result(
-                            False, f"验证失败 (Status: {response.status_code})。"
-                        )
+                    return Result(False, f"验证失败 (Status: {response.status_code})。")
         except RequestError as e:
             logger.error("外部验证错误：{}", e)
-            return Result(False, f"验证请求发生网络错误: {str(e)}")
+            return Result(False, f"验证请求发生网络错误: {e!s}")
 
     async def register(
         self,
         user_id: int,
-        username: str | None | Literal[False],
+        username: str | Literal[False] | None,
         server_id: int,
         skip_checks: bool = False,
     ) -> Result:
@@ -303,13 +296,13 @@ class AccountService:
                 True,
                 textwrap.dedent(f"""\
                 🎉 **注册成功！**
-                
+
                 服务器: `{server.name}`
                 地址: `{server.url}`
                 用户名: `{username}`
                 密码: `{pw}`
-                
-                有效期至: {media_user.expires_at.strftime('%Y-%m-%d')}
+
+                有效期至: {media_user.expires_at.strftime("%Y-%m-%d")}
                 请尽快登录并修改密码，祝您观影愉快！
             """),
             )
@@ -445,10 +438,7 @@ class AccountService:
             all_libs: 可选，预先获取的媒体库列表，避免批量撤权时重复请求。
         """
         # 1. 准备基础策略字典
-        if current_policy:
-            policy_dict = current_policy.model_dump()
-        else:
-            policy_dict = {}
+        policy_dict = current_policy.model_dump() if current_policy else {}
 
         # 2. 修改 NSFW 相关字段
         if enable_nsfw:
@@ -539,7 +529,8 @@ class AccountService:
                 )
 
         # 宽限期内续期时，先在媒体服务器上恢复账户，再清除待删除状态与扣减积分
-        if media_info.Policy.IsDisabled or media_user.is_banned:
+        is_policy_disabled = bool(media_info.Policy and media_info.Policy.IsDisabled)
+        if is_policy_disabled or media_user.is_banned:
             try:
                 await client.ban_or_unban(media_user.media_id, is_ban=False)
             except (HTTPError, ValueError) as e:
@@ -564,7 +555,7 @@ class AccountService:
         )
 
     async def redeem_code(
-        self, user_id: int, username: str | None | Literal[False], code_str: str
+        self, user_id: int, username: str | Literal[False] | None, code_str: str
     ) -> Result:
         """使用注册码或续期码注册或续期
         Args:
@@ -657,11 +648,11 @@ class AccountService:
             True,
             textwrap.dedent(f"""\
             ✅ **{type_cn}生成成功**
-            
+
             服务器: `{server.name}`
             代码: `{code.code}`
-            过期时间: {code.expires_at.strftime('%Y-%m-%d')}
-            
+            过期时间: {code.expires_at.strftime("%Y-%m-%d")}
+
             请妥善保管此码，祝您观影愉快！
         """),
         )
@@ -695,8 +686,12 @@ class AccountService:
             else set()
         )
 
-        is_unlocked = policy.EnableAllFolders or any(
-            lid in policy.EnabledFolders for lid in nsfw_ids
+        is_unlocked = bool(
+            policy
+            and (
+                policy.EnableAllFolders
+                or any(lid in (policy.EnabledFolders or []) for lid in nsfw_ids)
+            )
         )
 
         target_enable_nsfw = not is_unlocked

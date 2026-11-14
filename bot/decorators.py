@@ -48,7 +48,7 @@ def require_admin(func):
         event = args[1] if len(args) > 1 and hasattr(args[1], "sender_id") else None
         if app is None or event is None:
             logger.error("必须提供 FastAPI 实例和事件对象")
-            return
+            return None
 
         sender_id = getattr(event, "sender_id", None)
         if sender_id not in app.state.admin_ids:
@@ -58,7 +58,7 @@ def require_admin(func):
                 await safe_reply(
                     event, f"[你](tg://user?id={sender_id})没有权限执行此操作。"
                 )
-            return
+            return None
         return await func(*args, **kwargs)
 
     return wrapper
@@ -75,7 +75,7 @@ def require_real_reply(func):
         event = args[1] if len(args) > 1 and hasattr(args[1], "sender_id") else None
         if event is None:
             logger.error("必须提供事件对象")
-            return
+            return None
 
         if not isinstance(event, events.NewMessage.Event):
             return await func(*args, **kwargs)
@@ -97,7 +97,7 @@ def require_real_reply(func):
 
         if not msg_id_to_fetch:
             await safe_reply(event, "❌ 请回复某个特定成员的消息。")
-            return
+            return None
 
         # 使用我们严谨过滤出的目标 msg ID 回调拉取数据，摒弃 Telethon 内置黑盒获取导致的错位
         app = args[0] if len(args) > 0 and hasattr(args[0], "state") else None
@@ -107,13 +107,13 @@ def require_real_reply(func):
 
         if not client:
             logger.error("无法获取 Telethon client 实例")
-            return
+            return None
 
         reply_msg = await client.get_messages(event.chat_id, ids=msg_id_to_fetch)
 
         if not getattr(reply_msg, "sender_id", None):
             await safe_reply(event, "无法获取回复的用户信息。")
-            return
+            return None
 
         kwargs["target_user_id"] = reply_msg.sender_id
         return await func(*args, **kwargs)

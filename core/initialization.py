@@ -4,11 +4,11 @@ import sys
 import textwrap
 from pathlib import Path
 
+from alembic.config import Config
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alembic import command
-from alembic.config import Config
 from core.config import get_settings
 from core.database import DATABASE_URL
 from core.telegram_manager import TelethonClientWarper
@@ -66,14 +66,16 @@ def check_required_settings():
     if missing:
         logger.error("❌ 启动失败：缺少必要的配置项: {}", ", ".join(missing))
         logger.error("请在 .env 文件或环境变量中填入这些配置。")
-        sys.exit(textwrap.dedent(f"""\
+        sys.exit(
+            textwrap.dedent(f"""\
             ==================================================================
             |                      错误提示                       |
             ==================================================================
-            | 启动失败：缺少必要的配置项: {', '.join(missing)}。
+            | 启动失败：缺少必要的配置项: {", ".join(missing)}。
             | 请在 .env 文件或环境变量中填入这些配置。
             ==================================================================
-            """))
+            """)
+        )
     else:
         logger.info("所有必要的配置项均已设置。")
 
@@ -87,7 +89,8 @@ def check_sqlite_version():
             "SQLite 版本过低，当前版本为 {}。请升级到 3.35.0 或更高版本以支持所需功能。",
             sqlite3.sqlite_version,
         )
-        sys.exit(textwrap.dedent(f"""\
+        sys.exit(
+            textwrap.dedent(f"""\
             ==================================================================
             |                      错误提示                       |
             ==================================================================
@@ -105,7 +108,8 @@ def check_sqlite_version():
             |     brew update
             |     brew upgrade sqlite3
             ==================================================================
-            """))
+            """)
+        )
     else:
         logger.info("SQLite 版本检查通过，当前版本为 {}。", sqlite3.sqlite_version)
 
@@ -116,8 +120,7 @@ def check_mkvtoolnix() -> bool:
         subprocess.run(
             ["mkvmerge", "--version"],
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
         )
         logger.info("mkvtoolnix 检查通过。")
         return True

@@ -12,14 +12,15 @@ class MediaRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_id(self, id: int, server_id: int) -> MediaUser | None:
+    async def get_by_id(self, user_id: int, server_id: int) -> MediaUser | None:
         """通过 ID 获取 Media 用户
         Args:
-            id (int): Telegram 用户ID
+            user_id (int): Telegram 用户ID
+            server_id (int): 媒体服务器 ID
         Returns:
             MediaUser | None: 如果找到用户则返回用户对象，否则返回None
         """
-        return await self.session.get(MediaUser, (id, server_id))
+        return await self.session.get(MediaUser, (user_id, server_id))
 
     async def get_all_by_id(self, user_id: int) -> Sequence[MediaUser]:
         """获取指定 Telegram 用户的所有媒体账户

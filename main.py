@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-import bot
 from core.config import get_settings, setup_logging
 from core.errors import register_exception_handlers
 from core.initialization import run_db_migrations

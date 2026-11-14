@@ -304,7 +304,7 @@ class JellyfinClient(
         return await self.get(url, response_model=PublicSystemInfo)
 
     @override
-    async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
+    async def get_all_items(self) -> AsyncGenerator[BaseItemDto]:
         """获取 Jellyfin 媒体库中的所有媒体项。
         Yields:
             BaseItemDto: 媒体项对象。

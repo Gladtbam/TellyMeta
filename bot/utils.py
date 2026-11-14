@@ -8,6 +8,8 @@ from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 from telethon import errors, events
 
+from core.task_utils import create_background_task
+
 
 async def _delayed_delete(message, delay: int = 10) -> None:
     """延迟删除消息"""
@@ -19,7 +21,7 @@ async def safe_respond(event, msg: str, delete_after: int = 10):
     """安全发送消息并在指定时间后删除"""
     try:
         message = await event.respond(msg, parse_mode="markdown")
-        asyncio.create_task(_delayed_delete(message, delete_after))
+        create_background_task(_delayed_delete(message, delete_after))
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
@@ -29,7 +31,7 @@ async def safe_reply(event, msg: str, delete_after: int = 10):
     """安全回复消息并在指定时间后删除"""
     try:
         message = await event.reply(msg, parse_mode="markdown")
-        asyncio.create_task(_delayed_delete(message, delete_after))
+        create_background_task(_delayed_delete(message, delete_after))
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
@@ -39,7 +41,7 @@ async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 6
     """安全发送带按钮的消息并在指定时间后删除"""
     try:
         message = await event.respond(msg, buttons=keyboard, parse_mode="markdown")
-        asyncio.create_task(_delayed_delete(message, delete_after))
+        create_background_task(_delayed_delete(message, delete_after))
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
@@ -49,7 +51,7 @@ async def safe_reply_keyboard(event, msg: str, keyboard, delete_after: int = 60)
     """安全回复带按钮的消息并在指定时间后删除"""
     try:
         message = await event.reply(msg, buttons=keyboard, parse_mode="markdown")
-        asyncio.create_task(_delayed_delete(message, delete_after))
+        create_background_task(_delayed_delete(message, delete_after))
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
@@ -167,7 +169,7 @@ async def get_user_input_or_cancel(conv, cancel_button_msg_id: int) -> str | Non
                 )
                 return None
             return msg.text.strip() if msg.text else None
-        except (asyncio.CancelledError, ValueError):
+        except asyncio.CancelledError, ValueError:
             return None
 
     return None

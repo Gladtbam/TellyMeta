@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import contextlib
 import textwrap
@@ -146,11 +145,11 @@ MAX_FILE_SIZE = 20 * 1024 * 1024
 INTRO_MSG = textwrap.dedent("""
     📤 **上传字幕**
     请直接发送字幕压缩包 (Zip)。
-    
+
     **🗂 命名规则 (必须严格遵守)**：
     • **剧集**: `tvdb-ID.zip` (例如 `tvdb-430047.zip`)
     • **电影**: `tmdb-ID.zip` (例如 `tmdb-842675.zip`)
-    
+
     **📄 压缩包内文件要求**：
     • **剧集**: S季E集.字幕语言.后缀
     • **电影**: 电影名.字幕语言.后缀
@@ -286,11 +285,11 @@ async def run_subtitle_upload_flow(
                 chat_id,
                 "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(f"Conversation error: {e}")
-            await client.send_message(chat_id, f"❌ 发生未知错误: {str(e)}")
+            await client.send_message(chat_id, f"❌ 发生未知错误: {e!s}")
 
     if session is not None:
         await _run_with_session(session)

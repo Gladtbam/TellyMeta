@@ -332,9 +332,9 @@ async def settle_scores() -> None:
             # 合并消息
             msg = textwrap.dedent(f"""\
                 📊 **每日积分结算报告**
-                
+
                 今日共发放 **{result.total_score_settled}** 非签到活跃积分。
-                
+
                 """)
             msg += "\n".join(daily_lines) + "\n\n"
             msg += "\n".join(total_lines)

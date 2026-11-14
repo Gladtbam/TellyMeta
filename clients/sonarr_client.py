@@ -57,7 +57,7 @@ class SonarrClient(AuthenticatedClient):
                 return remote_path.replace(remote, local, 1)
         return remote_path
 
-    async def lookup(self, term: str) -> AsyncGenerator[SeriesResource, None]:
+    async def lookup(self, term: str) -> AsyncGenerator[SeriesResource]:
         """根据电视剧名称查找 The TVDB 获取的剧集信息。
         Args:
             term (str): 电视剧名称。

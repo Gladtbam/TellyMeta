@@ -26,6 +26,7 @@ from core.dependencies import (
     get_tmdb_client,
     get_tvdb_client,
 )
+from core.task_utils import create_background_task
 from models.emby_webhook import EmbyPayload, LibraryDeletedEvent, LibraryNewEvent
 from models.events import NotificationEvent
 from models.jellyfin_webhook import JellyfinPayload, NotificationType
@@ -104,7 +105,7 @@ async def _schedule_qb_share_limit(
         return
     qb_server = await ServerRepository(session).get_by_id(server_instance.qb_server_id)
     seeding_limit = qb_server.qb_torrent_limit if qb_server else 43200
-    asyncio.create_task(
+    create_background_task(
         qb_client.torrents_set_share_limits(
             torrent_hash=download_id,
             seeding_time_limit=seeding_limit,
@@ -137,7 +138,7 @@ async def sonarr_webhook(
         if mapped_path := client.to_local_path(payload.series.path):
             payload.series.path = mapped_path
         if tmdb_client and getattr(server_instance, "allow_nfo", True):
-            asyncio.create_task(
+            create_background_task(
                 handle_series_add_metadata(client, payload, tmdb_client, tvdb_client)
             )
 
@@ -157,7 +158,7 @@ async def sonarr_webhook(
             if mapped_path := client.to_local_path(remote_path):
                 payload.episodeFile.path = mapped_path
             if tmdb_client and getattr(server_instance, "allow_nfo", True):
-                asyncio.create_task(
+                create_background_task(
                     create_episode_nfo(payload, tmdb_client, tvdb_client)
                 )
             if task_queue and should_mkv and mkv_local_path:
@@ -255,7 +256,7 @@ async def radarrarr_webhook(
         if getattr(server_instance, "allow_nfo", True) and (
             local_movie_file := client.to_local_path(payload.movieFile.path)
         ):
-            asyncio.create_task(
+            create_background_task(
                 create_movie_nfo(
                     Path(local_movie_file).with_suffix(".nfo"),
                     payload.movie.tmdbId,
@@ -282,7 +283,7 @@ async def radarrarr_webhook(
         if local_folder_path := client.to_local_path(payload.movie.folderPath):
             payload.movie.folderPath = local_folder_path
             if getattr(server_instance, "allow_nfo", True):
-            asyncio.create_task(handle_movie_add_metadata(payload, tmdb_client))
+                create_background_task(handle_movie_add_metadata(payload, tmdb_client))
         if client.notify_topic_id:
             await notify_service.send_to_topic(
                 topic_id=client.notify_topic_id,
@@ -322,8 +323,7 @@ async def emby_webhook(
                 server_name=client.server_name,
                 item=payload.item,
             )
-    elif isinstance(payload, LibraryDeletedEvent):
-        if ai_client:
+    elif isinstance(payload, LibraryDeletedEvent) and ai_client:
             await cancel_translate_media_item(server_instance.id, payload.item.id)
 
     return Response(content="Webhook received", status_code=200)
@@ -359,7 +359,6 @@ async def jellyfin(
                 server_name=client.server_name,
                 item=payload.item_id,
             )
-    elif payload.notification_type == NotificationType.ITEM_DELETED:
-        if ai_client:
+    elif payload.notification_type == NotificationType.ITEM_DELETED and ai_client:
             await cancel_translate_media_item(server_instance.id, payload.item_id)
     return Response(content="Webhook received", status_code=200)

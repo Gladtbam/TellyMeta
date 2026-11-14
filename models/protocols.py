@@ -76,9 +76,7 @@ class Policy(Dumpable, Protocol):
 
 
 @runtime_checkable
-class User[PolicyT: Policy](
-    Dumpable, Protocol
-):  # pylint: disable=used-before-assignment
+class User[PolicyT: Policy](Dumpable, Protocol):
     """定义用户的协议"""
 
     Name: str | None

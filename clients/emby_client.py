@@ -138,7 +138,7 @@ class EmbyClient(
         await self.post(url, json=payload)
 
     @override
-    async def get_item_info(self, item_id: str) -> None | BaseItemDto:
+    async def get_item_info(self, item_id: str) -> BaseItemDto | None:
         """获取指定媒体项的信息。
 
         Args:
@@ -305,7 +305,7 @@ class EmbyClient(
         return await self.get(url, response_model=PublicSystemInfo)
 
     @override
-    async def get_all_items(self) -> AsyncGenerator[BaseItemDto, None]:
+    async def get_all_items(self) -> AsyncGenerator[BaseItemDto]:
         """获取 Emby 媒体库中的所有媒体项。
         Yields:
             BaseItemDto: 媒体项对象。

@@ -22,10 +22,10 @@ class QbittorrentClient(AuthenticatedClient):
         self.api_key = api_key
 
     @override
-    async def _login(self) -> None | str:
+    async def _login(self) -> str | None:
         if self.api_key:
             self._is_logged_in = True
-            return
+            return None
         data = {"username": self.username, "password": self.password}
         if self._client is None:
             logger.warning("Qbittorrent 客户端未初始化。请先调用 login()。")

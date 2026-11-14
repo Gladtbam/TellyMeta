@@ -72,7 +72,7 @@ class RadarrClient(AuthenticatedClient):
             movie.path = self.to_local_path(movie.path)
         return movie
 
-    async def lookup(self, term: str) -> AsyncGenerator[MovieResource, None]:
+    async def lookup(self, term: str) -> AsyncGenerator[MovieResource]:
         """根据电影名称查找 Radarr 中的电影信息。
         Args:
             term (str): 电影名称。

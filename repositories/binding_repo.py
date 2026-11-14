@@ -16,7 +16,9 @@ class BindingRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_key(self, media_id: int, library_name: str) -> LibraryBinding | None:
+    async def get_by_key(
+        self, media_id: int, library_name: str
+    ) -> LibraryBinding | None:
         """通过 media_id + library_name 组合键获取绑定"""
         stmt = select(LibraryBinding).where(
             LibraryBinding.media_id == media_id,

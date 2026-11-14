@@ -132,17 +132,31 @@ def _set_pointer(doc: dict[str, Any], pointer: str, value: Any) -> None:
     curr[parts[-1]] = copy.deepcopy(value)
 
 
-def _collect_refs(node: Any, found: set[str]) -> None:
-    """递归扫描对象树中的所有本地 ``$ref`` 引用路径。"""
+def _collect_refs(node: Any, found: list[str], seen_in_queue: set[str]) -> None:
+    """按确定性遍历顺序递归收集对象树中的所有本地 ``$ref`` 引用路径。"""
     if isinstance(node, dict):
         ref = node.get("$ref")
-        if isinstance(ref, str) and ref.startswith("#/"):
-            found.add(ref)
+        if isinstance(ref, str) and ref.startswith("#/") and ref not in seen_in_queue:
+            seen_in_queue.add(ref)
+            found.append(ref)
         for val in node.values():
-            _collect_refs(val, found)
+            _collect_refs(val, found, seen_in_queue)
     elif isinstance(node, list):
         for item in node:
-            _collect_refs(item, found)
+            _collect_refs(item, found, seen_in_queue)
+
+
+def _sort_filtered_sections(filtered: dict[str, Any]) -> None:
+    """对裁剪后的路径与组件字典按键排序，确保跨进程生成结果字节级稳定。"""
+    if isinstance(filtered.get("paths"), dict):
+        filtered["paths"] = dict(sorted(filtered["paths"].items()))
+    if isinstance(filtered.get("definitions"), dict):
+        filtered["definitions"] = dict(sorted(filtered["definitions"].items()))
+    components = filtered.get("components")
+    if isinstance(components, dict):
+        for section, mapping in list(components.items()):
+            if isinstance(mapping, dict):
+                components[section] = dict(sorted(mapping.items()))
 
 
 def _rewrite_refs(node: Any, ref_map: dict[str, str]) -> None:
@@ -218,9 +232,16 @@ def _collect_property_names(node: Any, prop_names: set[str]) -> None:
 
 
 def _strip_additional_properties_false(node: Any) -> None:
-    """递归移除 ``additionalProperties: false``，避免生成 ``extra='forbid'`` 导致上游新增字段时反序列化失败。"""
+    """递归移除对象 Schema 中无实际类型约束的 ``additionalProperties``。
+
+    说明:
+        - 移除 ``additionalProperties: false``，避免生成 ``extra='forbid'`` 导致上游新增字段时反序列化失败；
+        - 移除带 ``properties`` 对象上的 ``additionalProperties: true / {}``，避免生成器产出与
+          ``BaseModel.__pydantic_extra__`` 类型冲突的 ``__pydantic_extra__: dict[str, Any]``。
+    """
     if isinstance(node, dict):
-        if node.get("additionalProperties") is False:
+        ap = node.get("additionalProperties")
+        if ap is False or ("properties" in node and (ap is True or ap == {})):
             node.pop("additionalProperties", None)
         for val in node.values():
             _strip_additional_properties_false(val)
@@ -327,13 +348,16 @@ def filter_openapi_spec(
         if len(kept_item) > (1 if "parameters" in kept_item else 0):
             filtered["paths"][spec_path] = kept_item
 
-    # 广度优先递归收集所有直接与间接 $ref 引用的 schema / parameter / response
+    # 按确定性队列顺序递归收集所有直接与间接 $ref 引用的 schema / parameter / response
     visited_refs: set[str] = set()
-    queue: set[str] = set()
-    _collect_refs(filtered["paths"], queue)
+    queued_refs: set[str] = set()
+    queue: list[str] = []
+    _collect_refs(filtered["paths"], queue, queued_refs)
 
-    while queue:
-        ref = queue.pop()
+    idx = 0
+    while idx < len(queue):
+        ref = queue[idx]
+        idx += 1
         if ref in visited_refs:
             continue
         visited_refs.add(ref)
@@ -341,11 +365,12 @@ def filter_openapi_spec(
         if target is None:
             continue
         _set_pointer(filtered, ref, target)
-        _collect_refs(target, queue)
+        _collect_refs(target, queue, queued_refs)
 
     _flatten_dotted_schema_names(filtered)
     _avoid_field_type_name_collisions(filtered)
     _strip_additional_properties_false(filtered)
+    _sort_filtered_sections(filtered)
     return filtered, matched_summary
 
 
@@ -356,7 +381,12 @@ def _find_codegen_command() -> list[str]:
         return [local_bin]
     uvx_bin = shutil.which("uvx")
     if uvx_bin:
-        return [uvx_bin, "--from", "datamodel-code-generator", "datamodel-codegen"]
+        return [
+            uvx_bin,
+            "--from",
+            "datamodel-code-generator[ruff]",
+            "datamodel-codegen",
+        ]
     raise RuntimeError(
         "未找到 datamodel-codegen 或 uvx，请先安装 datamodel-code-generator。"
     )
@@ -367,7 +397,8 @@ def run_codegen_from_stdin(
     output_path: Path,
 ) -> None:
     """将内存中过滤后的 OpenAPI JSON 通过标准输入管道传给 ``datamodel-codegen``。"""
-    cmd = _find_codegen_command() + [
+    cmd = [
+        *_find_codegen_command(),
         "--input-file-type",
         "openapi",
         "--openapi-scopes",
@@ -383,6 +414,10 @@ def run_codegen_from_stdin(
         "--set-default-enum-member",
         "--collapse-root-models",
         "--use-standard-collections",
+        "--use-double-quotes",
+        "--formatters",
+        "ruff-check",
+        "ruff-format",
         "--disable-timestamp",
         "--output",
         str(output_path),

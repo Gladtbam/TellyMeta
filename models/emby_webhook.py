@@ -16,7 +16,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ============================================================================
 # 枚举类型 (Enums)
 # ============================================================================
@@ -298,8 +297,12 @@ class MediaSourceInfo(EmbyBaseModel):
     video_3d_format: Video3DFormat | None = Field(default=None, alias="Video3DFormat")
     media_streams: list[MediaStream] = Field(default_factory=list, alias="MediaStreams")
     bitrate: int | None = Field(default=None, alias="Bitrate")
-    default_audio_stream_index: int | None = Field(default=None, alias="DefaultAudioStreamIndex")
-    default_subtitle_stream_index: int | None = Field(default=None, alias="DefaultSubtitleStreamIndex")
+    default_audio_stream_index: int | None = Field(
+        default=None, alias="DefaultAudioStreamIndex"
+    )
+    default_subtitle_stream_index: int | None = Field(
+        default=None, alias="DefaultSubtitleStreamIndex"
+    )
 
 
 # ============================================================================
@@ -328,11 +331,15 @@ class TranscodingInfo(EmbyBaseModel):
     is_audio_direct: bool = Field(default=False, alias="IsAudioDirect")
     bitrate: int | None = Field(default=None, alias="Bitrate")
     framerate: float | None = Field(default=None, alias="Framerate")
-    completion_percentage: float | None = Field(default=None, alias="CompletionPercentage")
+    completion_percentage: float | None = Field(
+        default=None, alias="CompletionPercentage"
+    )
     width: int | None = Field(default=None, alias="Width")
     height: int | None = Field(default=None, alias="Height")
     audio_channels: int | None = Field(default=None, alias="AudioChannels")
-    transcode_reasons: list[TranscodeReason] = Field(default_factory=list, alias="TranscodeReasons")
+    transcode_reasons: list[TranscodeReason] = Field(
+        default_factory=list, alias="TranscodeReasons"
+    )
 
 
 # ============================================================================
@@ -344,7 +351,9 @@ class DeviceInfo(EmbyBaseModel):
     """设备信息"""
 
     name: str = Field(alias="Name")
-    id: str | None = Field(default=None, alias="Id")  # 在 authenticationfailed 事件中不存在
+    id: str | None = Field(
+        default=None, alias="Id"
+    )  # 在 authenticationfailed 事件中不存在
     app_name: str | None = Field(default=None, alias="AppName")
     app_version: str | None = Field(default=None, alias="AppVersion")
     last_user_name: str | None = Field(default=None, alias="LastUserName")
@@ -417,7 +426,9 @@ class PackageVersionInfo(EmbyBaseModel):
     name: str | None = Field(default=None, alias="name")
     guid: str | None = Field(default=None, alias="guid")
     version_str: str | None = Field(default=None, alias="versionStr")
-    classification: PackageVersionClass | None = Field(default=None, alias="classification")
+    classification: PackageVersionClass | None = Field(
+        default=None, alias="classification"
+    )
     description: str | None = Field(default=None, alias="description")
     source_url: str | None = Field(default=None, alias="sourceUrl")
     timestamp: datetime | None = Field(default=None, alias="timestamp")
@@ -519,12 +530,20 @@ class BaseItemDto(EmbyBaseModel):
     season_name: str | None = Field(default=None, alias="SeasonName")
 
     # Provider IDs
-    provider_ids: Annotated[dict[str, str], Field(default_factory=dict, alias="ProviderIds")]
+    provider_ids: Annotated[
+        dict[str, str], Field(default_factory=dict, alias="ProviderIds")
+    ]
 
     # 图像
-    image_tags: Annotated[dict[str, str], Field(default_factory=dict, alias="ImageTags")]
-    backdrop_image_tags: Annotated[list[str], Field(default_factory=list, alias="BackdropImageTags")]
-    primary_image_aspect_ratio: float | None = Field(default=None, alias="PrimaryImageAspectRatio")
+    image_tags: Annotated[
+        dict[str, str], Field(default_factory=dict, alias="ImageTags")
+    ]
+    backdrop_image_tags: Annotated[
+        list[str], Field(default_factory=list, alias="BackdropImageTags")
+    ]
+    primary_image_aspect_ratio: float | None = Field(
+        default=None, alias="PrimaryImageAspectRatio"
+    )
 
     # 分辨率
     width: int | None = Field(default=None, alias="Width")
@@ -532,9 +551,13 @@ class BaseItemDto(EmbyBaseModel):
 
     # 关联数据
     external_urls: list[ExternalUrl] = Field(default_factory=list, alias="ExternalUrls")
-    media_sources: list[MediaSourceInfo] = Field(default_factory=list, alias="MediaSources")
+    media_sources: list[MediaSourceInfo] = Field(
+        default_factory=list, alias="MediaSources"
+    )
     media_streams: list[MediaStream] = Field(default_factory=list, alias="MediaStreams")
-    remote_trailers: list[MediaUrl] = Field(default_factory=list, alias="RemoteTrailers")
+    remote_trailers: list[MediaUrl] = Field(
+        default_factory=list, alias="RemoteTrailers"
+    )
     people: list[BaseItemPerson] = Field(default_factory=list, alias="People")
     tags: list[str] = Field(default_factory=list, alias="Tags")
     user_data: UserItemDataDto | None = Field(default=None, alias="UserData")
@@ -587,11 +610,11 @@ class BaseItemDto(EmbyBaseModel):
         if self.width and self.height:
             if self.width >= 3840:
                 return "4K"
-            elif self.width >= 1920:
+            if self.width >= 1920:
                 return "1080p"
-            elif self.width >= 1280:
+            if self.width >= 1280:
                 return "720p"
-            elif self.width >= 720:
+            if self.width >= 720:
                 return "480p"
             return f"{self.width}x{self.height}"
         return None
@@ -624,7 +647,7 @@ class BaseItemDto(EmbyBaseModel):
         if tmdb_id := self.tmdb_id:
             if self.type == "Movie":
                 return f"https://www.themoviedb.org/movie/{tmdb_id}"
-            elif self.type in ("Series", "Season", "Episode"):
+            if self.type in ("Series", "Season", "Episode"):
                 return f"https://www.themoviedb.org/tv/{tmdb_id}"
         return None
 
@@ -682,7 +705,9 @@ class PlaybackStartEvent(BaseWebhookEvent):
     item: BaseItemDto = Field(alias="Item")
     user: NotificationUserDto = Field(alias="User")
     session: NotificationSessionInfo = Field(alias="Session")
-    playback_info: NotificationPlaybackInfo | None = Field(default=None, alias="PlaybackInfo")
+    playback_info: NotificationPlaybackInfo | None = Field(
+        default=None, alias="PlaybackInfo"
+    )
     device_info: DeviceInfo | None = Field(default=None, alias="DeviceInfo")
 
 
@@ -705,7 +730,9 @@ class PlaybackProgressEvent(BaseWebhookEvent):
     user: NotificationUserDto = Field(alias="User")
     session: NotificationSessionInfo = Field(alias="Session")
     playback_info: NotificationPlaybackInfo = Field(alias="PlaybackInfo")
-    transcoding_info: TranscodingInfo | None = Field(default=None, alias="TranscodingInfo")
+    transcoding_info: TranscodingInfo | None = Field(
+        default=None, alias="TranscodingInfo"
+    )
 
 
 class PlaybackPauseEvent(BaseWebhookEvent):
@@ -817,7 +844,9 @@ class SystemUpdateAvailableEvent(BaseWebhookEvent):
     """system.updateavailable 事件 - 有可用更新"""
 
     event: Literal["system.updateavailable"] = Field(alias="Event")
-    package_version_info: PackageVersionInfo | None = Field(default=None, alias="PackageVersionInfo")
+    package_version_info: PackageVersionInfo | None = Field(
+        default=None, alias="PackageVersionInfo"
+    )
 
 
 class SystemRestartRequiredEvent(BaseWebhookEvent):
@@ -872,7 +901,9 @@ class RecordingStartedEvent(BaseWebhookEvent):
 
     event: Literal["recording.started"] = Field(alias="Event")
     item: BaseItemDto | None = Field(default=None, alias="Item")
-    recording_info: NotificationRecordingInfo | None = Field(default=None, alias="RecordingInfo")
+    recording_info: NotificationRecordingInfo | None = Field(
+        default=None, alias="RecordingInfo"
+    )
     timer_info: TimerInfoDto | None = Field(default=None, alias="TimerInfo")
 
 
@@ -881,7 +912,9 @@ class RecordingCompletedEvent(BaseWebhookEvent):
 
     event: Literal["recording.completed"] = Field(alias="Event")
     item: BaseItemDto | None = Field(default=None, alias="Item")
-    recording_info: NotificationRecordingInfo | None = Field(default=None, alias="RecordingInfo")
+    recording_info: NotificationRecordingInfo | None = Field(
+        default=None, alias="RecordingInfo"
+    )
 
 
 class RecordingCancelledEvent(BaseWebhookEvent):
@@ -895,7 +928,9 @@ class RecordingFailedEvent(BaseWebhookEvent):
     """recording.failed 事件 - 录制失败"""
 
     event: Literal["recording.failed"] = Field(alias="Event")
-    recording_info: NotificationRecordingInfo | None = Field(default=None, alias="RecordingInfo")
+    recording_info: NotificationRecordingInfo | None = Field(
+        default=None, alias="RecordingInfo"
+    )
 
 
 # ============================================================================
@@ -914,7 +949,9 @@ class PluginsPluginInstalledEvent(BaseWebhookEvent):
     """plugins.plugininstalled 事件 - 插件安装"""
 
     event: Literal["plugins.plugininstalled"] = Field(alias="Event")
-    package_version_info: PackageVersionInfo | None = Field(default=None, alias="PackageVersionInfo")
+    package_version_info: PackageVersionInfo | None = Field(
+        default=None, alias="PackageVersionInfo"
+    )
 
 
 class PluginUpdatedEvent(BaseWebhookEvent):
@@ -966,14 +1003,24 @@ class GenericWebhookEvent(BaseWebhookEvent):
     item: BaseItemDto | None = Field(default=None, alias="Item")
     user: NotificationUserDto | None = Field(default=None, alias="User")
     session: NotificationSessionInfo | None = Field(default=None, alias="Session")
-    playback_info: NotificationPlaybackInfo | None = Field(default=None, alias="PlaybackInfo")
-    transcoding_info: TranscodingInfo | None = Field(default=None, alias="TranscodingInfo")
+    playback_info: NotificationPlaybackInfo | None = Field(
+        default=None, alias="PlaybackInfo"
+    )
+    transcoding_info: TranscodingInfo | None = Field(
+        default=None, alias="TranscodingInfo"
+    )
     device_info: DeviceInfo | None = Field(default=None, alias="DeviceInfo")
-    recording_info: NotificationRecordingInfo | None = Field(default=None, alias="RecordingInfo")
+    recording_info: NotificationRecordingInfo | None = Field(
+        default=None, alias="RecordingInfo"
+    )
     timer_info: TimerInfoDto | None = Field(default=None, alias="TimerInfo")
-    series_timer_info: SeriesTimerInfoDto | None = Field(default=None, alias="SeriesTimerInfo")
+    series_timer_info: SeriesTimerInfoDto | None = Field(
+        default=None, alias="SeriesTimerInfo"
+    )
     plugin_info: PluginInfo | None = Field(default=None, alias="PluginInfo")
-    package_version_info: PackageVersionInfo | None = Field(default=None, alias="PackageVersionInfo")
+    package_version_info: PackageVersionInfo | None = Field(
+        default=None, alias="PackageVersionInfo"
+    )
     program_info: BaseItemDto | None = Field(default=None, alias="ProgramInfo")
 
 
@@ -1034,88 +1081,76 @@ EmbyPayload = Annotated[
 # ============================================================================
 
 __all__ = [
-    # 枚举
-    "LogSeverity",
-    "RecordingStatus",
-    "ImageType",
-    "TimerType",
-    "KeepUntil",
-    "PackageVersionClass",
-    "MediaStreamType",
-    "MediaProtocol",
-    "Video3DFormat",
-    "LocationType",
-    "MediaSourceType",
-    "TranscodeReason",
-    "DayOfWeek",
-    # 基础模型
-    "EmbyBaseModel",
-    "NotificationUserDto",
-    "NotificationServerInfo",
-    "NotificationSessionInfo",
-    "NotificationRecordingInfo",
-    "NotificationPlaybackInfo",
-    "MediaStream",
-    "ChapterInfo",
-    "MediaSourceInfo",
-    "TranscodingInfo",
-    "DeviceInfo",
+    "BaseItemDto",
+    "BaseItemPerson",
     "BaseTimerInfoDto",
-    "TimerInfoDto",
-    "SeriesTimerInfoDto",
-    "PluginInfo",
-    "PackageVersionInfo",
+    "BaseWebhookEvent",
+    "ChapterInfo",
+    "DayOfWeek",
+    "DeviceInfo",
+    "EmbyBaseModel",
+    "EmbyPayload",
     "ExternalUrl",
+    "GenericWebhookEvent",
+    "ImageType",
+    "KeepUntil",
+    "LibraryDeletedEvent",
+    "LibraryNewEvent",
+    "LibraryUpdatedEvent",
+    "LocationType",
+    "LogSeverity",
+    "MediaProtocol",
+    "MediaSourceInfo",
+    "MediaSourceType",
+    "MediaStream",
+    "MediaStreamType",
     "MediaUrl",
     "NameIdPair",
-    "BaseItemPerson",
-    "UserItemDataDto",
-    "BaseItemDto",
-    # 事件基类
-    "BaseWebhookEvent",
-    # 播放事件
+    "NotificationPlaybackInfo",
+    "NotificationRecordingInfo",
+    "NotificationServerInfo",
+    "NotificationSessionInfo",
+    "NotificationUserDto",
+    "PackageVersionClass",
+    "PackageVersionInfo",
+    "PlaybackPauseEvent",
+    "PlaybackProgressEvent",
     "PlaybackStartEvent",
     "PlaybackStopEvent",
-    "PlaybackProgressEvent",
-    "PlaybackPauseEvent",
     "PlaybackUnpauseEvent",
-    # 媒体库事件
-    "LibraryNewEvent",
-    "LibraryDeletedEvent",
-    "LibraryUpdatedEvent",
-    # 用户事件
-    "UserAuthenticatedEvent",
-    "UserLockedOutEvent",
-    "UserCreatedEvent",
-    "UserDeletedEvent",
-    "UserPasswordChangedEvent",
-    "UserAuthenticationFailedEvent",
-    "UserPolicyUpdatedEvent",
-    # 系统事件
-    "SystemUpdateAvailableEvent",
+    "PluginInfo",
+    "PluginInstalledEvent",
+    "PluginUninstalledEvent",
+    "PluginUpdatedEvent",
+    "PluginsPluginInstalledEvent",
+    "RecordingCancelledEvent",
+    "RecordingCompletedEvent",
+    "RecordingFailedEvent",
+    "RecordingStartedEvent",
+    "RecordingStatus",
+    "ScheduledTasksCompletedEvent",
+    "SeriesTimerInfoDto",
+    "SystemNotificationTestEvent",
     "SystemRestartRequiredEvent",
     "SystemServerRestartRequiredEvent",
-    "SystemStartedEvent",
     "SystemServerStartupEvent",
     "SystemShuttingDownEvent",
+    "SystemStartedEvent",
+    "SystemUpdateAvailableEvent",
     "SystemWebhookTestEvent",
-    "SystemNotificationTestEvent",
-    # 录制事件
-    "RecordingStartedEvent",
-    "RecordingCompletedEvent",
-    "RecordingCancelledEvent",
-    "RecordingFailedEvent",
-    # 插件事件
-    "PluginInstalledEvent",
-    "PluginsPluginInstalledEvent",
-    "PluginUpdatedEvent",
-    "PluginUninstalledEvent",
-    # 任务事件
     "TaskCompletedEvent",
-    "ScheduledTasksCompletedEvent",
     "TaskFailedEvent",
-    # 通用
-    "GenericWebhookEvent",
-    # 类型
-    "EmbyPayload",
+    "TimerInfoDto",
+    "TimerType",
+    "TranscodeReason",
+    "TranscodingInfo",
+    "UserAuthenticatedEvent",
+    "UserAuthenticationFailedEvent",
+    "UserCreatedEvent",
+    "UserDeletedEvent",
+    "UserItemDataDto",
+    "UserLockedOutEvent",
+    "UserPasswordChangedEvent",
+    "UserPolicyUpdatedEvent",
+    "Video3DFormat",
 ]

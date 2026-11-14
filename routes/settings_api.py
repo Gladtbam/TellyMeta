@@ -532,10 +532,9 @@ async def update_server(
                 "success": True,
                 "message": f"配置已保存，NSFW 开关已关闭，已撤销 {revoked_count} 个现有账户的 NSFW 权限。",
             }
-        else:
-            pending = getattr(request.app.state, "_pending_nsfw_revokes", None)
-            if isinstance(pending, dict):
-                pending.pop(server_id, None)
+        pending = getattr(request.app.state, "_pending_nsfw_revokes", None)
+        if isinstance(pending, dict):
+            pending.pop(server_id, None)
 
     return {"success": True, "message": "配置已保存"}
 

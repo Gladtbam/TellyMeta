@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +7,7 @@ from models.orm import BotConfiguration
 
 
 class ConfigRepository:
-    cache: dict[str, str] = {}
+    cache: ClassVar[dict[str, str]] = {}
 
     # System Feature Keys
     KEY_ENABLE_POINTS = "system:enable_points"

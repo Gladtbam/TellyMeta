@@ -73,7 +73,7 @@ async def validate_init_data(x_telegram_init_data: str) -> dict:
     except HTTPException:
         raise
     except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(status_code=400, detail=f"数据验证失败: {str(e)}") from e
+        raise HTTPException(status_code=400, detail=f"数据验证失败: {e!s}") from e
 
 
 async def get_current_user_id(x_telegram_init_data: str = Header(...)) -> int:

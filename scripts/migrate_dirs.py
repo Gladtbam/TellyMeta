@@ -12,6 +12,7 @@
 """
 
 import argparse
+import contextlib
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,14 +83,10 @@ def migrate_directory(
         for sub_dir in sorted(
             (p for p in src_dir.rglob("*") if p.is_dir()), reverse=True
         ):
-            try:
+            with contextlib.suppress(OSError):
                 sub_dir.rmdir()
-            except OSError:
-                pass
-        try:
+        with contextlib.suppress(OSError):
             src_dir.rmdir()
-        except OSError:
-            pass
 
     return stats
 

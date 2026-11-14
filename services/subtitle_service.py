@@ -1,3 +1,4 @@
+import asyncio
 import re
 import shutil
 import zipfile
@@ -144,13 +145,13 @@ class SubtitleService:
                 return await self._handle_series(
                     user_id, media_id, file_path, bound_arr_ids, target_arr_id
                 )
-            elif media_type == "tmdb":
+            if media_type == "tmdb":
                 return await self._handle_movie(
                     user_id, media_id, file_path, bound_arr_ids, target_arr_id
                 )
         except (OSError, ValueError, TypeError) as e:
             logger.exception(f"处理字幕时发生系统错误: {e}")
-            return Result(False, f"处理过程中发生系统错误: {str(e)}")
+            return Result(False, f"处理过程中发生系统错误: {e!s}")
 
         return Result(False, "不支持的媒体类型")
 
@@ -371,7 +372,7 @@ class SubtitleService:
                         if zinfo.file_size > MAX_SINGLE_FILE_SIZE:
                             return Result(
                                 False,
-                                f"文件 {zinfo.filename} 过大 (超过 {MAX_SINGLE_FILE_SIZE//1024//1024}MB)",
+                                f"文件 {zinfo.filename} 过大 (超过 {MAX_SINGLE_FILE_SIZE // 1024 // 1024}MB)",
                             )
 
                         total_size += zinfo.file_size
@@ -379,7 +380,7 @@ class SubtitleService:
                     if total_size > MAX_TOTAL_EXTRACT_SIZE:
                         return Result(
                             False,
-                            f"压缩包解压后总大小过大 (超过 {MAX_TOTAL_EXTRACT_SIZE//1024//1024}MB)",
+                            f"压缩包解压后总大小过大 (超过 {MAX_TOTAL_EXTRACT_SIZE // 1024 // 1024}MB)",
                         )
 
                     zip_ref.extractall(temp_dir)
@@ -389,9 +390,11 @@ class SubtitleService:
             files_processed = 0
             errors = []
 
-            for full_path in sorted(
-                p for p in Path(temp_dir).rglob("*") if p.is_file()
-            ):
+            # 在线程池中遍历解压目录，避免阻塞事件循环
+            extracted_files = await asyncio.to_thread(
+                lambda: sorted(p for p in Path(temp_dir).rglob("*") if p.is_file())
+            )
+            for full_path in extracted_files:
                 if "__MACOSX" in full_path.parts or full_path.name.startswith("."):
                     continue
 
@@ -402,7 +405,7 @@ class SubtitleService:
                     else:
                         files_processed += 1
                 except (OSError, ValueError) as e:
-                    errors.append(f"处理文件 {full_path.name} 时出错: {str(e)}")
+                    errors.append(f"处理文件 {full_path.name} 时出错: {e!s}")
 
             if files_processed == 0:
                 if not errors:

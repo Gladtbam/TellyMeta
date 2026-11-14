@@ -1,6 +1,9 @@
+from typing import Any
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.config import genre_mapping
+
 
 class TvdbData(BaseModel):
     token: str | None = None
@@ -9,11 +12,13 @@ class TvdbData(BaseModel):
     language: str | None = None
     aliases: list[str] = Field(default_factory=list)
 
+
 class TvdbSeasonType(BaseModel):
     id: int
     name: str
     type: str
     alternateName: str | None = None
+
 
 class TvdbSeasonsData(BaseModel):
     id: int
@@ -26,16 +31,19 @@ class TvdbSeasonsData(BaseModel):
     imageType: int | None = None
     lastUpdated: str | None = None
     year: str | None = None
-    episodes: list['TvdbEpisodesData'] = Field(default_factory=list)
+    episodes: list[TvdbEpisodesData] = Field(default_factory=list)
+
 
 class TvdbTranslations(BaseModel):
     name: str | None = None
     overview: str | None = None
     language: str | None = None
 
+
 class TvdbTranslationsData(BaseModel):
     nameTranslations: list[TvdbTranslations] = Field(default_factory=list)
     overviewTranslations: list[TvdbTranslations] = Field(default_factory=list)
+
 
 class TvdbEpisodesData(BaseModel):
     id: int
@@ -57,25 +65,34 @@ class TvdbEpisodesData(BaseModel):
     year: str
     translations: TvdbTranslationsData
 
-    @model_validator(mode='after')
-    def validate_translations(self) -> 'TvdbEpisodesData':
+    @model_validator(mode="after")
+    def validate_translations(self) -> TvdbEpisodesData:
         """验证并使用中文翻译覆盖名称和概述，如果可用的话。"""
         if self.translations:
-            if 'zho' in self.nameTranslations:
+            if "zho" in self.nameTranslations:
                 self.name = next(
-                    (t.name for t in self.translations.nameTranslations if t.language == 'zho' and t.name),
-                    self.name
+                    (
+                        t.name
+                        for t in self.translations.nameTranslations
+                        if t.language == "zho" and t.name
+                    ),
+                    self.name,
                 )
             else:
                 self.name = None
-            if 'zho' in self.overviewTranslations:
+            if "zho" in self.overviewTranslations:
                 self.overview = next(
-                    (t.overview for t in self.translations.overviewTranslations if t.language == 'zho' and t.overview),
-                    self.overview
+                    (
+                        t.overview
+                        for t in self.translations.overviewTranslations
+                        if t.language == "zho" and t.overview
+                    ),
+                    self.overview,
                 )
             else:
                 self.overview = None
         return self
+
 
 class TvdbSeriesData(BaseModel):
     id: int
@@ -95,43 +112,64 @@ class TvdbSeriesData(BaseModel):
     averageRuntime: int | None = None
     episodes: list[TvdbEpisodesData] = Field(default_factory=list)
     year: str | None = None
-    genres:list = Field(default_factory=list)
+    genres: list = Field(default_factory=list)
     seasons: list[TvdbSeasonsData] = Field(default_factory=list)
     translations: TvdbTranslationsData
 
-    @field_validator('genres', mode='before')
+    @field_validator("genres", mode="before")
     @classmethod
-    def validate_genres(cls, value):
+    def validate_genres(cls, value: Any) -> list[str | None]:
+        """校验并映射类型字段为中文名称列表。"""
         if isinstance(value, list):
-            return [genre_mapping.get(genre.get('id') or genre.get('name') if isinstance(genre, dict) else genre) for genre in value] # type: ignore
+            result: list[str | None] = []
+            for genre in value:
+                key = (
+                    genre.get("id") or genre.get("name")
+                    if isinstance(genre, dict)
+                    else genre
+                )
+                result.append(
+                    genre_mapping.get(key) if isinstance(key, (int, str)) else None
+                )
+            return result
         if isinstance(value, str):
             return [genre_mapping.get(value, value)]
         raise ValueError("类型格式、预期列表或字符串无效")
 
-    @model_validator(mode='after')
-    def validate_translations(self) -> 'TvdbSeriesData':
+    @model_validator(mode="after")
+    def validate_translations(self) -> TvdbSeriesData:
         """验证并使用中文翻译覆盖名称和概述，如果可用的话。"""
         if self.translations:
-            if 'zho' in self.nameTranslations:
+            if "zho" in self.nameTranslations:
                 self.name = next(
-                    (t.name for t in self.translations.nameTranslations if t.language == 'zho' and t.name),
-                    self.name
+                    (
+                        t.name
+                        for t in self.translations.nameTranslations
+                        if t.language == "zho" and t.name
+                    ),
+                    self.name,
                 )
             else:
                 self.name = None
-            if 'zho' in self.overviewTranslations:
+            if "zho" in self.overviewTranslations:
                 self.overview = next(
-                    (t.overview for t in self.translations.overviewTranslations if t.language == 'zho' and t.overview),
-                    self.overview
+                    (
+                        t.overview
+                        for t in self.translations.overviewTranslations
+                        if t.language == "zho" and t.overview
+                    ),
+                    self.overview,
                 )
             else:
                 self.overview = None
         return self
 
+
 class TvdbPayload(BaseModel):
     status: str
     data: TvdbData | TvdbEpisodesData | TvdbSeasonsData | TvdbSeriesData | None = None
     message: str | None = None
+
 
 # 为存在循环引用的模型重建
 TvdbSeasonsData.model_rebuild()

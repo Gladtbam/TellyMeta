@@ -72,10 +72,7 @@ class CacheService:
             value: 数据（必须可 JSON 序列化，或是 Pydantic 模型）
             ttl: 过期时间（秒），默认 1 小时
         """
-        if isinstance(value, BaseModel):
-            data = value.model_dump(mode="json")
-        else:
-            data = value
+        data = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
 
         try:
             json_str = json.dumps(data, ensure_ascii=False)
@@ -99,11 +96,11 @@ class CacheService:
                     )
                     .on_conflict_do_update(
                         index_elements=["key"],
-                        set_=dict(
-                            value=json_str,
-                            expires_at=expires_at,
-                            created_at=datetime.now(),
-                        ),
+                        set_={
+                            "value": json_str,
+                            "expires_at": expires_at,
+                            "created_at": datetime.now(),
+                        },
                     )
                 )
                 await session.execute(stmt)

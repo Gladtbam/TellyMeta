@@ -34,8 +34,8 @@ postgres = [
 
 [dependency-groups]
 dev = [
-    "black>=26.10.1",
     "pyright>=1.1.414",
+    "ruff>=0.17.5",
 ]
 
 [tool.pyright]
@@ -48,9 +48,35 @@ strictDictionaryInference = true
 strictListInference = true
 deprecateTypingAliases = true
 
-[tool.black]
-target-version = ["py315"]
+[tool.ruff]
+target-version = "py315"
 line-length = 88
+exclude = [".venv", ".git", "data", "logs", "alembic"]
 
-[tool.pylint.format]
-max-line-length = 120
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "ASYNC",
+    "SIM",
+    "RUF",
+    "PTH",
+    "PLE",
+    "PLW",
+    "C4",
+    "PIE",
+    "A",
+    "ISC",
+    "RSE",
+    "RET",
+]
+ignore = ["E501", "B008", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
