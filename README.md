@@ -31,7 +31,7 @@
 
 ## 🛠️ 技术栈
 
-* **核心框架**: Python 3.11+, FastAPI, SQLAlchemy (Async), Telethon
+* **核心框架**: Python 3.15, FastAPI, SQLAlchemy (Async), Telethon
 * **数据库**: SQLite (`aiosqlite`) / PostgreSQL (`asyncpg` + `psycopg`)，按需选择依赖
 * **媒体服务**: Sonarr, Radarr, Emby, Jellyfin
 * **辅助工具**: qBittorrent, OpenAI, MKVToolNix (可选)
@@ -89,7 +89,7 @@
 适合开发者或习惯使用宿主机环境的用户。
 
 **前置要求**：
-* Python 3.11 或更高版本
+* Python 3.15
 * [uv](https://github.com/astral-sh/uv) (推荐) 或 pip
 
 #### 1. 克隆代码

@@ -3,7 +3,7 @@ name = "TellyMeta"
 version = "2.0.0"
 description = "A personal media management tool"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = "==3.15.*"
 dependencies = [
     "aiofiles>=25.1.0",
     "alembic>=1.20.1",
@@ -48,7 +48,7 @@ strictListInference = true
 deprecateTypingAliases = true
 
 [tool.black]
-target-version = ["py311"]
+target-version = ["py315"]
 line-length = 88
 
 [tool.pylint.format]

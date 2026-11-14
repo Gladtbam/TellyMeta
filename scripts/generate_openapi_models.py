@@ -377,7 +377,7 @@ def run_codegen_from_stdin(
         "--output-model-type",
         "pydantic_v2.BaseModel",
         "--target-python-version",
-        "3.11",
+        "3.15",
         "--use-union-operator",
         "--use-annotated",
         "--set-default-enum-member",
