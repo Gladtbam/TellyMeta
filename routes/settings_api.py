@@ -421,7 +421,19 @@ async def update_server(
     data: ServerUpdate,
     session: AsyncSession = Depends(get_db),
 ):
-    """更新服务器"""
+    """更新指定服务器实例的基础信息、注册策略与有效期配置
+
+    副作用：可能更新数据库中的服务器配置、重载对应客户端，或在关闭 NSFW 时撤权。
+
+    Args:
+        request: FastAPI 请求对象（用于访问应用状态中的客户端字典）
+        server_id: 目标服务器 ID
+        data: 部分更新字段载体，含 ``registration_expiry_months`` 等配置
+        session: 异步数据库会话
+
+    Returns:
+        包含操作结果布尔值与提示文本的字典
+    """
     service = SettingsServices(request.app, session)
     repo = ServerRepository(session)
 
@@ -498,6 +510,8 @@ async def update_server(
 
     # 有效期与 NSFW (Global for server)
     expiry_kwargs = {}
+    if data.registration_expiry_months is not None:
+        expiry_kwargs["expiry_months"] = data.registration_expiry_months
     if data.registration_expiry_days is not None:
         expiry_kwargs["expiry_days"] = data.registration_expiry_days
     if data.code_expiry_days is not None:

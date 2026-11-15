@@ -102,9 +102,12 @@ class ServerInstance(Base):
     registration_time_limit: Mapped[str] = mapped_column(
         String(32), default="0", server_default=text("'0'")
     )
+    registration_expiry_months: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1"), nullable=False
+    )  # 账号有效自然月数
     registration_expiry_days: Mapped[int] = mapped_column(
         Integer, default=30, server_default=text("30")
-    )
+    )  # 兼容保留字段，待后续清理移除
     registration_external_url: Mapped[str | None] = mapped_column(
         String(1024), nullable=True
     )
@@ -167,6 +170,15 @@ class MediaUser(Base):
     )
     media_name: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    anchor_day: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # 锚定基准日号数（1..31）
+    cycle_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # 当前自然月周期起始时间
+    next_reset_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # 下一次月度重置时间
     is_banned: Mapped[bool] = mapped_column(
         Boolean, server_default=text("false"), nullable=False
     )

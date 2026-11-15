@@ -1,9 +1,14 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.billing_anchor import (
+    backfill_billing_cycle,
+    calculate_registration_cycle,
+    calculate_renewal_cycle,
+)
 from models.orm import MediaUser
 from repositories.config_repo import ConfigRepository
 
@@ -67,25 +72,52 @@ class MediaRepository:
         server_id: int,
         media_id: str,
         media_name: str,
-        expires_at: int,
+        expires_at: int | None = None,
+        *,
+        expiry_months: int | None = None,
+        now: datetime | None = None,
     ) -> MediaUser:
-        """创建新的 Media 用户
+        """创建新的媒体账号
+
+        优先按 ``expiry_months`` 以锚定自然月周期计算首期有效期与周期边界；
+        Expand 过渡期间若仅传入按天 ``expires_at`` 整数，仍兼容按固定天数创建，
+        且不额外写入与固定天数到期日不一致的锚定日期，交由后续迁移或续期平滑接管。
+
         Args:
-            user_id (int): 关联的Telegram用户ID
+            user_id (int): 关联的 Telegram 用户 ID
             server_id (int): 服务器 ID
-            media_id (str): Media 用户的 Media ID
-            media_name (str): Media 用户名
-            expires_days (int): 有效期天数
+            media_id (str): 媒体账号在外部服务器上的 ID
+            media_name (str): 媒体账号用户名
+            expires_at (int | None): 兼容按天计算的有效期天数
+            expiry_months (int | None): 有效自然月数（>= 1）
+            now (datetime | None): 可注入的当前时间（用于确定性测试）
+
         Returns:
-            MediaUser: 创建的 Media 用户对象
+            MediaUser: 创建的媒体账号对象
         """
-        media_user = MediaUser(
-            id=user_id,
-            server_id=server_id,
-            media_id=media_id,
-            media_name=media_name,
-            expires_at=datetime.now() + timedelta(days=expires_at),
-        )
+        if expiry_months is not None:
+            cycle = calculate_registration_cycle(months=expiry_months, now=now)
+            media_user = MediaUser(
+                id=user_id,
+                server_id=server_id,
+                media_id=media_id,
+                media_name=media_name,
+                expires_at=cycle.expires_at,
+                anchor_day=cycle.anchor_day,
+                cycle_started_at=cycle.cycle_started_at,
+                next_reset_at=cycle.next_reset_at,
+            )
+        else:
+            # 兼容未迁移至自然月配置的调用方，保留纯天数语义并避免制造错位的周期边界
+            current_now = now or datetime.now()
+            days = expires_at if expires_at is not None else 30
+            media_user = MediaUser(
+                id=user_id,
+                server_id=server_id,
+                media_id=media_id,
+                media_name=media_name,
+                expires_at=current_now + timedelta(days=days),
+            )
         self.session.add(media_user)
         await self.session.commit()
         await self.session.refresh(media_user)
@@ -178,6 +210,75 @@ class MediaRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def backfill_missing_billing_anchors(
+        self, *, now: datetime | None = None
+    ) -> int:
+        """批量为缺少锚定基准或周期边界的存量媒体账号按现有到期日平滑回填
+
+        Args:
+            now: 可注入的当前时间
+
+        Returns:
+            int: 本次补全的媒体账号记录数量
+        """
+        stmt = select(MediaUser).where(
+            or_(
+                MediaUser.anchor_day.is_(None),
+                MediaUser.cycle_started_at.is_(None),
+                MediaUser.next_reset_at.is_(None),
+            )
+        )
+        result = await self.session.execute(stmt)
+        users = result.scalars().all()
+        if not users:
+            return 0
+
+        current_now = now or datetime.now()
+        for user in users:
+            anchor_day, cycle_started_at, next_reset_at = backfill_billing_cycle(
+                current_expires_at=user.expires_at,
+                anchor_day=user.anchor_day,
+                current_cycle_started_at=user.cycle_started_at,
+                current_next_reset_at=user.next_reset_at,
+                now=current_now,
+            )
+            user.anchor_day = anchor_day
+            user.cycle_started_at = cycle_started_at
+            user.next_reset_at = next_reset_at
+        await self.session.commit()
+        return len(users)
+
+    async def extend_anchored_cycle(
+        self, media_user: MediaUser, months: int, *, now: datetime | None = None
+    ) -> MediaUser:
+        """按锚定自然月周期延长媒体账号有效期并同步更新解封状态
+
+        Args:
+            media_user: 需要续期的媒体账号对象
+            months: 延长的有效自然月数（>= 1）
+            now: 可注入的当前时间
+
+        Returns:
+            MediaUser: 更新后的媒体账号对象
+        """
+        cycle = calculate_renewal_cycle(
+            current_expires_at=media_user.expires_at,
+            anchor_day=media_user.anchor_day,
+            current_cycle_started_at=media_user.cycle_started_at,
+            current_next_reset_at=media_user.next_reset_at,
+            months=months,
+            now=now,
+        )
+        media_user.anchor_day = cycle.anchor_day
+        media_user.cycle_started_at = cycle.cycle_started_at
+        media_user.next_reset_at = cycle.next_reset_at
+        media_user.expires_at = cycle.expires_at
+        media_user.is_banned = False  # 续期时自动解封
+        media_user.delete_at = None  # 清除删除时间
+        await self.session.commit()
+        await self.session.refresh(media_user)
+        return media_user
 
     async def extend_expiry(self, media_user: MediaUser, days: int) -> MediaUser:
         """延长 Media 用户的过期时间

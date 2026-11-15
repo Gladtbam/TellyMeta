@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # --- 子模型 ---
 
@@ -96,6 +96,7 @@ class ServerDto(BaseModel):
     registration_mode: str | None = None
     registration_count_limit: int = 0
     registration_time_limit: str = "0"
+    registration_expiry_months: int = Field(default=1, ge=1)
     registration_expiry_days: int | None = None
     registration_external_url: str | None = None
     registration_external_parser: str | None = None
@@ -143,6 +144,7 @@ class ServerUpdate(BaseModel):
     registration_mode: str | None = None
     registration_count_limit: int | None = None
     registration_time_limit: str | None = None  # 传递时间戳字符串
+    registration_expiry_months: int | None = Field(default=None, ge=1)
     registration_expiry_days: int | None = None
     registration_external_url: str | None = None
     registration_external_parser: str | None = None

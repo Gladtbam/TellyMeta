@@ -3,7 +3,7 @@ import ipaddress
 import json
 import re
 import socket
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import urlparse
@@ -30,7 +30,20 @@ settings = get_settings()
 
 
 class AccountService:
-    def __init__(self, app: FastAPI, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        app: FastAPI,
+        session: AsyncSession,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        """初始化媒体账号业务服务
+
+        Args:
+            app: FastAPI 应用实例，用于读取运行期媒体客户端映射
+            session: 异步数据库会话
+            clock: 可选的当前时间提供器，便于确定性测试自然月周期推算
+        """
         self.app = app
         self.config_repo = ConfigRepository(session)
         self.telegram_repo = TelegramRepository(session)
@@ -38,6 +51,12 @@ class AccountService:
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients
+        self._now: Callable[[], datetime] = clock or datetime.now
+
+    @staticmethod
+    def _get_server_expiry_months(server: ServerInstance) -> int:
+        """获取服务器配置的有效自然月数，非正整数时回退至默认 1 个月"""
+        return max(1, server.registration_expiry_months)
 
     @staticmethod
     def _is_safe_url(url: str) -> bool:
@@ -288,13 +307,13 @@ class AccountService:
                     media_user_id, {"EnableAllFolders": True}, is_none=True
                 )
 
-            expires_at = server.registration_expiry_days
             media_user = await self.media_repo.create(
                 user_id=user_id,
                 server_id=server_id,
                 media_id=media_user_id,
                 media_name=username,
-                expires_at=expires_at,
+                expiry_months=self._get_server_expiry_months(server),
+                now=self._now(),
             )
 
             return Result(
@@ -493,9 +512,17 @@ class AccountService:
         await client.update_policy(media_user_id, policy_dict, is_none=True)
 
     async def renew(self, user_id: int, server_id: int, use_score: bool) -> Result:
-        """续期
+        """按服务器有效自然月数与锚定自然月周期续期指定媒体账号
+
+        副作用：必要时先恢复外部媒体服务器启用状态、按需扣减用户积分并提交本地周期更新。
+
         Args:
-            user_id (int): 用户的 Telegram ID
+            user_id: Telegram 用户 ID
+            server_id: 目标媒体服务器 ID
+            use_score: 是否使用用户积分续期（兑换续期激活码场景传 ``False``）
+
+        Returns:
+            续期操作结果 ``Result``，携带成功状态与通知文案
         """
         media_user = await self.media_repo.get_by_id(user_id, server_id)
         if media_user is None:
@@ -519,12 +546,13 @@ class AccountService:
         if not isinstance(media_info, User):
             return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
 
+        now = self._now()
         policy_cfg = await self.config_repo.get_policy_config()
         renew_advance_days = policy_cfg["account_renew_advance_days"]
-        if media_user.expires_at > datetime.now() + timedelta(days=renew_advance_days):
+        if media_user.expires_at > now + timedelta(days=renew_advance_days):
             return Result(
                 False,
-                f"续期失败，您的账户有效期还有 {(media_user.expires_at - datetime.now()).days} 天，无需续期。",
+                f"续期失败，您的账户有效期还有 {(media_user.expires_at - now).days} 天，无需续期。",
             )
 
         renew_score = 0
@@ -553,8 +581,10 @@ class AccountService:
         if use_score:
             await self.telegram_repo.update_score(user_id, -renew_score)
 
-        media_user = await self.media_repo.extend_expiry(
-            media_user, server.registration_expiry_days
+        media_user = await self.media_repo.extend_anchored_cycle(
+            media_user,
+            self._get_server_expiry_months(server),
+            now=now,
         )
 
         return Result(

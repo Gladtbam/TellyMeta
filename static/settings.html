@@ -861,7 +861,11 @@
 
                     <div class="form-group" style="display:flex; gap:10px">
                         <div style="flex:1">
-                            <label class="form-label">账户有效期 (天)</label>
+                            <label class="form-label">有效自然月数</label>
+                            <input type="number" class="form-input" id="srv-reg-months" min="1" placeholder="默认1">
+                        </div>
+                        <div style="flex:1">
+                            <label class="form-label">账户有效期 (天，兼容保留)</label>
                             <input type="number" class="form-input" id="srv-reg-days" placeholder="0为永久">
                         </div>
                         <div style="flex:1">
@@ -1398,6 +1402,7 @@
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
             document.getElementById('srv-qb-limit').value = 43200;
+            if (document.getElementById('srv-reg-months')) document.getElementById('srv-reg-months').value = 1;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
@@ -1473,6 +1478,7 @@
 
                 document.getElementById('srv-reg-url').value = s.registration_external_url || '';
                 document.getElementById('srv-reg-parser').value = s.registration_external_parser || '';
+                document.getElementById('srv-reg-months').value = s.registration_expiry_months ?? 1;
                 document.getElementById('srv-reg-days').value = s.registration_expiry_days;
                 document.getElementById('srv-code-days').value = s.code_expiry_days;
                 document.getElementById('srv-tos').value = s.tos || '';
@@ -1657,6 +1663,7 @@
                 payload.registration_time_limit = document.getElementById('srv-reg-time').value || "0";
                 payload.registration_external_url = document.getElementById('srv-reg-url').value;
                 payload.registration_external_parser = document.getElementById('srv-reg-parser').value;
+                payload.registration_expiry_months = parseInt(document.getElementById('srv-reg-months').value, 10) || 1;
                 payload.registration_expiry_days = parseInt(document.getElementById('srv-reg-days').value) || 0;
                 payload.code_expiry_days = parseInt(document.getElementById('srv-code-days').value) || 30;
                 payload.tos = document.getElementById('srv-tos').value;

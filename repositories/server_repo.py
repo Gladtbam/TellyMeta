@@ -151,10 +151,23 @@ class ServerRepository:
         server_id: int,
         expiry_days: int | None = None,
         code_days: int | None = None,
+        expiry_months: int | None = None,
     ) -> ServerInstance | None:
-        """更新有效期配置"""
+        """更新服务器实例的有效期配置
+
+        Args:
+            server_id: 目标服务器实例 ID
+            expiry_days: 兼容保留的固定有效天数（为 None 时不修改）
+            code_days: 激活码有效天数（为 None 时不修改）
+            expiry_months: 账号有效自然月数（为 None 时不修改）
+
+        Returns:
+            更新并提交数据库事务后的 ``ServerInstance`` 对象；服务器不存在时返回 ``None``
+        """
         server = await self.get_by_id(server_id)
         if server:
+            if expiry_months is not None:
+                server.registration_expiry_months = expiry_months
             if expiry_days is not None:
                 server.registration_expiry_days = expiry_days
             if code_days is not None:
