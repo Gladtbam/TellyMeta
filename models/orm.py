@@ -105,9 +105,6 @@ class ServerInstance(Base):
     registration_expiry_months: Mapped[int] = mapped_column(
         Integer, default=1, server_default=text("1"), nullable=False
     )  # 账号有效自然月数
-    registration_expiry_days: Mapped[int] = mapped_column(
-        Integer, default=30, server_default=text("30")
-    )  # 兼容保留字段，待后续清理移除
     registration_external_url: Mapped[str | None] = mapped_column(
         String(1024), nullable=True
     )

@@ -865,10 +865,6 @@
                             <input type="number" class="form-input" id="srv-reg-months" min="1" placeholder="默认1">
                         </div>
                         <div style="flex:1">
-                            <label class="form-label">账户有效期 (天，兼容保留)</label>
-                            <input type="number" class="form-input" id="srv-reg-days" placeholder="0为永久">
-                        </div>
-                        <div style="flex:1">
                             <label class="form-label">邀请码有效期 (天)</label>
                             <input type="number" class="form-input" id="srv-code-days" placeholder="默认30">
                         </div>
@@ -1479,7 +1475,6 @@
                 document.getElementById('srv-reg-url').value = s.registration_external_url || '';
                 document.getElementById('srv-reg-parser').value = s.registration_external_parser || '';
                 document.getElementById('srv-reg-months').value = s.registration_expiry_months ?? 1;
-                document.getElementById('srv-reg-days').value = s.registration_expiry_days;
                 document.getElementById('srv-code-days').value = s.code_expiry_days;
                 document.getElementById('srv-tos').value = s.tos || '';
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
@@ -1664,7 +1659,6 @@
                 payload.registration_external_url = document.getElementById('srv-reg-url').value;
                 payload.registration_external_parser = document.getElementById('srv-reg-parser').value;
                 payload.registration_expiry_months = parseInt(document.getElementById('srv-reg-months').value, 10) || 1;
-                payload.registration_expiry_days = parseInt(document.getElementById('srv-reg-days').value) || 0;
                 payload.code_expiry_days = parseInt(document.getElementById('srv-code-days').value) || 30;
                 payload.tos = document.getElementById('srv-tos').value;
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;

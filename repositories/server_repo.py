@@ -149,7 +149,6 @@ class ServerRepository:
     async def update_expiry_config(
         self,
         server_id: int,
-        expiry_days: int | None = None,
         code_days: int | None = None,
         expiry_months: int | None = None,
     ) -> ServerInstance | None:
@@ -157,7 +156,6 @@ class ServerRepository:
 
         Args:
             server_id: 目标服务器实例 ID
-            expiry_days: 兼容保留的固定有效天数（为 None 时不修改）
             code_days: 激活码有效天数（为 None 时不修改）
             expiry_months: 账号有效自然月数（为 None 时不修改）
 
@@ -168,8 +166,6 @@ class ServerRepository:
         if server:
             if expiry_months is not None:
                 server.registration_expiry_months = expiry_months
-            if expiry_days is not None:
-                server.registration_expiry_days = expiry_days
             if code_days is not None:
                 server.code_expiry_days = code_days
             await self.session.commit()

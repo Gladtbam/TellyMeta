@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # --- 子模型 ---
 
@@ -97,7 +97,6 @@ class ServerDto(BaseModel):
     registration_count_limit: int = 0
     registration_time_limit: str = "0"
     registration_expiry_months: int = Field(default=1, ge=1)
-    registration_expiry_days: int | None = None
     registration_external_url: str | None = None
     registration_external_parser: str | None = None
     code_expiry_days: int = 30
@@ -132,6 +131,9 @@ class ServerCreate(BaseModel):
 class ServerUpdate(BaseModel):
     """用于更新服务器的请求体"""
 
+    # 显式拒绝已废弃的 registration_expiry_days 等未声明字段，防止静默忽略误导调用方
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
     url: str | None = None
     api_key: str | None = None  # 前端传 "****" 或 null 时忽略
@@ -145,7 +147,6 @@ class ServerUpdate(BaseModel):
     registration_count_limit: int | None = None
     registration_time_limit: str | None = None  # 传递时间戳字符串
     registration_expiry_months: int | None = Field(default=None, ge=1)
-    registration_expiry_days: int | None = None
     registration_external_url: str | None = None
     registration_external_parser: str | None = None
     code_expiry_days: int | None = None

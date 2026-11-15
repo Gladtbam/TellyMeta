@@ -512,8 +512,6 @@ async def update_server(
     expiry_kwargs = {}
     if data.registration_expiry_months is not None:
         expiry_kwargs["expiry_months"] = data.registration_expiry_months
-    if data.registration_expiry_days is not None:
-        expiry_kwargs["expiry_days"] = data.registration_expiry_days
     if data.code_expiry_days is not None:
         expiry_kwargs["code_days"] = data.code_expiry_days
 

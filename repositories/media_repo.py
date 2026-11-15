@@ -72,52 +72,34 @@ class MediaRepository:
         server_id: int,
         media_id: str,
         media_name: str,
-        expires_at: int | None = None,
         *,
-        expiry_months: int | None = None,
+        expiry_months: int = 1,
         now: datetime | None = None,
     ) -> MediaUser:
-        """创建新的媒体账号
-
-        优先按 ``expiry_months`` 以锚定自然月周期计算首期有效期与周期边界；
-        Expand 过渡期间若仅传入按天 ``expires_at`` 整数，仍兼容按固定天数创建，
-        且不额外写入与固定天数到期日不一致的锚定日期，交由后续迁移或续期平滑接管。
+        """创建新的媒体账号，并按锚定自然月周期计算首期有效期与周期边界
 
         Args:
             user_id (int): 关联的 Telegram 用户 ID
             server_id (int): 服务器 ID
             media_id (str): 媒体账号在外部服务器上的 ID
             media_name (str): 媒体账号用户名
-            expires_at (int | None): 兼容按天计算的有效期天数
-            expiry_months (int | None): 有效自然月数（>= 1）
+            expiry_months (int): 有效自然月数（默认 1，必须 >= 1）
             now (datetime | None): 可注入的当前时间（用于确定性测试）
 
         Returns:
             MediaUser: 创建的媒体账号对象
         """
-        if expiry_months is not None:
-            cycle = calculate_registration_cycle(months=expiry_months, now=now)
-            media_user = MediaUser(
-                id=user_id,
-                server_id=server_id,
-                media_id=media_id,
-                media_name=media_name,
-                expires_at=cycle.expires_at,
-                anchor_day=cycle.anchor_day,
-                cycle_started_at=cycle.cycle_started_at,
-                next_reset_at=cycle.next_reset_at,
-            )
-        else:
-            # 兼容未迁移至自然月配置的调用方，保留纯天数语义并避免制造错位的周期边界
-            current_now = now or datetime.now()
-            days = expires_at if expires_at is not None else 30
-            media_user = MediaUser(
-                id=user_id,
-                server_id=server_id,
-                media_id=media_id,
-                media_name=media_name,
-                expires_at=current_now + timedelta(days=days),
-            )
+        cycle = calculate_registration_cycle(months=expiry_months, now=now)
+        media_user = MediaUser(
+            id=user_id,
+            server_id=server_id,
+            media_id=media_id,
+            media_name=media_name,
+            expires_at=cycle.expires_at,
+            anchor_day=cycle.anchor_day,
+            cycle_started_at=cycle.cycle_started_at,
+            next_reset_at=cycle.next_reset_at,
+        )
         self.session.add(media_user)
         await self.session.commit()
         await self.session.refresh(media_user)
