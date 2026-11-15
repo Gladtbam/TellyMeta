@@ -7,6 +7,7 @@ from loguru import logger
 from pydantic import TypeAdapter
 
 from clients.base_client import AuthenticatedClient
+from clients.session_parser import parse_active_sessions
 from models.jellyfin import (
     BaseItemDto,
     BaseItemDtoQueryResult,
@@ -18,7 +19,7 @@ from models.jellyfin import (
     VirtualFolderInfo,
 )
 from models.protocols import BaseItem
-from services.media_service import MediaService
+from services.media_service import ActiveSession, MediaService
 
 
 class JellyfinClient(
@@ -31,6 +32,8 @@ class JellyfinClient(
     用于与 Jellyfin 媒体服务器交互。
     继承自 MediaService 抽象基类，提供获取和更新媒体项信息的方法。
     """
+
+    _sessions_adapter = TypeAdapter(list[SessionInfoDto])
 
     def __init__(
         self,
@@ -250,19 +253,27 @@ class JellyfinClient(
             raise ValueError(f"未找到用户 {user_id}，无法进行封禁或解封操作")
 
     @override
+    async def get_active_sessions(self) -> list[ActiveSession]:
+        """获取 Jellyfin 当前正在播放的结构化活跃会话列表
+
+        Returns:
+            list[ActiveSession]: 仅包含存在 ``NowPlayingItem`` 的活跃会话列表；
+            当接口无内容响应（如 HTTP 204）时返回空列表。
+        """
+        url = "/Sessions"
+        response = await self.get(
+            url,
+            parser=lambda data: parse_active_sessions(data, self._sessions_adapter),
+        )
+        return response or []
+
+    @override
     async def get_session_list(self) -> int:
         """获取用户在线数量。
         Returns:
             int: 在线用户数量。
         """
-        url = "/Sessions"
-        response = await self.get(
-            url,
-            parser=lambda data: TypeAdapter(list[SessionInfoDto]).validate_python(data),
-        )
-        if response is None:
-            return 0
-        return len([session for session in response if session.NowPlayingItem])
+        return len(await self.get_active_sessions())
 
     @override
     async def get_libraries(self) -> list[VirtualFolderInfo] | None:

@@ -2,8 +2,39 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
 from models.emby import MediaFolder
 from models.protocols import BaseItem, DeviceInfo, Library, PublicSystemInfo, User
+
+
+class ActiveSession(BaseModel):
+    """统一的结构化活跃播放会话模型
+
+    屏蔽 Emby 与 Jellyfin ``/Sessions`` 接口在用户标识、媒体项标识与播放状态上的
+    数据结构差异，为 Emby 主动会话心跳与 Nginx 会话归因提供统一的上层契约。
+
+    Attributes:
+        user_id: 媒体平台用户 ID（Jellyfin UUID 统一归一化为标准字符串）。
+        session_id: 会话 ID（对应 ``/Sessions`` 中的 ``Id``）。
+        play_session_id: 播放会话 ID（来自 ``PlayState.PlaySessionId`` 或流地址参数，可用时提供）。
+        device_id: 客户端设备 ID（``DeviceId``）。
+        auth_token: 客户端认证令牌或 API Key（可用时提取，否则为 ``None``）。
+        item_id: 当前正在播放的媒体项 ID（``NowPlayingItem.Id``）。
+        is_paused: 当前是否处于暂停状态（缺失播放状态时默认为 ``False``）。
+        position_ticks: 当前播放进度刻度（1 秒 = 10,000,000 ticks；不可用时为 ``None``）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    user_id: str | None = None
+    session_id: str | None = None
+    play_session_id: str | None = None
+    device_id: str | None = None
+    auth_token: str | None = None
+    item_id: str | None = None
+    is_paused: bool = False
+    position_ticks: int | None = None
 
 
 class MediaService[
@@ -63,6 +94,17 @@ class MediaService[
     @abstractmethod
     async def get_session_list(self) -> int:
         """获取用户在线数量"""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_active_sessions(self) -> list[ActiveSession]:
+        """获取当前正在播放的结构化活跃会话列表
+
+        仅返回包含 ``NowPlayingItem`` 的播放会话（含播放中与暂停中），过滤空闲会话。
+
+        Returns:
+            统一规范化后的 ``ActiveSession`` 列表。
+        """
         raise NotImplementedError
 
     @abstractmethod
