@@ -1,7 +1,7 @@
 import asyncio
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.ai_client import AIClientWarper
@@ -80,15 +80,17 @@ def get_telethon_client(request: Request) -> TelethonClientWarper:
 def _extract_webhook_token(
     authorization: str | None,
     x_webhook_token: str | None,
+    query_token: str | None = None,
 ) -> str | None:
-    """从请求标头中提取 Webhook 鉴权 Token。
+    """按优先级提取 Webhook 鉴权 Token：请求标头优先，查询参数作为可选退回方案。
 
     Args:
         authorization: HTTP Authorization 请求头，支持 ``Bearer <token>`` 格式。
         x_webhook_token: 自定义 ``X-Webhook-Token`` 请求头。
+        query_token: URL 查询参数 ``?token=xxx``（用于不支持自定义请求头的 Emby 等客户端）。
 
     Returns:
-        提取并去除首尾空白后的 Token 字符串；若未提供或格式无效则返回 ``None``。
+        提取并去除首尾空白后的 Token 字符串；若均未提供或格式无效则返回 ``None``。
     """
     if x_webhook_token and x_webhook_token.strip():
         return x_webhook_token.strip()
@@ -97,6 +99,10 @@ def _extract_webhook_token(
         scheme, _, credentials = authorization.strip().partition(" ")
         if scheme.lower() == "bearer" and credentials.strip():
             return credentials.strip()
+
+    # 退回方案：兼容不支持自定义请求头的 Webhook 客户端（如 Emby）
+    if query_token and query_token.strip():
+        return query_token.strip()
 
     return None
 
@@ -108,29 +114,35 @@ async def get_server_by_token(
     x_webhook_token: str | None = Header(
         default=None, alias="X-Webhook-Token", description="Webhook Security Token"
     ),
+    query_token: str | None = Query(
+        default=None,
+        alias="token",
+        description="可选的查询参数退回 Token（适用于不支持自定义请求头的 Emby 等客户端）",
+    ),
     session: AsyncSession = Depends(get_db),
 ) -> ServerInstance:
-    """通过 HTTP Header 标头验证 Webhook Token 并获取对应服务器实例。
+    """验证 Webhook Token 并获取对应服务器实例。
 
-    支持 ``X-Webhook-Token: <token>`` 与 ``Authorization: Bearer <token>`` 两种标头，
-    不再从 URL 查询参数读取 Token 以避免密钥泄露到访问日志。
+    优先从 ``X-Webhook-Token: <token>`` 或 ``Authorization: Bearer <token>`` 请求标头读取；
+    当未提供上述标头时，允许退回到可选的 ``?token=<token>`` 查询参数（兼容不支持自定义标头的 Emby）。
 
     Args:
         authorization: ``Authorization`` 请求头。
         x_webhook_token: ``X-Webhook-Token`` 请求头。
+        query_token: 可选的 ``token`` 查询参数。
         session: 异步数据库会话。
 
     Returns:
         校验通过的 ``ServerInstance`` 对象。
 
     Raises:
-        HTTPException: 缺少鉴权标头时返回 401；Token 无效时返回 403。
+        HTTPException: 缺少鉴权信息时返回 401；Token 无效时返回 403。
     """
-    token = _extract_webhook_token(authorization, x_webhook_token)
+    token = _extract_webhook_token(authorization, x_webhook_token, query_token)
     if not token:
         raise HTTPException(
             status_code=401,
-            detail="缺少 Webhook 鉴权标头（请使用 X-Webhook-Token 或 Authorization: Bearer）",
+            detail="缺少 Webhook 鉴权信息（请使用 X-Webhook-Token、Authorization: Bearer 或 ?token= 参数）",
         )
 
     repo = ServerRepository(session)

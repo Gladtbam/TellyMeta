@@ -802,17 +802,28 @@
                                     onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
                                     style="background: #eee; color: #555;">
                             </div>
+                            <div class="section-hint" id="srv-webhook-url-hint" style="margin: 4px 0 0 0;"></div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Webhook Token (Header 鉴权，点击复制)</label>
-                            <div style="display: flex; gap: 8px;">
-                                <input type="text" class="form-input" id="srv-webhook-token" readonly
-                                    onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
-                                    style="background: #eee; color: #555;">
+                        <div id="webhook-header-group">
+                            <div class="form-group">
+                                <label class="form-label">Webhook 鉴权请求头 (点击复制)</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" class="form-input" id="srv-webhook-header" readonly
+                                        onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
+                                        style="background: #eee; color: #555;">
+                                </div>
                             </div>
-                            <div class="section-hint" style="margin: 4px 0 0 0;">请将上方 URL 填入 Jellyfin/Emby/Sonarr/Radarr 的
-                                Webhook 设置，并在请求标头中添加 <code>X-Webhook-Token: &lt;Token&gt;</code> 或
-                                <code>Authorization: Bearer &lt;Token&gt;</code>。</div>
+                            <div class="form-group">
+                                <label class="form-label">Webhook Token (仅 Token 值，点击复制)</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="text" class="form-input" id="srv-webhook-token" readonly
+                                        onclick="this.select(); document.execCommand('copy'); tg.showAlert('已复制');"
+                                        style="background: #eee; color: #555;">
+                                </div>
+                                <div class="section-hint" style="margin: 4px 0 0 0;">请将上方 URL 填入 Webhook 设置，并添加请求头（支持直接复制整行
+                                    <code>X-Webhook-Token: &lt;Token&gt;</code>，或分栏填写 Header 名 <code>X-Webhook-Token</code> 与 Token 值，亦可使用
+                                    <code>Authorization: Bearer &lt;Token&gt;</code>）。</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1368,9 +1379,15 @@
             const type = document.getElementById('srv-type').value;
             const isQb = type === 'qbittorrent';
             const isArr = ['sonarr', 'radarr'].includes(type);
+            const isEmby = type === 'emby';
+            const showWebhook = !isQb && currentServerId !== null;
             document.getElementById('qb-fields-group').style.display = isQb ? 'block' : 'none';
             document.getElementById('arr-qb-group').style.display = isArr ? 'block' : 'none';
-            document.getElementById('webhook-info-group').style.display = isQb ? 'none' : 'block';
+            document.getElementById('webhook-info-group').style.display = showWebhook ? 'block' : 'none';
+            document.getElementById('webhook-header-group').style.display = (showWebhook && !isEmby) ? 'block' : 'none';
+            document.getElementById('srv-webhook-url-hint').textContent = isEmby
+                ? 'Emby 不支持自定义请求头，已直接在上方 Webhook URL 中附带 ?token= 鉴权参数。'
+                : '请配合下方 Header 鉴权信息使用（推荐），URL 本身不包含密钥。';
             document.getElementById('srv-key-label').textContent = isQb ? '密码 / API Key' : 'API Key';
         }
 
@@ -1405,9 +1422,14 @@
             document.getElementById('srv-qb-limit').value = s.qb_torrent_limit ?? 43200;
 
             const origin = window.location.origin;
-            const webhookPath = `/webhook/${s.server_type}`;
+            const token = s.webhook_token || '';
+            const useQueryFallback = s.server_type === 'emby' && token;
+            const webhookPath = useQueryFallback
+                ? `/webhook/${s.server_type}?token=${encodeURIComponent(token)}`
+                : `/webhook/${s.server_type}`;
             document.getElementById('srv-webhook').value = origin + webhookPath;
-            document.getElementById('srv-webhook-token').value = s.webhook_token || '';
+            document.getElementById('srv-webhook-header').value = token ? `X-Webhook-Token: ${token}` : '';
+            document.getElementById('srv-webhook-token').value = token;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', s.notify_topic_id, s.id, 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', s.request_notify_topic_id, s.id, 'request')
