@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="watch_time.js"></script>
     <title>用户资料详情</title>
     <style>
         :root {
@@ -529,6 +530,14 @@
                     <div class="item-content"><span class="item-title">续期/注册所需积分</span></div>
                     <span class="item-value" id="renew-score">-</span>
                 </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">本周期观看时长</span></div>
+                    <span class="item-value" id="cycle-watch-time">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">累计观看时长</span></div>
+                    <span class="item-value" id="total-watch-time">-</span>
+                </div>
             </div>
 
             <div class="section-title">已绑定的媒体账户</div>
@@ -771,6 +780,8 @@
             document.getElementById('consecutive-checkin').innerText = `${data.consecutive_checkin_count ?? 0} 天`;
             document.getElementById('checkin').innerText = `${data.checkin_count ?? 0} 天`;
             document.getElementById('warning').innerText = `${data.warning_count ?? 0} 次`;
+            document.getElementById('cycle-watch-time').innerText = formatWatchDuration(data.cycle_watch_time_seconds);
+            document.getElementById('total-watch-time').innerText = formatWatchDuration(data.total_watch_time_seconds);
 
             // 媒体账户列表
             const mediaList = document.getElementById('media-list');
@@ -793,6 +804,7 @@
                             <div class="item-content">
                                 <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
                                 <span class="item-subtitle">账号: <b>${acc.media_name}</b> | 到期: ${expiry}</span>
+                                <span class="item-subtitle">观看时长: 本周期 ${formatWatchDuration(acc.cycle_watch_time_seconds)} · 累计 ${formatWatchDuration(acc.total_watch_time_seconds)}</span>
                             </div>
                             <span style="font-size: 13px; font-weight: 500; color: ${statusColor};">${acc.status_text}</span>
                         </div>

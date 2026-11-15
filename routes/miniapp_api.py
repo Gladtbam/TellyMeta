@@ -163,6 +163,72 @@ async def _execute_idempotent_sensitive_action(
         return response
 
 
+def _build_user_info_dto(
+    data: dict[str, Any],
+    renew_score: int,
+    *,
+    is_admin: bool,
+    is_group_member: bool,
+    has_username: bool,
+    username: str | None = None,
+    full_name: str | None = None,
+) -> UserInfoDto:
+    """将 ``UserService.get_user_info_data`` 结果统一转换为 ``UserInfoDto``。
+
+    Args:
+        data: 用户聚合字典（含账户列表及周期/总播放时长汇总）。
+        renew_score: 全局统一月续期基础积分。
+        is_admin: 是否为管理员。
+        is_group_member: 是否仍在官方群组内。
+        has_username: 是否配置了 Telegram 用户名。
+        username: 可选用户名（管理员查询视角使用）。
+        full_name: 可选显示名称（管理员查询视角使用）。
+
+    Returns:
+        可直接序列化的 ``UserInfoDto`` 实例。
+    """
+    user = data["user"]
+    media_accounts_data = data["media_accounts"]
+    available_servers_data = data.get("available_servers", [])
+
+    return UserInfoDto(
+        id=user.id,
+        username=username,
+        full_name=full_name,
+        score=user.score,
+        checkin_count=user.checkin_count,
+        consecutive_checkin_count=user.current_consecutive_checkin_count,
+        warning_count=user.warning_count,
+        renew_score=int(renew_score),
+        is_admin=is_admin,
+        is_group_member=is_group_member,
+        has_username=has_username,
+        cycle_watch_time_seconds=int(data.get("cycle_watch_time_seconds", 0)),
+        total_watch_time_seconds=int(data.get("total_watch_time_seconds", 0)),
+        media_accounts=[
+            MediaAccountDto(
+                server_id=item["media_user"].server_id,
+                media_name=item["media_name"],
+                server_name=item["server_name"],
+                server_type=item["server_type"],
+                server_url=item["server_url"],
+                status_text=item["status_text"],
+                expires_at=item["expires_at"],
+                is_banned=item["is_banned"],
+                allow_subtitle_upload=bool(item.get("allow_subtitle_upload", False)),
+                allow_request=bool(item.get("allow_request", False)),
+                tos=item.get("tos"),
+                cycle_watch_time_seconds=int(item.get("cycle_watch_time_seconds", 0)),
+                total_watch_time_seconds=int(item.get("total_watch_time_seconds", 0)),
+            )
+            for item in media_accounts_data
+        ],
+        available_servers=[
+            AvailableServerDto(**item) for item in available_servers_data
+        ],
+    )
+
+
 @router.get("/me", response_model=UserInfoDto)
 async def get_my_info(
     request: Request,
@@ -178,9 +244,6 @@ async def get_my_info(
         renew_score = await telegram_repo.get_renew_score()
 
         user = data["user"]
-        media_accounts_data = data["media_accounts"]
-        available_servers_data = data.get("available_servers", [])
-
         is_admin = user.id in getattr(request.app.state, "admin_ids", set())
 
         # 检查用户是否在群组中
@@ -195,35 +258,12 @@ async def get_my_info(
             uname = await client.get_user_name(user_id, need_username=True)
             has_username = uname not in (None, False)
 
-        return UserInfoDto(
-            id=user.id,
-            score=user.score,
-            checkin_count=user.checkin_count,
-            consecutive_checkin_count=user.current_consecutive_checkin_count,
-            warning_count=user.warning_count,
-            renew_score=int(renew_score),
+        return _build_user_info_dto(
+            data,
+            int(renew_score),
             is_admin=is_admin,
             is_group_member=is_group_member,
             has_username=has_username,
-            media_accounts=[
-                MediaAccountDto(
-                    server_id=item["media_user"].server_id,
-                    media_name=item["media_name"],
-                    server_name=item["server_name"],
-                    server_type=item["server_type"],
-                    server_url=item["server_url"],
-                    status_text=item["status_text"],
-                    expires_at=item["expires_at"],
-                    is_banned=item["is_banned"],
-                    allow_subtitle_upload=item.get("allow_subtitle_upload"),
-                    allow_request=item.get("allow_request"),
-                    tos=item.get("tos"),
-                )
-                for item in media_accounts_data
-            ],
-            available_servers=[
-                AvailableServerDto(**item) for item in available_servers_data
-            ],
         )
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -249,9 +289,6 @@ async def get_target_user_info_for_admin(
         renew_score = await telegram_repo.get_renew_score()
 
         user = data["user"]
-        media_accounts_data = data["media_accounts"]
-        available_servers_data = data.get("available_servers", [])
-
         is_admin = user.id in getattr(request.app.state, "admin_ids", set())
 
         # 检查用户是否在群组中及获取用户名和昵称
@@ -273,37 +310,14 @@ async def get_target_user_info_for_admin(
             if fn_val:
                 first_name = str(fn_val)
 
-        return UserInfoDto(
-            id=user.id,
-            username=uname,
-            full_name=first_name,
-            score=user.score,
-            checkin_count=user.checkin_count,
-            consecutive_checkin_count=user.current_consecutive_checkin_count,
-            warning_count=user.warning_count,
-            renew_score=int(renew_score),
+        return _build_user_info_dto(
+            data,
+            int(renew_score),
             is_admin=is_admin,
             is_group_member=is_group_member,
             has_username=uname is not None,
-            media_accounts=[
-                MediaAccountDto(
-                    server_id=item["media_user"].server_id,
-                    media_name=item["media_name"],
-                    server_name=item["server_name"],
-                    server_type=item["server_type"],
-                    server_url=item["server_url"],
-                    status_text=item["status_text"],
-                    expires_at=item["expires_at"],
-                    is_banned=item["is_banned"],
-                    allow_subtitle_upload=item.get("allow_subtitle_upload"),
-                    allow_request=item.get("allow_request"),
-                    tos=item.get("tos"),
-                )
-                for item in media_accounts_data
-            ],
-            available_servers=[
-                AvailableServerDto(**item) for item in available_servers_data
-            ],
+            username=uname,
+            full_name=first_name,
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("获取目标用户信息失败: {}", e)

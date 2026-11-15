@@ -104,6 +104,7 @@ class ServerDto(BaseModel):
     allow_subtitle_upload: bool = True
     allow_request: bool = True
     allow_nfo: bool = True
+    enable_watch_time: bool = True
     tos: str | None = None
 
     # 高级配置
@@ -154,6 +155,7 @@ class ServerUpdate(BaseModel):
     allow_subtitle_upload: bool | None = None
     allow_request: bool | None = None
     allow_nfo: bool | None = None
+    enable_watch_time: bool | None = None
     tos: str | None = None
 
     # 高级配置
@@ -225,6 +227,10 @@ class SystemConfigResponse(BaseModel):
     schedule_request_expire_hours: int = 1
     schedule_nsfw_retry_minutes: int = 10
     db_backup_retention_days: int = 7
+    enable_watch_time: bool = True
+    watch_time_daily_cap_seconds: int = 43200
+    watch_time_heartbeat_interval_seconds: int = 30
+    watch_time_disconnect_grace_seconds: int = 45
 
 
 class OpsConfigUpdateDto(BaseModel):
@@ -272,6 +278,14 @@ class PolicyConfigUpdateDto(BaseModel):
     account_delete_grace_days: int = 7
     account_renew_advance_days: int = 7
     request_expire_days: int = 7
+
+
+class WatchTimeConfigUpdateDto(BaseModel):
+    """播放时长统计与 Emby 心跳参数更新请求"""
+
+    daily_cap_seconds: int = 43200
+    heartbeat_interval_seconds: int = 30
+    disconnect_grace_seconds: int = 45
 
 
 class MkvConfigUpdateDto(BaseModel):
@@ -384,6 +398,8 @@ class MediaAccountDto(BaseModel):
     allow_request: bool = True
     allow_nfo: bool = True
     tos: str | None = None
+    cycle_watch_time_seconds: int = 0
+    total_watch_time_seconds: int = 0
 
 
 class AvailableServerDto(BaseModel):
@@ -415,6 +431,8 @@ class UserInfoDto(BaseModel):
     is_admin: bool = False
     is_group_member: bool = False
     has_username: bool = False
+    cycle_watch_time_seconds: int = 0
+    total_watch_time_seconds: int = 0
     media_accounts: list[MediaAccountDto]
     available_servers: list[AvailableServerDto] = []
 

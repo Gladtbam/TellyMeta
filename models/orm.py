@@ -4,8 +4,10 @@ from enum import StrEnum
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -132,6 +134,9 @@ class ServerInstance(Base):
     allow_nfo: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )
+    enable_watch_time: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -180,6 +185,15 @@ class MediaUser(Base):
         Boolean, server_default=text("false"), nullable=False
     )
     delete_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cycle_watch_time_seconds: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    total_watch_time_seconds: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    watch_time_remainder_ms: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
 
     telegram_user: Mapped[TelegramUser] = relationship(back_populates="media_users")
     __table_args__ = (
@@ -321,5 +335,90 @@ class MediaRequest(Base):
             unique=True,
             sqlite_where=text("status = 'pending'"),
             postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
+class MediaWatchDaily(Base):
+    """媒体账号按自然日有效播放时长累计表（用于单日上限控制）"""
+
+    __tablename__ = "media_watch_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    server_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    watch_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    watch_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "server_id"],
+            ["media_user.id", "media_user.server_id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "server_id",
+            "watch_date",
+            name="uq_media_watch_daily_account_date",
+        ),
+    )
+
+
+class MediaWatchInterval(Base):
+    """媒体账号已计入的有效播放时间线区间（合并去重用）"""
+
+    __tablename__ = "media_watch_intervals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    server_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "server_id"],
+            ["media_user.id", "media_user.server_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+
+class MediaPlaybackSession(Base):
+    """媒体播放会话快照表（支撑暂停剔除、Seek 识别、防刷幂等与重启恢复）"""
+
+    __tablename__ = "media_playback_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    server_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    session_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    play_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False, index=True
+    )
+    is_paused: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    last_position_ticks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    last_event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_effective_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["user_id", "server_id"],
+            ["media_user.id", "media_user.server_id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "server_id",
+            "session_key",
+            name="uq_media_playback_session_server_key",
         ),
     )

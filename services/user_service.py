@@ -264,10 +264,16 @@ class UserService:
 
         media_accounts = []
         registered_server_ids: set[int] = set()
+        cycle_watch_time_seconds = 0
+        total_watch_time_seconds = 0
         if user.media_users:
             for mu in user.media_users:
                 server = await self.server_repo.get_by_id(mu.server_id)
                 registered_server_ids.add(mu.server_id)
+                cycle_watch = int(mu.cycle_watch_time_seconds or 0)
+                total_watch = int(mu.total_watch_time_seconds or 0)
+                cycle_watch_time_seconds += cycle_watch
+                total_watch_time_seconds += total_watch
                 media_accounts.append(
                     {
                         "media_user": mu,
@@ -290,6 +296,8 @@ class UserService:
                         ),
                         "allow_request": server.allow_request if server else False,
                         "tos": server.tos if server else None,
+                        "cycle_watch_time_seconds": cycle_watch,
+                        "total_watch_time_seconds": total_watch,
                     }
                 )
 
@@ -365,6 +373,8 @@ class UserService:
             "user": user,
             "media_accounts": media_accounts,
             "available_servers": available_servers,
+            "cycle_watch_time_seconds": cycle_watch_time_seconds,
+            "total_watch_time_seconds": total_watch_time_seconds,
         }
 
     async def get_user_info(self, user_id: int) -> Result:

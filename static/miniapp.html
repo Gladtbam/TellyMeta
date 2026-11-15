@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="watch_time.js"></script>
     <title>个人中心</title>
     <style>
         :root {
@@ -308,6 +309,14 @@
                     <div class="item-content"><span class="item-title">续期/注册积分</span></div>
                     <span class="item-value" id="renew-score">-</span>
                 </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">本周期观看时长</span></div>
+                    <span class="item-value" id="cycle-watch-time">-</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-title">累计观看时长</span></div>
+                    <span class="item-value" id="total-watch-time">-</span>
+                </div>
             </div>
 
             <div class="section-title">兑换码</div>
@@ -417,6 +426,12 @@
                 document.getElementById('checkin').innerText = `${data.checkin_count} 天`;
             }
             document.getElementById('warning').innerText = data.warning_count;
+            if (document.getElementById('cycle-watch-time')) {
+                document.getElementById('cycle-watch-time').innerText = formatWatchDuration(data.cycle_watch_time_seconds);
+            }
+            if (document.getElementById('total-watch-time')) {
+                document.getElementById('total-watch-time').innerText = formatWatchDuration(data.total_watch_time_seconds);
+            }
 
             const list = document.getElementById('media-list');
             list.innerHTML = '';
@@ -449,6 +464,10 @@
                         <div class="item">
                             <div class="item-content"><span class="item-subtitle">有效期至</span></div>
                             <span class="item-value" style="font-size:15px">${expiry}</span>
+                        </div>
+                        <div class="item">
+                            <div class="item-content"><span class="item-subtitle">观看时长</span></div>
+                            <span class="item-value" style="font-size:14px">本周期 ${formatWatchDuration(acc.cycle_watch_time_seconds)} / 累计 ${formatWatchDuration(acc.total_watch_time_seconds)}</span>
                         </div>
                         <div class="item" style="cursor:pointer" onclick="window.location.href='account.html?server_id=${acc.server_id}'">
                             <div class="item-content"><span class="item-subtitle">操作</span></div>

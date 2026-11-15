@@ -34,6 +34,7 @@ from models.schemas import (
     PolicyConfigUpdateDto,
     QualityProfileDto,
     RootFolderDto,
+    WatchTimeConfigUpdateDto,
 )
 from repositories.binding_repo import BindingRepository
 from repositories.config_repo import ConfigRepository
@@ -41,6 +42,12 @@ from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
 from services.user_service import Result
+from services.watch_time_service import (
+    WatchTimeService,
+    clear_all_emby_heartbeat_jobs,
+    remove_emby_heartbeat_job,
+    reschedule_emby_heartbeat_jobs,
+)
 
 settings = get_settings()
 
@@ -216,6 +223,8 @@ class SettingsServices:
                 )
         else:
             await self._remove_and_close_client(server)
+            # 停用服务器时同步停用遗留活跃会话并清理 Emby 按需播放心跳（保留历史时长统计）
+            await self.handle_watch_time_disabled(server_id)
             return Result(
                 True,
                 TelegramMessage.render_markdown(
@@ -448,6 +457,12 @@ class SettingsServices:
 
             if key == ConfigRepository.KEY_ENABLE_LLM_TRANSLATE:
                 await self.reload_ai_client()
+            elif (
+                key == ConfigRepository.KEY_ENABLE_WATCH_TIME
+                and new_state_str == "false"
+            ):
+                # 全局关闭播放时长统计时停用所有活跃会话并清空全部 Emby 心跳（保留历史累计）
+                await self.handle_watch_time_disabled(None)
 
             status_text = "开启" if new_state_str == "true" else "关闭"
             label = ConfigRepository.get_points_sub_switch_label(key)
@@ -624,6 +639,63 @@ class SettingsServices:
             await self.config_repo.set_settings(key, value)
 
         return Result(success=True, message="验证超时与宽限期配置已保存并生效")
+
+    async def handle_watch_time_disabled(self, server_id: int | None = None) -> None:
+        """在关闭全局或单台服务器播放时长统计时停用活跃会话并清理 Emby 心跳任务
+
+        Args:
+            server_id: 目标服务器 ID；传入 ``None`` 时停用全部服务器的遗留活跃会话并移除全部心跳任务。
+        """
+        await WatchTimeService(self.session).deactivate_server_sessions(
+            server_id, commit=True
+        )
+        scheduler = getattr(self.app.state, "scheduler", None)
+        if server_id is None:
+            clear_all_emby_heartbeat_jobs(scheduler)
+        else:
+            remove_emby_heartbeat_job(scheduler, server_id)
+
+    async def update_watch_time_config(
+        self, payload: WatchTimeConfigUpdateDto
+    ) -> Result:
+        """校验并保存播放时长上限、Emby 主动心跳间隔与断线宽限期配置
+
+        Args:
+            payload: 播放时长配置更新载体。
+
+        Returns:
+            包含校验或保存结果的 ``Result`` 对象。
+        """
+        if payload.daily_cap_seconds < 0:
+            return Result(
+                success=False, message="单日有效播放上限不能为负数（0 表示不限制）"
+            )
+        if payload.heartbeat_interval_seconds < 5:
+            return Result(success=False, message="Emby 会话心跳间隔至少为 5 秒")
+        if payload.disconnect_grace_seconds < 5:
+            return Result(success=False, message="断线/无事件宽限窗口至少为 5 秒")
+
+        items = {
+            ConfigRepository.KEY_WATCH_TIME_DAILY_CAP_SECONDS: str(
+                payload.daily_cap_seconds
+            ),
+            ConfigRepository.KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS: str(
+                payload.heartbeat_interval_seconds
+            ),
+            ConfigRepository.KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS: str(
+                payload.disconnect_grace_seconds
+            ),
+        }
+        for key, value in items.items():
+            await self.config_repo.set_settings(key, value)
+
+        # 若当前已有运行中的 Emby 心跳任务，同步刷新其触发间隔
+        reschedule_emby_heartbeat_jobs(
+            getattr(self.app.state, "scheduler", None),
+            payload.heartbeat_interval_seconds,
+        )
+
+        return Result(success=True, message="播放时长与 Emby 心跳配置已保存并生效")
 
     async def update_ops_config(self, payload: OpsConfigUpdateDto) -> Result:
         """校验并保存定时任务调度与运维策略配置，同时热更新调度器。
@@ -904,6 +976,7 @@ class SettingsServices:
 
     async def delete_server(self, server_id: int) -> Result:
         """删除服务器"""
+        remove_emby_heartbeat_job(getattr(self.app.state, "scheduler", None), server_id)
         if server_id in self.media_clients:
             del self.media_clients[server_id]
         if server_id in self.sonarr_clients:

@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="watch_time.js"></script>
     <title>TellyMeta 设置</title>
     <style>
         :root {
@@ -431,6 +432,16 @@
                             type="checkbox" id="toggle-llm-translate"
                             onchange="toggleSystem('enable_llm_translate')"><span class="slider"></span></label>
                 </div>
+                <div class="item">
+                    <div class="item-content" style="cursor:pointer;" onclick="openModal('watch-time-modal')">
+                        <span class="item-title">播放时长统计</span>
+                        <span class="item-subtitle" id="watch-time-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="watch-time-config-btn" onclick="openModal('watch-time-modal')">配置 ›</span>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-watch-time"
+                            onchange="toggleSystem('enable_watch_time')"><span class="slider"></span></label>
+                </div>
                 <div class="item" style="cursor:pointer;" onclick="openModal('metadata-modal')">
                     <div class="item-content">
                         <span class="item-title">元数据 API (TMDB / TVDB)</span>
@@ -730,6 +741,34 @@
         </div>
     </div>
 
+    <!-- 播放时长与 Emby 心跳配置弹窗 -->
+    <div class="modal-overlay" id="watch-time-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>播放时长与 Emby 心跳配置</span>
+                <span class="modal-close" onclick="closeModal('watch-time-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">单日有效时长上限 (秒，0 表示不限)</label>
+                    <input type="number" min="0" id="wt-daily-cap" class="form-input" placeholder="43200">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">Emby 心跳间隔 (秒)</label>
+                        <input type="number" min="5" id="wt-heartbeat-interval" class="form-input" placeholder="30">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">断线宽限窗口 (秒)</label>
+                        <input type="number" min="5" id="wt-disconnect-grace" class="form-input" placeholder="45">
+                    </div>
+                </div>
+                <span class="item-subtitle">仅 Emby 存在活跃播放时动态启动单服务器心跳；关闭全局或单服开关仅停止新增采集，不会清除历史时长。</span>
+                <button type="button" class="btn btn-primary" onclick="saveWatchTimeConfig()">保存时长配置</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 定时任务与运维策略弹窗 -->
     <div class="modal-overlay" id="ops-modal">
         <div class="modal">
@@ -953,6 +992,11 @@
                         <label class="switch"><input type="checkbox" id="srv-request"><span
                                 class="slider"></span></label>
                     </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>播放时长采集</span>
+                        <label class="switch"><input type="checkbox" id="srv-watch-time"><span
+                                class="slider"></span></label>
+                    </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
                     <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
@@ -1151,6 +1195,13 @@
                 document.getElementById('policy-request-expire').value = s.request_expire_days ?? 7;
                 updateVerificationVisibility(!!s.enable_verification);
                 updatePolicySummary();
+
+                const watchTimeEnabled = s.enable_watch_time !== false;
+                document.getElementById('toggle-watch-time').checked = watchTimeEnabled;
+                document.getElementById('wt-daily-cap').value = s.watch_time_daily_cap_seconds ?? 43200;
+                document.getElementById('wt-heartbeat-interval').value = s.watch_time_heartbeat_interval_seconds ?? 30;
+                document.getElementById('wt-disconnect-grace').value = s.watch_time_disconnect_grace_seconds ?? 45;
+                updateWatchTimeVisibility(watchTimeEnabled);
 
                 document.getElementById('ops-ban-expired-day').value = s.schedule_ban_expired_day || '*';
                 document.getElementById('ops-ban-expired-time').value = s.schedule_ban_expired_time || '00:15';
@@ -1420,6 +1471,39 @@
             summary.innerText = `删号 ${dg}天 · 续期 ${ra}天 · 求片 ${re}天`;
         }
 
+        function updateWatchTimeVisibility(enabled) {
+            const btn = document.getElementById('watch-time-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('watch-time-summary');
+            if (!summary) return;
+            if (!enabled) {
+                summary.innerText = '已关闭（保留历史时长）';
+                return;
+            }
+            const cap = parseInt(document.getElementById('wt-daily-cap').value, 10);
+            const capText = (!Number.isNaN(cap) && cap > 0) ? `日上限 ${formatWatchDuration(cap)}` : '日上限不限';
+            const hb = document.getElementById('wt-heartbeat-interval').value || 30;
+            const grace = document.getElementById('wt-disconnect-grace').value || 45;
+            summary.innerText = `${capText} · 心跳 ${hb}s · 宽限 ${grace}s`;
+        }
+
+        async function saveWatchTimeConfig() {
+            const parseIntOr = (id, def) => {
+                const raw = document.getElementById(id).value.trim();
+                const val = parseInt(raw, 10);
+                return Number.isNaN(val) ? def : val;
+            };
+            const payload = {
+                daily_cap_seconds: parseIntOr('wt-daily-cap', 43200),
+                heartbeat_interval_seconds: parseIntOr('wt-heartbeat-interval', 30),
+                disconnect_grace_seconds: parseIntOr('wt-disconnect-grace', 45)
+            };
+            const res = await api('/system/watch-time', 'POST', payload);
+            updateWatchTimeVisibility(document.getElementById('toggle-watch-time').checked);
+            closeModal('watch-time-modal');
+            tg.showAlert('✅ ' + (res.message || '播放时长配置已保存'));
+        }
+
         async function savePolicyConfig(modalId = 'policy-modal') {
             const parseIntOr = (id, def) => {
                 const raw = document.getElementById(id).value.trim();
@@ -1535,6 +1619,7 @@
             document.getElementById('srv-qb-limit').value = 43200;
             if (document.getElementById('srv-reg-months')) document.getElementById('srv-reg-months').value = 1;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
+            if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = true;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
@@ -1615,6 +1700,7 @@
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
                 if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
                 if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = s.allow_request !== false;
+                if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = s.enable_watch_time !== false;
                 onRegModeChange();
             } else {
                 renderPathMappings(s.path_mappings || []);
@@ -1799,6 +1885,7 @@
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
                 payload.allow_request = document.getElementById('srv-request').checked;
+                payload.enable_watch_time = document.getElementById('srv-watch-time').checked;
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
                 payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;
@@ -1878,7 +1965,8 @@
             enable_verification: 'toggle-verification',
             enable_cleanup_inactive_users: 'toggle-cleanup',
             enable_mkv_process: 'toggle-mkv-process',
-            enable_llm_translate: 'toggle-llm-translate'
+            enable_llm_translate: 'toggle-llm-translate',
+            enable_watch_time: 'toggle-watch-time'
         };
 
         /**
@@ -1898,6 +1986,8 @@
                 updateMkvExcludeVisibility(enabled);
             } else if (key === 'enable_llm_translate') {
                 updateLlmConfigVisibility(enabled);
+            } else if (key === 'enable_watch_time') {
+                updateWatchTimeVisibility(enabled);
             }
         }
 
@@ -1909,7 +1999,7 @@
             const el = document.getElementById(SYSTEM_TOGGLE_ID_MAP[key] || `toggle-${key.split('_')[1]}`);
             try {
                 const res = await api(`/system/${key}/toggle`, 'POST');
-                const nextState = key === 'enable_mkv_process' ? res.new_state !== false : !!res.new_state;
+                const nextState = typeof res.new_state === 'boolean' ? res.new_state : !!(el && el.checked);
                 syncToggleVisualState(key, nextState);
             } catch (e) {
                 if (el) {

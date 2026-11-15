@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import errors
@@ -46,6 +46,12 @@ from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.media_service import MediaService
 from services.notification_service import NotificationService
+from services.watch_time_service import (
+    NormalizedPlaybackEvent,
+    WatchTimeService,
+    normalize_emby_playback_event,
+    normalize_jellyfin_playback_event,
+)
 from workers.nfo_worker import (
     create_episode_nfo,
     create_movie_nfo,
@@ -188,7 +194,7 @@ async def sonarr_webhook(
 
         await _schedule_qb_share_limit(
             server_instance, payload.downloadId, qb_clients, session
-            )
+        )
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -271,7 +277,7 @@ async def radarrarr_webhook(
 
         await _schedule_qb_share_limit(
             server_instance, payload.downloadId, qb_clients, session
-            )
+        )
 
         if client.notify_topic_id:
             await notify_service.send_to_topic(
@@ -300,10 +306,40 @@ async def radarrarr_webhook(
     return Response(content="Webhook received", status_code=200)
 
 
+async def _process_playback_webhook(
+    request: Request,
+    session: AsyncSession,
+    server_instance: ServerInstance,
+    playback_event: NormalizedPlaybackEvent | None,
+) -> None:
+    """统一处理来自 Emby / Jellyfin Webhook 的标准化播放状态事件。
+
+    Args:
+        request: FastAPI 请求对象，用于向 ``WatchTimeService`` 传递 ``app`` 以按需挂载 Emby 心跳。
+        session: 异步数据库会话。
+        server_instance: 当前触发 Webhook 的服务器实例。
+        playback_event: 标准化播放事件；非播放类 Webhook 或缺少必需标识时为 ``None``。
+    """
+    if playback_event is None:
+        return
+    # 先结束鉴权依赖 get_server_by_token 打开的只读事务，确保加锁后读取最新数据库快照
+    if session.in_transaction():
+        await session.commit()
+    watch_time_service = WatchTimeService(session)
+    await watch_time_service.process_playback_event(
+        server_instance,
+        playback_event,
+        app=request.app,
+        commit=True,
+    )
+
+
 @router.post("/webhook/emby", status_code=202)
 async def emby_webhook(
+    request: Request,
     payload: EmbyPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
+    session: AsyncSession = Depends(get_db),
     ai_client: AIClientWarper | None = Depends(get_ai_client),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service),
@@ -329,15 +365,22 @@ async def emby_webhook(
                 item=payload.item,
             )
     elif isinstance(payload, LibraryDeletedEvent) and ai_client:
-            await cancel_translate_media_item(server_instance.id, payload.item.id)
+        await cancel_translate_media_item(server_instance.id, payload.item.id)
+    else:
+        playback_event = normalize_emby_playback_event(payload)
+        await _process_playback_webhook(
+            request, session, server_instance, playback_event
+        )
 
     return Response(content="Webhook received", status_code=200)
 
 
 @router.post("/webhook/jellyfin", status_code=202)
 async def jellyfin(
+    request: Request,
     payload: JellyfinPayload,
     server_instance: ServerInstance = Depends(get_server_by_token),
+    session: AsyncSession = Depends(get_db),
     ai_client: AIClientWarper | None = Depends(get_ai_client),
     media_clients: dict[int, MediaService] = Depends(get_media_clients),
     notify_service: NotificationService = Depends(get_notification_service),
@@ -365,5 +408,10 @@ async def jellyfin(
                 item=payload.item_id,
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED and ai_client:
-            await cancel_translate_media_item(server_instance.id, payload.item_id)
+        await cancel_translate_media_item(server_instance.id, payload.item_id)
+    else:
+        playback_event = normalize_jellyfin_playback_event(payload)
+        await _process_playback_webhook(
+            request, session, server_instance, playback_event
+        )
     return Response(content="Webhook received", status_code=200)

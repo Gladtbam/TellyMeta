@@ -5,6 +5,7 @@ import time
 from contextlib import asynccontextmanager
 
 import httpx2
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
@@ -39,6 +40,7 @@ from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.score_service import MessageTrackingState
 from services.settings_service import SettingsServices
+from services.watch_time_service import recover_active_emby_heartbeats
 from workers.mkv_worker import mkv_merge_task
 
 settings = get_settings()
@@ -175,7 +177,9 @@ async def lifespan(app: FastAPI):
 
     app.state.scheduler = AsyncIOScheduler(
         jobstores={
-            "default": SQLAlchemyJobStore(url=get_sync_database_url(DATABASE_URL))
+            "default": SQLAlchemyJobStore(url=get_sync_database_url(DATABASE_URL)),
+            # Emby 播放态按需心跳仅作用于运行期进程，使用内存 JobStore 避免重启残留无效持久化任务
+            "memory": MemoryJobStore(),
         },
         timezone=settings.timezone,
     )
@@ -196,6 +200,8 @@ async def lifespan(app: FastAPI):
             app.state.scheduler.add_job(job.func, job.trigger, **job.kwargs)
 
     app.state.scheduler.start()
+    # 若重启前存在未收尾的 Emby 活跃播放会话，恢复其内存心跳并由对账逻辑兜底结算
+    await recover_active_emby_heartbeats(app)
 
     yield
 

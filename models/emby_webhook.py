@@ -12,7 +12,7 @@ Python 3.11+ 兼容
 
 from datetime import datetime
 from enum import IntEnum, StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -339,6 +339,38 @@ class TranscodingInfo(EmbyBaseModel):
     audio_channels: int | None = Field(default=None, alias="AudioChannels")
     transcode_reasons: list[TranscodeReason] = Field(
         default_factory=list, alias="TranscodeReasons"
+    )
+    # Emby 4.10.x 实测补充字段：码率细分、转码进度、编解码器硬件状态与管线步骤明细
+    sub_protocol: str | None = Field(default=None, alias="SubProtocol")
+    audio_bitrate: int | None = Field(default=None, alias="AudioBitrate")
+    video_bitrate: int | None = Field(default=None, alias="VideoBitrate")
+    transcoding_position_ticks: int | None = Field(
+        default=None, alias="TranscodingPositionTicks"
+    )
+    transcoding_start_position_ticks: int | None = Field(
+        default=None, alias="TranscodingStartPositionTicks"
+    )
+    current_cpu_usage: float | None = Field(default=None, alias="CurrentCpuUsage")
+    average_cpu_usage: float | None = Field(default=None, alias="AverageCpuUsage")
+    video_decoder: str | None = Field(default=None, alias="VideoDecoder")
+    video_decoder_is_hardware: bool | None = Field(
+        default=None, alias="VideoDecoderIsHardware"
+    )
+    video_decoder_media_type: str | None = Field(
+        default=None, alias="VideoDecoderMediaType"
+    )
+    video_encoder: str | None = Field(default=None, alias="VideoEncoder")
+    video_encoder_is_hardware: bool | None = Field(
+        default=None, alias="VideoEncoderIsHardware"
+    )
+    video_encoder_media_type: str | None = Field(
+        default=None, alias="VideoEncoderMediaType"
+    )
+    video_pipeline_info: list[dict[str, Any]] = Field(
+        default_factory=list, alias="VideoPipelineInfo"
+    )
+    subtitle_pipeline_infos: list[list[dict[str, Any]]] = Field(
+        default_factory=list, alias="SubtitlePipelineInfos"
     )
 
 
@@ -698,59 +730,49 @@ class BaseWebhookEvent(EmbyBaseModel):
 # ============================================================================
 
 
-class PlaybackStartEvent(BaseWebhookEvent):
-    """playback.start 事件 - 用户开始播放"""
+class _PlaybackEventBase(BaseWebhookEvent):
+    """Emby 播放类事件公共基类，统一声明播放会话、进度与转码信息字段"""
 
-    event: Literal["playback.start"] = Field(alias="Event")
     item: BaseItemDto = Field(alias="Item")
     user: NotificationUserDto = Field(alias="User")
     session: NotificationSessionInfo = Field(alias="Session")
     playback_info: NotificationPlaybackInfo | None = Field(
         default=None, alias="PlaybackInfo"
     )
-    device_info: DeviceInfo | None = Field(default=None, alias="DeviceInfo")
-
-
-class PlaybackStopEvent(BaseWebhookEvent):
-    """playback.stop 事件 - 用户停止播放"""
-
-    event: Literal["playback.stop"] = Field(alias="Event")
-    item: BaseItemDto = Field(alias="Item")
-    user: NotificationUserDto = Field(alias="User")
-    session: NotificationSessionInfo = Field(alias="Session")
-    playback_info: NotificationPlaybackInfo = Field(alias="PlaybackInfo")
-    device_info: DeviceInfo | None = Field(default=None, alias="DeviceInfo")
-
-
-class PlaybackProgressEvent(BaseWebhookEvent):
-    """playback.progress 事件 - 播放进度更新"""
-
-    event: Literal["playback.progress"] = Field(alias="Event")
-    item: BaseItemDto = Field(alias="Item")
-    user: NotificationUserDto = Field(alias="User")
-    session: NotificationSessionInfo = Field(alias="Session")
-    playback_info: NotificationPlaybackInfo = Field(alias="PlaybackInfo")
     transcoding_info: TranscodingInfo | None = Field(
         default=None, alias="TranscodingInfo"
     )
+    device_info: DeviceInfo | None = Field(default=None, alias="DeviceInfo")
 
 
-class PlaybackPauseEvent(BaseWebhookEvent):
+class PlaybackStartEvent(_PlaybackEventBase):
+    """playback.start 事件 - 用户开始播放"""
+
+    event: Literal["playback.start"] = Field(alias="Event")
+
+
+class PlaybackStopEvent(_PlaybackEventBase):
+    """playback.stop 事件 - 用户停止播放"""
+
+    event: Literal["playback.stop"] = Field(alias="Event")
+
+
+class PlaybackProgressEvent(_PlaybackEventBase):
+    """playback.progress 事件 - 播放进度更新"""
+
+    event: Literal["playback.progress"] = Field(alias="Event")
+
+
+class PlaybackPauseEvent(_PlaybackEventBase):
     """playback.pause 事件 - 用户暂停播放"""
 
     event: Literal["playback.pause"] = Field(alias="Event")
-    item: BaseItemDto = Field(alias="Item")
-    user: NotificationUserDto = Field(alias="User")
-    session: NotificationSessionInfo = Field(alias="Session")
 
 
-class PlaybackUnpauseEvent(BaseWebhookEvent):
+class PlaybackUnpauseEvent(_PlaybackEventBase):
     """playback.unpause 事件 - 用户恢复播放"""
 
     event: Literal["playback.unpause"] = Field(alias="Event")
-    item: BaseItemDto = Field(alias="Item")
-    user: NotificationUserDto = Field(alias="User")
-    session: NotificationSessionInfo = Field(alias="Session")
 
 
 # ============================================================================

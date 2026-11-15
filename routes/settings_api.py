@@ -35,6 +35,7 @@ from models.schemas import (
     SystemConfigResponse,
     ToggleResponse,
     TopicsResponse,
+    WatchTimeConfigUpdateDto,
 )
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
@@ -73,6 +74,7 @@ SYSTEM_KEY_MAP = {
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
     "enable_mkv_process": ConfigRepository.KEY_ENABLE_MKV_PROCESS,
     "enable_llm_translate": ConfigRepository.KEY_ENABLE_LLM_TRANSLATE,
+    "enable_watch_time": ConfigRepository.KEY_ENABLE_WATCH_TIME,
     **{
         field: db_key
         for field, (db_key, _) in ConfigRepository.POINTS_SUB_SWITCHES.items()
@@ -111,6 +113,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
     points_cfg = await repo.get_points_config()
     policy_cfg = await repo.get_policy_config()
     ops_cfg = await repo.get_ops_config()
+    watch_time_cfg = await repo.get_watch_time_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -128,6 +131,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
             ConfigRepository.KEY_ENABLE_MKV_PROCESS, "true"
         )
         == "true",
+        "enable_watch_time": await repo.is_watch_time_enabled(),
         "mkvtoolnix_available": _is_mkvtoolnix_available(request.app),
         "mkv_exclude_keywords": await repo.get_settings(
             ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, ""
@@ -148,6 +152,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         **points_cfg,
         **policy_cfg,
         **ops_cfg,
+        **watch_time_cfg,
     }
 
 
@@ -191,6 +196,28 @@ async def update_policy_config_endpoint(
     return {
         "success": True,
         "key": "policy_config",
+        "message": result.message,
+    }
+
+
+@router.post(
+    "/system/watch-time",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_watch_time_config_endpoint(
+    request: Request,
+    payload: WatchTimeConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新播放时长日上限、Emby 心跳间隔与断线宽限配置"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_watch_time_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "watch_time_config",
         "message": result.message,
     }
 
@@ -476,6 +503,8 @@ async def update_server(
         update_dict["allow_request"] = data.allow_request
     if data.allow_nfo is not None:
         update_dict["allow_nfo"] = data.allow_nfo
+    if data.enable_watch_time is not None:
+        update_dict["enable_watch_time"] = data.enable_watch_time
     if data.qb_username is not None:
         update_dict["qb_username"] = data.qb_username.strip() or None
     if data.qb_torrent_limit is not None:
@@ -490,8 +519,8 @@ async def update_server(
                 )
         update_dict["qb_server_id"] = data.qb_server_id
 
-    # 路径映射 (List -> JSON)
-    if data.path_mappings is not None:
+    # 路径映射 (List -> JSON)：仅当请求显式传入 path_mappings 时覆盖，避免局部 PATCH 误清空既有映射并触发客户端重载
+    if "path_mappings" in data.model_fields_set and data.path_mappings is not None:
         mapping_dict = {
             m.remote: m.local for m in data.path_mappings if m.remote and m.local
         }
@@ -531,12 +560,18 @@ async def update_server(
     if expiry_kwargs:
         await repo.update_expiry_config(server_id, **expiry_kwargs)
 
-    # 执行基础信息更新与重载（先重载客户端，确保后续 NSFW 撤权使用最新连接）
+    # 执行基础信息更新与重载（仅在连接或鉴权等客户端相关字段变更时重载客户端，避免开关切换触发不必要重连）
     if update_dict:
         await repo.update_basic_info(server_id, **update_dict)
-        server = await repo.get_by_id(server_id)
-        if server and server.is_enabled:
-            await service._reload_server_client(server)
+        if data.enable_watch_time is False:
+            # 关闭单台服务器播放时长采集时立即停用活跃会话并清理 Emby 心跳（保留历史记录）
+            await service.handle_watch_time_disabled(server_id)
+        if {"name", "url", "api_key", "path_mappings", "qb_username"} & set(
+            update_dict
+        ):
+            server = await repo.get_by_id(server_id)
+            if server and server.is_enabled:
+                await service._reload_server_client(server)
 
     if data.nsfw_enabled is not None:
         await repo.update_nsfw_config(server_id, enabled=data.nsfw_enabled)

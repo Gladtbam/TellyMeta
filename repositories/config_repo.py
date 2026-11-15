@@ -90,6 +90,14 @@ class ConfigRepository:
     KEY_SCHEDULE_NSFW_RETRY_MINUTES = "ops:schedule_nsfw_retry_minutes"
     KEY_DB_BACKUP_RETENTION_DAYS = "ops:db_backup_retention_days"
 
+    # 播放时长统计与 Emby 心跳配置键
+    KEY_ENABLE_WATCH_TIME = "watch_time:enable"
+    KEY_WATCH_TIME_DAILY_CAP_SECONDS = "watch_time:daily_cap_seconds"
+    KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS = (
+        "watch_time:heartbeat_interval_seconds"
+    )
+    KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS = "watch_time:disconnect_grace_seconds"
+
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
         """解析 MKV 排除关键词列表（支持逗号或换行分隔）"""
@@ -171,6 +179,10 @@ class ConfigRepository:
             cls.KEY_SCHEDULE_REQUEST_EXPIRE_HOURS: "1",
             cls.KEY_SCHEDULE_NSFW_RETRY_MINUTES: "10",
             cls.KEY_DB_BACKUP_RETENTION_DAYS: "7",
+            cls.KEY_ENABLE_WATCH_TIME: "true",
+            cls.KEY_WATCH_TIME_DAILY_CAP_SECONDS: "43200",
+            cls.KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS: "30",
+            cls.KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS: "45",
         }
 
         new_items = []
@@ -647,3 +659,53 @@ class ConfigRepository:
             if val is not None:
                 source[key] = val
         return self._build_ops_config(source)
+
+    @classmethod
+    def _build_watch_time_config(cls, source: dict[str, str]) -> dict[str, int]:
+        """从配置键值字典解析播放时长上限、Emby 心跳间隔与断线宽限参数。
+
+        Args:
+            source: 包含播放时长配置键的字典。
+
+        Returns:
+            包含整数化参数与边界保底后的配置字典。
+        """
+        return {
+            "watch_time_daily_cap_seconds": cls._parse_int(
+                source.get(cls.KEY_WATCH_TIME_DAILY_CAP_SECONDS), 43200, 0
+            ),
+            "watch_time_heartbeat_interval_seconds": cls._parse_int(
+                source.get(cls.KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS), 30, 5
+            ),
+            "watch_time_disconnect_grace_seconds": cls._parse_int(
+                source.get(cls.KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS), 45, 5
+            ),
+        }
+
+    @classmethod
+    def get_watch_time_config_from_cache(cls) -> dict[str, int]:
+        """同步读取内存缓存中的播放时长与心跳配置。"""
+        return cls._build_watch_time_config(cls.cache)
+
+    @classmethod
+    def is_watch_time_enabled_from_cache(cls) -> bool:
+        """同步读取全局播放时长统计总开关状态。"""
+        return cls.cache.get(cls.KEY_ENABLE_WATCH_TIME, "true") == "true"
+
+    async def is_watch_time_enabled(self) -> bool:
+        """异步读取全局播放时长统计总开关状态。"""
+        return await self.get_settings(self.KEY_ENABLE_WATCH_TIME, "true") == "true"
+
+    async def get_watch_time_config(self) -> dict[str, int]:
+        """读取数据库/缓存中的播放时长上限与 Emby 心跳参数配置。"""
+        keys = (
+            self.KEY_WATCH_TIME_DAILY_CAP_SECONDS,
+            self.KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS,
+            self.KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS,
+        )
+        source: dict[str, str] = {}
+        for key in keys:
+            val = await self.get_settings(key)
+            if val is not None:
+                source[key] = val
+        return self._build_watch_time_config(source)
