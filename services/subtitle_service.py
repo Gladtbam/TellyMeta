@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
+from core.telegram_message import TelegramMessage
 from models.radarr import MovieResource
 from models.sonarr import SeriesResource
 from repositories.binding_repo import BindingRepository
@@ -413,26 +414,29 @@ class SubtitleService:
                 reasons = "\n".join(f"• {err}" for err in errors)
                 return Result(
                     False,
-                    f"❌ **字幕写入失败**（写入 0 个，失败/跳过 {len(errors)} 个）\n"
-                    f"🎬 媒体: {media_title}\n\n"
-                    f"**原因明细**:\n{reasons}",
+                    TelegramMessage.render_markdown(t"""\
+                        ❌ **字幕写入失败**（写入 0 个，失败/跳过 {len(errors)} 个）
+                        🎬 媒体: {media_title}
+
+                        **原因明细**:
+                        {reasons}"""),
                 )
 
             if errors:
                 reasons = "\n".join(f"• {err}" for err in errors[:5])
                 if len(errors) > 5:
                     reasons += f"\n• ...等共 {len(errors)} 个失败/跳过原因"
-                msg = (
-                    f"⚠️ **字幕部分成功**\n"
-                    f"🎬 媒体: {media_title}\n"
-                    f"📥 成功写入: {files_processed} 个 | ❌ 失败/跳过: {len(errors)} 个\n\n"
-                    f"**主要原因**:\n{reasons}"
-                )
+                msg = TelegramMessage.render_markdown(t"""\
+                    ⚠️ **字幕部分成功**
+                    🎬 媒体: {media_title}
+                    📥 成功写入: {files_processed} 个 | ❌ 失败/跳过: {len(errors)} 个
+
+                    **主要原因**:
+                    {reasons}""")
                 return Result(True, msg)
 
-            msg = (
-                f"✅ **字幕处理成功**\n"
-                f"🎬 媒体: {media_title}\n"
-                f"📥 成功写入: {files_processed} 个文件"
-            )
+            msg = TelegramMessage.render_markdown(t"""\
+                ✅ **字幕处理成功**
+                🎬 媒体: {media_title}
+                📥 成功写入: {files_processed} 个文件""")
             return Result(True, msg)

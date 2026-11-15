@@ -15,6 +15,7 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from services.request_service import RequestService
 from services.subtitle_service import SubtitleService
 
@@ -54,7 +55,9 @@ async def request_approve_by_id_handler(
     msg = await event.get_message()
     original_text = msg.text if msg else ""
     if result.success:
-        new_text = original_text + f"\n\n✅ **已批准**: {result.message}"
+        new_text = original_text + TelegramMessage.render_markdown(
+            t"\n\n✅ **已批准**: {result.message:raw}"
+        )
         await event.edit(new_text, buttons=None)
     else:
         await event.answer(result.message, alert=True)
@@ -62,7 +65,8 @@ async def request_approve_by_id_handler(
         req = await request_service.request_repo.get_by_id(request_id)
         if req and req.status != "pending":
             await event.edit(
-                original_text + f"\n\n⚠️ **{result.message}**",
+                original_text
+                + TelegramMessage.render_markdown(t"\n\n⚠️ **{result.message:raw}**"),
                 buttons=None,
             )
 
@@ -93,7 +97,9 @@ async def request_approve_handler(
     if result.success:
         # Edit the message to show approved status and remove buttons
         original_text = (await event.get_message()).text  # type: ignore
-        new_text = original_text + f"\n\n✅ **已批准**: {result.message}"
+        new_text = original_text + TelegramMessage.render_markdown(
+            t"\n\n✅ **已批准**: {result.message:raw}"
+        )
         await event.edit(new_text, buttons=None)
     else:
         await event.answer(result.message, alert=True)
@@ -129,14 +135,19 @@ async def request_deny_handler(
     )
     if result.success:
         await event.edit(
-            original_text + f"\n\n❌ **已拒绝**: {result.message}", buttons=None
+            original_text
+            + TelegramMessage.render_markdown(
+                t"\n\n❌ **已拒绝**: {result.message:raw}"
+            ),
+            buttons=None,
         )
     else:
         await event.answer(result.message, alert=True)
         latest = await request_service.request_repo.get_by_id(target_id)
         if latest and latest.status != "pending":
             await event.edit(
-                original_text + f"\n\n⚠️ **{result.message}**",
+                original_text
+                + TelegramMessage.render_markdown(t"\n\n⚠️ **{result.message:raw}**"),
                 buttons=None,
             )
 
@@ -238,12 +249,18 @@ async def run_subtitle_upload_flow(
                         )
                         if len(targets) > 1:
                             options_text = "\n".join(
-                                f"{idx}. {name} (ID: {aid})"
+                                TelegramMessage.render_markdown(
+                                    t"{idx}. {name} (ID: {aid})"
+                                )
                                 for idx, (aid, name) in enumerate(targets, 1)
                             )
                             await processing_msg.edit(
-                                f"⚠️ 多个已绑定的实例均匹配该媒体，请回复对应序号明确目标：\n\n"
-                                f"{options_text}\n\n发送 `/cancel` 取消。"
+                                TelegramMessage.render_markdown(t"""\
+                                    ⚠️ 多个已绑定的实例均匹配该媒体，请回复对应序号明确目标：
+
+                                    {options_text:raw}
+
+                                    发送 `/cancel` 取消。""")
                             )
                             while True:
                                 choice_msg = await conv.get_response()
@@ -274,7 +291,9 @@ async def run_subtitle_upload_flow(
                         await processing_msg.edit(result.message)
                     else:
                         await processing_msg.edit(
-                            f"❌ **上传失败**\n\n{result.message}"
+                            TelegramMessage.render_markdown(
+                                t"❌ **上传失败**\n\n{result.message:raw}"
+                            )
                         )
 
                 with contextlib.suppress(Exception):
@@ -289,7 +308,10 @@ async def run_subtitle_upload_flow(
             await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(f"Conversation error: {e}")
-            await client.send_message(chat_id, f"❌ 发生未知错误: {e!s}")
+            await client.send_message(
+                chat_id,
+                TelegramMessage.render_markdown(t"❌ 发生未知错误: {e!s}"),
+            )
 
     if session is not None:
         await _run_with_session(session)

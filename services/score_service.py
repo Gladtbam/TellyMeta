@@ -1,8 +1,8 @@
-import textwrap
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
+from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
 from services.user_service import Result
@@ -65,7 +65,7 @@ class ScoreService:
             if updated_user:
                 return Result(
                     success=True,
-                    message=textwrap.dedent(f"""\
+                    message=TelegramMessage.render_markdown(t"""\
                         用户 [{user_id}](tg://user?id={user_id}) 由于刷屏行为已被警告一次。
 
                         当前警告次数: **{updated_user.warning_count}**

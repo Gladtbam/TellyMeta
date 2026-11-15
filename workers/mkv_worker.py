@@ -5,6 +5,7 @@ from typing import Any, NoReturn
 from loguru import logger
 
 from core.config import get_settings
+from core.telegram_message import TelegramMessage
 from workers.mkv_utils import mkv_merge
 
 settings = get_settings()
@@ -29,11 +30,11 @@ async def _notify_admin_mkv_failure(
         target_chat = settings.telegram_chat_id
         target_reply = notify_topic_id
 
-    text = (
-        f"⚠️ **MKV 自动清理失败（原文件保持完整）**\n\n"
-        f"**文件路径**: `{episode_path}`\n"
-        f"**诊断信息**: {error_message}"
-    )
+    text = TelegramMessage.render_markdown(t"""\
+        ⚠️ **MKV 自动清理失败（原文件保持完整）**
+
+        **文件路径**: `{episode_path}`
+        **诊断信息**: {error_message}""")
     try:
         await telethon_client.send_message(
             chat_id=target_chat,

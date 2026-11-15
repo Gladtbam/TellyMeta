@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import textwrap
 from datetime import datetime, timedelta
 from random import randint, sample
 
@@ -16,6 +15,7 @@ from bot.utils import generate_captcha
 from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.verification_repo import VerificationRepository
 from services.user_service import Result, UserService
@@ -42,7 +42,7 @@ class VerificationService:
             return Result(success=False, message="")
         policy_cfg = await self.config_repo.get_policy_config()
         timeout_minutes = policy_cfg["verification_timeout_minutes"]
-        welcome_message = textwrap.dedent(f"""\
+        welcome_message = TelegramMessage.render_markdown(t"""\
             欢迎新成员 [{user_name}](tg://user?id={user_id})！
 
             请在 **{timeout_minutes} 分钟内私聊我** 点击开始并完成人机验证，否则您将会被移出群组。
@@ -132,14 +132,19 @@ class VerificationService:
         if not challenge:
             return Result(
                 success=False,
-                message=f"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。",
+                message=TelegramMessage.render_markdown(
+                    t"未[{user_name}](tg://user?id={user_id})找到验证记录，可能已过期。"
+                ),
             )
         await kick_unverified_user(user_id, is_ban=is_ban)
         with contextlib.suppress(JobLookupError):
             self.scheduler.remove_job(challenge.scheduler_job_id)
 
         return Result(
-            success=True, message=f"[{user_name}](tg://user?id={user_id})已被移出群组。"
+            success=True,
+            message=TelegramMessage.render_markdown(
+                t"[{user_name}](tg://user?id={user_id})已被移出群组。"
+            ),
         )
 
 

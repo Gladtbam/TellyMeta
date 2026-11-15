@@ -14,6 +14,7 @@ from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from models.events import NotificationEvent
 from models.orm import LibraryBinding
 from models.radarr import MovieResource
@@ -205,7 +206,9 @@ class RequestService:
         if not topic_id:
             return Result(
                 False,
-                f"管理员未设置服务器 **{arr_server.name}** 的通知，无法提交请求。",
+                TelegramMessage.render_markdown(
+                    t"管理员未设置服务器 **{arr_server.name}** 的通知，无法提交请求。"
+                ),
             )
 
         title, overview, poster = await self._get_media_content(selected_media, client)
@@ -366,7 +369,9 @@ class RequestService:
         if ok:
             return Result(
                 True,
-                f"✅ 已批准并添加 **{msg}** (操作人: {approver_name})",
+                TelegramMessage.render_markdown(
+                    t"✅ 已批准并添加 **{msg}** (操作人: {approver_name})"
+                ),
             )
         return Result(False, msg)
 
@@ -491,7 +496,9 @@ class RequestService:
             )
             return Result(
                 True,
-                f"✅ 已批准并添加 **{msg}**（结算积分: {claimed.reserved_cost}，操作人: {approver_name}）",
+                TelegramMessage.render_markdown(
+                    t"✅ 已批准并添加 **{msg}**（结算积分: {claimed.reserved_cost}，操作人: {approver_name}）"
+                ),
             )
 
         # Arr 添加失败时释放全部预留积分，不发生该次消费
@@ -519,16 +526,17 @@ class RequestService:
             request_id,
             claimed.user_id,
             "arr_failed",
-            text=(
-                f"❌ <b>求片添加失败</b>\n\n"
-                f"您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）"
-                f"在加入媒体库时失败：{msg}\n"
-                f"已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"
-            ),
+            text=TelegramMessage.render_html(t"""\
+                ❌ <b>求片添加失败</b>
+
+                您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）在加入媒体库时失败：{msg}
+                已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"""),
         )
         return Result(
             False,
-            f"❌ {msg}（已释放预留积分 {claimed.reserved_cost}）",
+            TelegramMessage.render_markdown(
+                t"❌ {msg}（已释放预留积分 {claimed.reserved_cost}）"
+            ),
         )
 
     async def handle_rejection(
@@ -576,7 +584,9 @@ class RequestService:
         )
         return Result(
             True,
-            f"❌ 已拒绝求片请求 #{request_id}（操作人: {approver_name}），已释放预留积分 {updated.reserved_cost}。",
+            TelegramMessage.render_markdown(
+                t"❌ 已拒绝求片请求 #{request_id}（操作人: {approver_name}），已释放预留积分 {updated.reserved_cost}。"
+            ),
         )
 
     async def cancel_request(self, request_id: int, user_id: int) -> Result:
@@ -655,12 +665,11 @@ class RequestService:
                 updated.id,
                 updated.user_id,
                 "expired",
-                text=(
-                    f"⏰ <b>求片已超时自动取消</b>\n\n"
-                    f"您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）"
-                    f"待审核已满 {req_days} 天未处理，系统已自动取消。\n"
-                    f"已全额释放预留积分 <b>{updated.reserved_cost}</b>。"
-                ),
+                text=TelegramMessage.render_html(t"""\
+                    ⏰ <b>求片已超时自动取消</b>
+
+                    您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）待审核已满 {req_days} 天未处理，系统已自动取消。
+                    已全额释放预留积分 <b>{updated.reserved_cost}</b>。"""),
             )
         return expired_count
 

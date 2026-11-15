@@ -1,4 +1,3 @@
-import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +9,7 @@ from telethon import errors
 from core.config import get_settings
 from core.database import async_session, backup_database
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.telegram_repo import TelegramRepository
@@ -311,7 +311,9 @@ async def settle_scores() -> None:
                 user_name = await client.get_user_name(user_id)
                 medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"{idx}.")
                 daily_lines.append(
-                    f"{medal} [{user_name}](tg://user?id={user_id}) — `+{score_change}`"
+                    TelegramMessage.render_markdown(
+                        t"{medal} [{user_name}](tg://user?id={user_id}) — `+{score_change}`"
+                    )
                 )
 
             # 构建总榜单
@@ -323,14 +325,16 @@ async def settle_scores() -> None:
                     user_name = await client.get_user_name(user.id)
                     medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"{idx}.")
                     total_lines.append(
-                        f"{medal} [{user_name}](tg://user?id={user.id}) — `{user.score}`"
+                        TelegramMessage.render_markdown(
+                            t"{medal} [{user_name}](tg://user?id={user.id}) — `{user.score}`"
+                        )
                     )
                 except (errors.RPCError, ValueError) as e:
                     logger.warning("获取{}的名称失败: {}", user.id, e)
                     total_lines.append(f"{idx}. `Unknown` — `{user.score}`")
 
             # 合并消息
-            msg = textwrap.dedent(f"""\
+            msg = TelegramMessage.render_markdown(t"""\
                 📊 **每日积分结算报告**
 
                 今日共发放 **{result.total_score_settled}** 非签到活跃积分。

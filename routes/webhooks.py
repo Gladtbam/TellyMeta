@@ -27,6 +27,7 @@ from core.dependencies import (
     get_tvdb_client,
 )
 from core.task_utils import create_background_task
+from core.telegram_message import TelegramMessage
 from models.emby_webhook import EmbyPayload, LibraryDeletedEvent, LibraryNewEvent
 from models.events import NotificationEvent
 from models.jellyfin_webhook import JellyfinPayload, NotificationType
@@ -173,7 +174,9 @@ async def sonarr_webhook(
                                 if client.notify_topic_id < 0
                                 else settings.telegram_chat_id
                             ),
-                            message=f"⚠️ **MKV 处理跳过**\n\n{mkv_diag}",
+                            message=TelegramMessage.render_markdown(
+                                t"⚠️ **MKV 处理跳过**\n\n{mkv_diag}"
+                            ),
                             reply_to=(
                                 client.notify_topic_id
                                 if client.notify_topic_id > 0
@@ -243,7 +246,9 @@ async def radarrarr_webhook(
                                 if client.notify_topic_id < 0
                                 else settings.telegram_chat_id
                             ),
-                            message=f"⚠️ **MKV 处理跳过**\n\n{mkv_diag}",
+                            message=TelegramMessage.render_markdown(
+                                t"⚠️ **MKV 处理跳过**\n\n{mkv_diag}"
+                            ),
                             reply_to=(
                                 client.notify_topic_id
                                 if client.notify_topic_id > 0

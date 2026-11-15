@@ -13,6 +13,7 @@ from bot.decorators import provide_db_session
 from bot.utils import safe_delete, safe_reply, safe_respond, safe_respond_keyboard
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from services.score_service import MessageTrackingState, ScoreService
 from services.user_service import UserService
@@ -79,7 +80,13 @@ async def help_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
     if event.is_private:
         await safe_respond(event, msg)
     else:
-        await safe_reply(event, f"私聊我获取帮助: {settings.telegram_bot_name}", 20)
+        await safe_reply(
+            event,
+            TelegramMessage.render_markdown(
+                t"私聊我获取帮助: {settings.telegram_bot_name}"
+            ),
+            20,
+        )
 
 
 @TelethonClientWarper.handler(

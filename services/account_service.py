@@ -3,7 +3,6 @@ import ipaddress
 import json
 import re
 import socket
-import textwrap
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any, Literal
@@ -16,6 +15,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
+from core.telegram_message import TelegramMessage
 from models.orm import RegistrationMode, ServerInstance, ServerType
 from models.protocols import User
 from repositories.code_repo import CodeRepository
@@ -208,7 +208,12 @@ class AccountService:
             return Result(False, "该服务器不存在或已停用。")
 
         if await self.media_repo.get_by_id(user_id, server_id):
-            return Result(False, f"您已经在 **{server.name}** 注册过了，无需重复注册。")
+            return Result(
+                False,
+                TelegramMessage.render_markdown(
+                    t"您已经在 **{server.name}** 注册过了，无需重复注册。"
+                ),
+            )
 
         media_service: MediaService | None = self.media_clients.get(server_id)
         if not media_service:
@@ -294,7 +299,7 @@ class AccountService:
 
             return Result(
                 True,
-                textwrap.dedent(f"""\
+                TelegramMessage.render_markdown(t"""\
                 🎉 **注册成功！**
 
                 服务器: `{server.name}`
@@ -502,7 +507,10 @@ class AccountService:
 
         client = self.media_clients.get(server_id)
         if not client:
-            return Result(False, f"客户端未运行: {server.name}")
+            return Result(
+                False,
+                TelegramMessage.render_markdown(t"客户端未运行: {server.name}"),
+            )
 
         try:
             media_info = await client.get_user_info(media_user.media_id)
@@ -551,7 +559,9 @@ class AccountService:
 
         return Result(
             True,
-            f"续期成功，您的 {server.name} 账户已延长至 {media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}。",
+            TelegramMessage.render_markdown(
+                t"续期成功，您的 {server.name} 账户已延长至 {media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}。"
+            ),
         )
 
     async def redeem_code(
@@ -646,7 +656,7 @@ class AccountService:
         type_cn = "注册码" if code_type == "signup" else "续期码"
         return Result(
             True,
-            textwrap.dedent(f"""\
+            TelegramMessage.render_markdown(t"""\
             ✅ **{type_cn}生成成功**
 
             服务器: `{server.name}`
@@ -719,7 +729,10 @@ class AccountService:
 
         action_text = "开启" if target_enable_nsfw else "关闭"
         return Result(
-            True, f"已 {action_text} 您的 NSFW 权限 (服务器: {server.name})。"
+            True,
+            TelegramMessage.render_markdown(
+                t"已 {action_text} 您的 NSFW 权限 (服务器: {server.name})。"
+            ),
         )
 
     def _get_pending_nsfw_revokes(self) -> dict[int, set[str]]:
@@ -867,7 +880,7 @@ class AccountService:
             passwd = await client.post_password(media_user.media_id)
             return Result(
                 True,
-                textwrap.dedent(f"""\
+                TelegramMessage.render_markdown(t"""\
                 密码重置成功！您的新密码是: `{passwd}`
                 请尽快登录并修改密码，祝您观影愉快！
             """),

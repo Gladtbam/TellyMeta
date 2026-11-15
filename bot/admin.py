@@ -1,4 +1,3 @@
-import textwrap
 from typing import Any
 
 from fastapi import FastAPI
@@ -11,6 +10,7 @@ from bot.decorators import provide_db_session, require_admin, require_real_reply
 from bot.utils import safe_reply, safe_reply_keyboard, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from repositories.server_repo import ServerRepository
 from services.score_service import ScoreService
 from services.user_service import UserService
@@ -54,9 +54,11 @@ async def info_handler(
         if event.is_private:
             await safe_reply_keyboard(
                 event,
-                f"📋 **用户资料卡片**\n\n"
-                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
-                f"点击下方按钮在弹窗中查看详细信息：",
+                TelegramMessage.render_markdown(t"""\
+                    📋 **用户资料卡片**
+
+                    目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)
+                    点击下方按钮在弹窗中查看详细信息："""),
                 web_app_buttons,
                 delete_after=120,
             )
@@ -71,9 +73,11 @@ async def info_handler(
             group_buttons = [[Button.url("👤 查看用户卡片", startapp_url)]]
             await safe_reply_keyboard(
                 event,
-                f"📋 **用户资料卡片**\n\n"
-                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
-                f"点击下方按钮在群内打开用户卡片：",
+                TelegramMessage.render_markdown(t"""\
+                    📋 **用户资料卡片**
+
+                    目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)
+                    点击下方按钮在群内打开用户卡片："""),
                 group_buttons,
                 delete_after=60,
             )
@@ -83,14 +87,18 @@ async def info_handler(
         try:
             await client.send_message(
                 admin_id,
-                f"📋 **用户资料卡片**\n\n"
-                f"目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)\n"
-                f"请点击下方按钮打开卡片并执行管理操作：",
+                TelegramMessage.render_markdown(t"""\
+                    📋 **用户资料卡片**
+
+                    目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)
+                    请点击下方按钮打开卡片并执行管理操作："""),
                 buttons=web_app_buttons,
             )
             await safe_reply(
                 event,
-                f"🔍 已将用户 [{target_name}](tg://user?id={target_user_id}) 的信息卡片发送至您的私聊，请查收。",
+                TelegramMessage.render_markdown(
+                    t"🔍 已将用户 [{target_name}](tg://user?id={target_user_id}) 的信息卡片发送至您的私聊，请查收。"
+                ),
                 delete_after=30,
             )
 
@@ -100,7 +108,9 @@ async def info_handler(
             result = await user_service.get_user_info(target_user_id)
             await safe_reply(
                 event,
-                f"⚠️ 无法向您发送私聊卡片（请先私聊机器人发送 /start）。已降级为群内文本展示：\n\n{result.message}",
+                TelegramMessage.render_markdown(
+                    t"⚠️ 无法向您发送私聊卡片（请先私聊机器人发送 /start）。已降级为群内文本展示：\n\n{result.message:raw}"
+                ),
                 delete_after=60,
             )
     else:
@@ -186,7 +196,7 @@ async def settle_handler(
         await safe_reply(event, "当前无积分可结算。")
         return
 
-    summary = textwrap.dedent(f"""\
+    summary = TelegramMessage.render_markdown(t"""\
         ✅ 积分结算完成！
         共结算 **{result.total_score_settled}** 活跃度积分.
         本次结算详情:
@@ -197,7 +207,9 @@ async def settle_handler(
     for user_id, score_change in result.user_score_changes.items():  # type: ignore
         username = await client.get_user_name(user_id)
         user_details.append(
-            f"- [{username}](tg://user?id={user_id}): `+{score_change}`"
+            TelegramMessage.render_markdown(
+                t"- [{username}](tg://user?id={user_id}): `+{score_change}`"
+            )
         )
     final_summary = summary + "\n".join(user_details)
     await client.client.edit_message(summary_msg, final_summary)
@@ -273,7 +285,10 @@ async def ban_handler(
         user_name = await client.get_user_name(target_user_id)
         await client.ban_user(target_user_id)
         await safe_reply(
-            event, f"已封禁用户[{user_name}](tg://user?id={target_user_id})"
+            event,
+            TelegramMessage.render_markdown(
+                t"已封禁用户[{user_name}](tg://user?id={target_user_id})"
+            ),
         )
     elif isinstance(event, events.CallbackQuery.Event):
         target_user_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
@@ -331,5 +346,7 @@ async def bind_handler(
 
     await safe_reply(
         event,
-        f"✅ 成功将 **{server.name}** 的 **{msg_type}** 绑定到当前话题！(ID: `{topic_id}`)",
+        TelegramMessage.render_markdown(
+            t"✅ 成功将 **{server.name}** 的 **{msg_type}** 绑定到当前话题！(ID: `{topic_id}`)"
+        ),
     )

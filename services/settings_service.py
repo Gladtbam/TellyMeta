@@ -19,6 +19,7 @@ from clients.sonarr_client import SonarrClient
 from core.config import get_settings
 from core.scheduler_jobs import apply_ops_schedules
 from core.telegram_manager import TelethonClientWarper
+from core.telegram_message import TelegramMessage
 from models.emby import MediaFolder
 from models.orm import ServerInstance, ServerType
 from models.schemas import (
@@ -199,13 +200,28 @@ class SettingsServices:
         if server.is_enabled:
             try:
                 await self._init_and_add_client(server)
-                return Result(True, f"✅ 服务器 **{server.name}** 已启用并连接。")
+                return Result(
+                    True,
+                    TelegramMessage.render_markdown(
+                        t"✅ 服务器 **{server.name}** 已启用并连接。"
+                    ),
+                )
             except (httpx2.HTTPError, ValueError, OSError) as e:
                 await self.server_repo.toggle_enabled(server_id)
-                return Result(False, f"❌ 启用失败，无法连接到服务器: {e!s}")
+                return Result(
+                    False,
+                    TelegramMessage.render_markdown(
+                        t"❌ 启用失败，无法连接到服务器: {e!s}"
+                    ),
+                )
         else:
             await self._remove_and_close_client(server)
-            return Result(True, f"🔴 服务器 **{server.name}** 已停用并断开连接。")
+            return Result(
+                True,
+                TelegramMessage.render_markdown(
+                    t"🔴 服务器 **{server.name}** 已停用并断开连接。"
+                ),
+            )
 
     @property
     def qb_clients(self) -> dict[int, QbittorrentClient]:
@@ -844,16 +860,27 @@ class SettingsServices:
                 await new_client.login()
                 self.qb_clients[instance.id] = new_client
 
-            return Result(True, f"✅ 服务器 **{name}** 添加成功并已上线！")
+            return Result(
+                True,
+                TelegramMessage.render_markdown(
+                    t"✅ 服务器 **{name}** 添加成功并已上线！"
+                ),
+            )
 
         except httpx2.HTTPError as e:
             # 初始化连接失败
             await self.server_repo.delete(instance.id)
-            return Result(False, f"❌ 连接服务器失败 (已回滚): {e}")
+            return Result(
+                False,
+                TelegramMessage.render_markdown(t"❌ 连接服务器失败 (已回滚): {e}"),
+            )
         except Exception as e:  # pylint: disable=broad-exception-caught
             # 其他初始化失败，回滚数据库
             await self.server_repo.delete(instance.id)
-            return Result(False, f"❌ 客户端初始化失败 (已回滚): {e!s}")
+            return Result(
+                False,
+                TelegramMessage.render_markdown(t"❌ 客户端初始化失败 (已回滚): {e!s}"),
+            )
 
     async def delete_server(self, server_id: int) -> Result:
         """删除服务器"""
