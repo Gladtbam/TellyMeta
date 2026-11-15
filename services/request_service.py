@@ -78,7 +78,7 @@ class RequestService:
                     item, title, overview
                 )
         except (HTTPError, ValueError, KeyError, TypeError) as e:
-            logger.debug(f"元数据增强失败，降级使用原始数据: {e}")
+            logger.debug(t"元数据增强失败，降级使用原始数据: {e}")
 
         return title, overview, poster_url
 
@@ -116,7 +116,7 @@ class RequestService:
                     if tmdb_info.overview:
                         overview = tmdb_info.overview
             except (HTTPError, ValueError, TypeError) as e:
-                logger.debug(f"TMDB TV 查找失败 ({tmdb_id}): {e}")
+                logger.debug(t"TMDB TV 查找失败 ({tmdb_id}): {e}")
 
         # 仅当 TMDB 未命中或缺少字段时回退到 TVDB
         if (title == default_title or not overview) and tvdb_id and self.tvdb_client:
@@ -130,7 +130,7 @@ class RequestService:
                     if not overview and tvdb_resp.data.overview:
                         overview = tvdb_resp.data.overview
             except (HTTPError, ValueError, TypeError) as e:
-                logger.debug(f"TVDB 查找失败 ({tvdb_id}): {e}")
+                logger.debug(t"TVDB 查找失败 ({tvdb_id}): {e}")
 
         return title, overview
 
@@ -153,7 +153,7 @@ class RequestService:
                     if tmdb_movie.overview:
                         overview = tmdb_movie.overview
             except (HTTPError, ValueError, TypeError) as e:
-                logger.debug(f"TMDB Movie 查找失败 ({tmdb_id}): {e}")
+                logger.debug(t"TMDB Movie 查找失败 ({tmdb_id}): {e}")
 
         return title, overview
 

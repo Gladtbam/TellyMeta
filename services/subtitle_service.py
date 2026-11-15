@@ -151,7 +151,7 @@ class SubtitleService:
                     user_id, media_id, file_path, bound_arr_ids, target_arr_id
                 )
         except (OSError, ValueError, TypeError) as e:
-            logger.exception(f"处理字幕时发生系统错误: {e}")
+            logger.exception(t"处理字幕时发生系统错误: {e}")
             return Result(False, f"处理过程中发生系统错误: {e!s}")
 
         return Result(False, "不支持的媒体类型")

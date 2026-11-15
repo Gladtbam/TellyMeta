@@ -136,7 +136,7 @@ def check_mkvtoolnix() -> bool:
         )
         return False
     except (OSError, subprocess.SubprocessError) as e:
-        logger.error(f"mkvtoolnix 检查时发生未知异常：{e}")
+        logger.error(t"mkvtoolnix 检查时发生未知异常：{e}")
         return False
 
 

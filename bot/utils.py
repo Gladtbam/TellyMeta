@@ -72,7 +72,7 @@ async def safe_delete(message) -> None:
         pass
     except errors.RPCError as e:
         # 记录其他 RPC 错误但不要崩溃
-        logger.warning(f"删除消息失败 (RPCError): {e}")
+        logger.warning(t"删除消息失败 (RPCError): {e}")
 
 
 def generate_captcha():

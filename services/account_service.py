@@ -176,7 +176,7 @@ class AccountService:
                         SyntaxError,
                         AttributeError,
                     ) as e:
-                        logger.error(f"外部验证解析代码执行错误: {e}")
+                        logger.error(t"外部验证解析代码执行错误: {e}")
                         return Result(False, f"验证解析出错: {e}")
                 else:
                     if response.is_success:

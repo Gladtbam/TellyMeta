@@ -420,14 +420,14 @@ class UserService:
                             )
                         else:
                             has_media_failure = True
-                            logger.error(f"Failed to delete user on {server_name}: {e}")
+                            logger.error(t"删除 {server_name} 上的用户失败: {e}")
                             logs.append(
                                 f"删除 {server_name} 账户失败 (API错误)，保留本地记录以便重试。"
                             )
                             continue
                     except (HTTPError, ValueError) as e:
                         has_media_failure = True
-                        logger.error(f"Failed to delete user on {server_name}: {e}")
+                        logger.error(t"删除 {server_name} 上的用户失败: {e}")
                         logs.append(
                             f"删除 {server_name} 账户失败 (API错误)，保留本地记录以便重试。"
                         )
@@ -448,5 +448,5 @@ class UserService:
             return Result(not has_media_failure, msg)
 
         except (SQLAlchemyError, HTTPError, ValueError) as e:
-            logger.exception(f"Delete account error for {user_id}: {e}")
+            logger.exception(t"删除用户 {user_id} 账户时出错: {e}")
             return Result(False, f"删除过程中发生错误: {e!s}")

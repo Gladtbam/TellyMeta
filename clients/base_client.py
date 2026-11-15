@@ -124,7 +124,7 @@ class BaseClient:
                     logger.error("请求超时（已重试{}次）：{}", max_retries, e)
                     raise
                 logger.warning(
-                    f"请求超时，正在进行第 {attempt + 1}/{max_retries} 次重试... URL: {url}"
+                    t"请求超时，正在进行第 {attempt + 1}/{max_retries} 次重试... URL: {url}"
                 )
                 await asyncio.sleep(1)
             except httpx2.HTTPStatusError as e:

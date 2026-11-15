@@ -50,7 +50,7 @@ async def _get_tmdb_episode_info(
     tmdb_season = await tmdb_client.get_tv_seasons_details(series_tmdb_id, season_num)
 
     if not tmdb_season:
-        logger.warning(f"获取 TMDB S{season_num} 失败，尝试获取最新季进行匹配")
+        logger.warning(t"获取 TMDB S{season_num} 失败，尝试获取最新季进行匹配")
         series_detail = await tmdb_client.get_tv_series_details(series_tmdb_id)
         if series_detail and series_detail.seasons:
             last_season = series_detail.seasons[-1]
