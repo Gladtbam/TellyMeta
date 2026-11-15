@@ -22,13 +22,25 @@ settings = get_settings()
 async def checkin_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
 ) -> None:
-    """签到处理器"""
+    """签到处理器：校验群组上下文、积分总开关与签到子开关后执行每日签到。
+
+    Args:
+        app: FastAPI 应用实例，用于获取 Telethon 客户端。
+        event: Telegram `/checkin` 指令事件对象。
+        session: 异步数据库会话。
+
+    副作用：向群组回复签到结果，并在触发幸运奖励时向用户私聊下发激活码。
+    """
     if event.chat_id != settings.telegram_chat_id:
         await safe_reply(event, "请在群组内签到。")
         return
 
-    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
-        await safe_reply(event, "签到功能已关闭。")
+    # 同时校验全局积分总开关（一票否决）与签到积分子开关
+    allowed, reason = await ConfigRepository(session).check_points_feature(
+        ConfigRepository.KEY_ENABLE_POINTS_CHECKIN
+    )
+    if not allowed:
+        await safe_reply(event, reason)
         return
 
     client: TelethonClientWarper = app.state.telethon_client

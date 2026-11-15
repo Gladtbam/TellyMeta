@@ -430,7 +430,14 @@ class SettingsServices:
         await self.binding_repo.delete(media_server_id, library_name)
 
     async def toggle_system_setting(self, key: str) -> Result:
-        """切换系统功能设置"""
+        """切换系统功能开关设置。
+
+        Args:
+            key: 数据库配置键名。
+
+        Returns:
+            切换结果与提示文案。
+        """
         try:
             default_val = (
                 "false" if key == ConfigRepository.KEY_ENABLE_LLM_TRANSLATE else "true"
@@ -443,6 +450,19 @@ class SettingsServices:
                 await self.reload_ai_client()
 
             status_text = "开启" if new_state_str == "true" else "关闭"
+            label = ConfigRepository.get_points_sub_switch_label(key)
+            if label is not None:
+                if new_state_str == "true":
+                    allowed, _ = await self.config_repo.check_points_feature(key)
+                    if not allowed:
+                        return Result(
+                            success=True,
+                            message=(
+                                f"已保存「{label}」为开启，但全局积分总开关已关闭，"
+                                "该子能力暂不会实际生效。"
+                            ),
+                        )
+                return Result(success=True, message=f"已{status_text}「{label}」。")
             return Result(success=True, message=f"已{status_text}该功能。")
         except (SQLAlchemyError, ValueError) as e:
             return Result(success=False, message=f"设置失败: {e!s}")

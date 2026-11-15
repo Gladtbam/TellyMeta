@@ -282,15 +282,22 @@ async def retry_pending_nsfw_revokes() -> None:
 
 @scheduled_job("cron", hour=23, minute=0, id="settle_scores", replace_existing=True)
 async def settle_scores() -> None:
-    """结算用户积分"""
-    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
-        return
+    """定时结算用户群聊发言积分，受总开关与群聊发言积分子开关共同控制。
 
+    副作用：放行时按队列批量发放当日发言积分并广播榜单；关闭时清空待结算队列且不发送结算报告。
+    """
     from main import app  # 避免循环导入
 
     async with async_session() as session:
         try:
             score_service = ScoreService(session, app.state.message_tracker)
+            # 优先通过数据库/缓存统一校验，并在关闭时清理历史暂存计数以防日后误发
+            if not await score_service.config_repo.is_points_feature_enabled(
+                ConfigRepository.KEY_ENABLE_POINTS_CHAT
+            ):
+                app.state.message_tracker.message_counts.clear()
+                return
+
             result = await score_service.settle_and_clear_scores()
             client: TelethonClientWarper = app.state.telethon_client
 

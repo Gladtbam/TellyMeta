@@ -47,7 +47,22 @@ class UserService:
     async def perform_checkin(
         self, user_id: int, username: str | Literal[False] | None
     ) -> Result:
-        """用户签到"""
+        """执行用户签到逻辑，并在入口统一校验积分总开关与签到子开关。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            username: Telegram 显示名称或用户名。
+
+        Returns:
+            包含成功标志与提示消息的 Result 对象。
+        """
+        # 防止直调服务绕过 Bot 指令守卫触发常规或幸运签到奖励
+        allowed, reason = await self.config_repo.check_points_feature(
+            ConfigRepository.KEY_ENABLE_POINTS_CHECKIN
+        )
+        if not allowed:
+            return Result(success=False, message=reason)
+
         user = await self.telegram_repo.get_or_create(user_id)
 
         today = date.today()

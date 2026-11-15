@@ -9,6 +9,25 @@ from models.orm import BotConfiguration
 class ConfigRepository:
     cache: ClassVar[dict[str, str]] = {}
 
+    # 积分细粒度子开关映射：字段名 -> (数据库配置键, 中文能力名称)
+    POINTS_SUB_SWITCHES: ClassVar[dict[str, tuple[str, str]]] = {
+        "enable_points_checkin": ("points:enable_checkin", "签到积分"),
+        "enable_points_chat": ("points:enable_chat", "群聊发言积分"),
+        "enable_points_renew": ("points:enable_renew", "积分续期"),
+        "enable_points_request": ("points:enable_request", "积分求片"),
+        "enable_points_generate_code": (
+            "points:enable_generate_code",
+            "积分生成激活码",
+        ),
+        "enable_points_traffic_pack": (
+            "points:enable_traffic_pack",
+            "积分兑换流量包",
+        ),
+    }
+    _POINTS_SUB_SWITCH_LABELS: ClassVar[dict[str, str]] = dict(
+        POINTS_SUB_SWITCHES.values()
+    )
+
     # System Feature Keys
     KEY_ENABLE_POINTS = "system:enable_points"
     KEY_ENABLE_VERIFICATION = "system:enable_verification"
@@ -28,6 +47,12 @@ class ConfigRepository:
     KEY_TVDB_API_KEY = "system:tvdb_api_key"
 
     # Points / Check-in / Pricing Keys
+    KEY_ENABLE_POINTS_CHECKIN = "points:enable_checkin"
+    KEY_ENABLE_POINTS_CHAT = "points:enable_chat"
+    KEY_ENABLE_POINTS_RENEW = "points:enable_renew"
+    KEY_ENABLE_POINTS_REQUEST = "points:enable_request"
+    KEY_ENABLE_POINTS_GENERATE_CODE = "points:enable_generate_code"
+    KEY_ENABLE_POINTS_TRAFFIC_PACK = "points:enable_traffic_pack"
     KEY_POINTS_RENEW_MODE = "points:renew_mode"
     KEY_POINTS_RENEW_FIXED = "points:renew_fixed"
     KEY_POINTS_RENEW_MIN = "points:renew_min"
@@ -108,6 +133,12 @@ class ConfigRepository:
             cls.KEY_AI_CONCURRENCY: "1",
             cls.KEY_TMDB_API_KEY: "",
             cls.KEY_TVDB_API_KEY: "",
+            cls.KEY_ENABLE_POINTS_CHECKIN: "true",
+            cls.KEY_ENABLE_POINTS_CHAT: "true",
+            cls.KEY_ENABLE_POINTS_RENEW: "true",
+            cls.KEY_ENABLE_POINTS_REQUEST: "true",
+            cls.KEY_ENABLE_POINTS_GENERATE_CODE: "true",
+            cls.KEY_ENABLE_POINTS_TRAFFIC_PACK: "true",
             cls.KEY_POINTS_RENEW_MODE: "median",
             cls.KEY_POINTS_RENEW_FIXED: "100",
             cls.KEY_POINTS_RENEW_MIN: "100",
@@ -319,7 +350,13 @@ class ConfigRepository:
         )
         spam_threshold = cls._parse_int(source.get(cls.KEY_POINTS_SPAM_THRESHOLD), 5, 0)
 
+        sub_switches = {
+            field: (source.get(db_key, "true") == "true")
+            for field, (db_key, _) in cls.POINTS_SUB_SWITCHES.items()
+        }
+
         return {
+            **sub_switches,
             "points_renew_mode": renew_mode,
             "points_renew_fixed": renew_fixed,
             "points_renew_min": renew_min,
@@ -336,6 +373,110 @@ class ConfigRepository:
         }
 
     @classmethod
+    def _evaluate_points_feature(
+        cls,
+        master_raw: str | None,
+        sub_raw: str | None,
+        sub_key: str,
+    ) -> tuple[bool, str]:
+        """校验单项目积分能力是否生效（总开关具备一票否决权）。
+
+        Args:
+            master_raw: 全局积分总开关原始字符串值（缺省视为 ``"true"``）
+            sub_raw: 目标子开关原始字符串值（缺省视为 ``"true"``）
+            sub_key: 目标子开关对应的数据库配置键
+
+        Returns:
+            ``(是否生效, 禁用原因说明)``；生效时原因文本为空字符串
+        """
+        label = cls._POINTS_SUB_SWITCH_LABELS.get(sub_key, "该积分功能")
+        # 全局积分总开关未开启时对全部子能力一票否决
+        if (master_raw if master_raw is not None else "true") != "true":
+            return False, f"全局积分总开关已关闭，{label}功能暂不可用。"
+        if (sub_raw if sub_raw is not None else "true") != "true":
+            return False, f"{label}功能已关闭。"
+        return True, ""
+
+    @classmethod
+    def check_points_feature_from_cache(cls, sub_key: str) -> tuple[bool, str]:
+        """同步读取内存缓存，校验指定积分子能力是否生效并返回原因。
+
+        Args:
+            sub_key: 目标子开关配置键（如 ``KEY_ENABLE_POINTS_CHECKIN``）
+
+        Returns:
+            ``(是否生效, 禁用原因说明)``
+        """
+        return cls._evaluate_points_feature(
+            cls.cache.get(cls.KEY_ENABLE_POINTS, "true"),
+            cls.cache.get(sub_key, "true"),
+            sub_key,
+        )
+
+    @classmethod
+    def is_points_feature_enabled_from_cache(cls, sub_key: str) -> bool:
+        """同步读取内存缓存，判断指定积分子能力是否在总开关放行下处于开启状态。
+
+        Args:
+            sub_key: 目标子开关配置键
+
+        Returns:
+            总开关与目标子开关同时开启返回 ``True``，否则返回 ``False``
+        """
+        return cls.check_points_feature_from_cache(sub_key)[0]
+
+    async def check_points_feature(self, sub_key: str) -> tuple[bool, str]:
+        """读取缓存或数据库，校验指定积分子能力是否生效并返回原因。
+
+        Args:
+            sub_key: 目标子开关配置键
+
+        Returns:
+            ``(是否生效, 禁用原因说明)``
+        """
+        master_raw = await self.get_settings(self.KEY_ENABLE_POINTS, "true")
+        sub_raw = await self.get_settings(sub_key, "true")
+        return self._evaluate_points_feature(master_raw, sub_raw, sub_key)
+
+    async def is_points_feature_enabled(self, sub_key: str) -> bool:
+        """读取缓存或数据库，判断指定积分子能力是否生效。
+
+        Args:
+            sub_key: 目标子开关配置键
+
+        Returns:
+            总开关与目标子开关同时开启返回 ``True``，否则返回 ``False``
+        """
+        return (await self.check_points_feature(sub_key))[0]
+
+    @classmethod
+    def get_points_sub_switch_label(cls, sub_key: str) -> str | None:
+        """根据子开关配置键返回对应中文能力名称，非积分子开关时返回 None。
+
+        Args:
+            sub_key: 数据库配置键名。
+
+        Returns:
+            中文能力名称字符串或 None。
+        """
+        return cls._POINTS_SUB_SWITCH_LABELS.get(sub_key)
+
+    async def get_effective_points_switches(self) -> dict[str, bool]:
+        """获取 6 项积分细粒度子开关经过总开关一票否决后的实际生效状态字典。
+
+        Returns:
+            以字段名（如 ``enable_points_checkin``）为键、生效布尔值为值的字典
+        """
+        master_raw = await self.get_settings(self.KEY_ENABLE_POINTS, "true")
+        effective: dict[str, bool] = {}
+        for field, (db_key, _) in self.POINTS_SUB_SWITCHES.items():
+            sub_raw = await self.get_settings(db_key, "true")
+            effective[field] = self._evaluate_points_feature(
+                master_raw, sub_raw, db_key
+            )[0]
+        return effective
+
+    @classmethod
     def get_points_config_from_cache(cls) -> dict[str, Any]:
         """同步读取内存缓存中的积分、签到与定价规则配置。"""
         return cls._build_points_config(cls.cache)
@@ -343,6 +484,7 @@ class ConfigRepository:
     async def get_points_config(self) -> dict[str, Any]:
         """读取数据库/缓存中的积分、签到与定价规则配置。"""
         keys = (
+            *(db_key for db_key, _ in self.POINTS_SUB_SWITCHES.values()),
             self.KEY_POINTS_RENEW_MODE,
             self.KEY_POINTS_RENEW_FIXED,
             self.KEY_POINTS_RENEW_MIN,

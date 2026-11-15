@@ -454,6 +454,70 @@
                 </div>
             </div>
         </div>
+
+        <!-- 积分系统细粒度产出与消费子开关 -->
+        <div class="section-title">积分细粒度子开关</div>
+        <div class="section">
+            <div class="section-hint" id="points-master-veto-hint" style="display:none; color:var(--destructive-text-color); margin-top:0; margin-bottom:8px;">
+                ⚠️ 全局积分总开关已关闭：以下 6 项积分产出与消费子能力当前均视作关闭（各自独立开关状态已保留，总开关恢复后按独立状态生效）。
+            </div>
+            <div class="card" id="points-sub-switches-card">
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">签到积分（产出）</span>
+                        <span class="item-subtitle" id="sub-points-checkin-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-checkin"
+                            onchange="toggleSystem('enable_points_checkin')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">群聊发言积分（产出）</span>
+                        <span class="item-subtitle" id="sub-points-chat-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-chat"
+                            onchange="toggleSystem('enable_points_chat')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">积分续期（消费）</span>
+                        <span class="item-subtitle" id="sub-points-renew-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-renew"
+                            onchange="toggleSystem('enable_points_renew')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">积分求片（消费）</span>
+                        <span class="item-subtitle" id="sub-points-request-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-request"
+                            onchange="toggleSystem('enable_points_request')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">积分生成激活码（消费）</span>
+                        <span class="item-subtitle" id="sub-points-generate-code-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-generate-code"
+                            onchange="toggleSystem('enable_points_generate_code')"><span class="slider"></span></label>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title">积分兑换流量包（消费）</span>
+                        <span class="item-subtitle" id="sub-points-traffic-pack-status">加载中...</span>
+                    </div>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-points-traffic-pack"
+                            onchange="toggleSystem('enable_points_traffic_pack')"><span class="slider"></span></label>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- 积分与定价规则弹窗 -->
@@ -1021,6 +1085,9 @@
             } catch (e) { tg.showAlert(e.message); throw e; }
         }
 
+        /**
+         * 加载管理后台系统开关、管理员、媒体服务器与群组话题初始配置。
+         */
         async function loadData() {
             const [sys, admins, servers, topics] = await Promise.allSettled([
                 api('/system'), api('/admins'), api('/servers'), api('/topics')
@@ -1030,6 +1097,11 @@
                 const s = sys.value;
                 const pointsEnabled = !!s.enable_points;
                 document.getElementById('toggle-points').checked = pointsEnabled;
+                // 初始化 6 项积分细粒度子开关独立配置状态
+                POINTS_SUB_SWITCH_DEFS.forEach(def => {
+                    const cb = document.getElementById(def.toggleId);
+                    if (cb) cb.checked = s[def.key] !== false;
+                });
                 document.getElementById('points-renew-mode').value = s.points_renew_mode || 'median';
                 document.getElementById('points-renew-fixed').value = s.points_renew_fixed ?? 100;
                 document.getElementById('points-renew-min').value = s.points_renew_min ?? 100;
@@ -1101,7 +1173,70 @@
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
         }
 
+        // 积分细粒度子开关元数据定义，供状态刷新与开关联动复用
+        const POINTS_SUB_SWITCH_DEFS = [
+            {
+                key: 'enable_points_checkin',
+                toggleId: 'toggle-points-checkin',
+                statusId: 'sub-points-checkin-status',
+                desc: '产出端 · /checkin 每日签到得积分'
+            },
+            {
+                key: 'enable_points_chat',
+                toggleId: 'toggle-points-chat',
+                statusId: 'sub-points-chat-status',
+                desc: '产出端 · 群聊发言统计与每日结算（防刷屏独立保留）'
+            },
+            {
+                key: 'enable_points_renew',
+                toggleId: 'toggle-points-renew',
+                statusId: 'sub-points-renew-status',
+                desc: '消费端 · 使用积分续期（不影响激活码续期）'
+            },
+            {
+                key: 'enable_points_request',
+                toggleId: 'toggle-points-request',
+                statusId: 'sub-points-request-status',
+                desc: '消费端 · 使用积分提交求片（已冻结申请仍可退回）'
+            },
+            {
+                key: 'enable_points_generate_code',
+                toggleId: 'toggle-points-generate-code',
+                statusId: 'sub-points-generate-code-status',
+                desc: '消费端 · 普通用户使用积分生成激活码'
+            },
+            {
+                key: 'enable_points_traffic_pack',
+                toggleId: 'toggle-points-traffic-pack',
+                statusId: 'sub-points-traffic-pack-status',
+                desc: '消费端 · 使用积分兑换流量包'
+            }
+        ];
+
+        /**
+         * 根据全局积分总开关状态同步 6 项积分细粒度子开关的生效提示与一票否决警告横幅。
+         * @param {boolean} masterEnabled 全局积分总开关当前是否开启。
+         */
+        function updatePointsSubSwitchesVisibility(masterEnabled) {
+            const hint = document.getElementById('points-master-veto-hint');
+            if (hint) hint.style.display = masterEnabled ? 'none' : 'block';
+            const card = document.getElementById('points-sub-switches-card');
+            if (card) card.style.opacity = masterEnabled ? '1' : '0.78';
+            POINTS_SUB_SWITCH_DEFS.forEach(def => {
+                const cb = document.getElementById(def.toggleId);
+                const sub = document.getElementById(def.statusId);
+                if (!cb || !sub) return;
+                const ownEnabled = !!cb.checked;
+                if (!masterEnabled) {
+                    sub.innerText = `${def.desc} · 总开关已关闭（独立状态：${ownEnabled ? '开启' : '关闭'}）`;
+                } else {
+                    sub.innerText = `${def.desc} · 状态：${ownEnabled ? '生效中' : '已单独关闭'}`;
+                }
+            });
+        }
+
         function updatePointsConfigVisibility(enabled) {
+            updatePointsSubSwitchesVisibility(enabled);
             const btn = document.getElementById('points-config-btn');
             if (btn) btn.style.display = enabled ? 'inline' : 'none';
             const summary = document.getElementById('points-summary');
@@ -1734,37 +1869,52 @@
         async function toggleAdmin(uid, cb) { try { await api(`/admins/${uid}/toggle`, 'POST'); } catch (e) { cb.checked = !cb.checked; } }
         const SYSTEM_TOGGLE_ID_MAP = {
             enable_points: 'toggle-points',
+            enable_points_checkin: 'toggle-points-checkin',
+            enable_points_chat: 'toggle-points-chat',
+            enable_points_renew: 'toggle-points-renew',
+            enable_points_request: 'toggle-points-request',
+            enable_points_generate_code: 'toggle-points-generate-code',
+            enable_points_traffic_pack: 'toggle-points-traffic-pack',
             enable_verification: 'toggle-verification',
             enable_cleanup_inactive_users: 'toggle-cleanup',
             enable_mkv_process: 'toggle-mkv-process',
             enable_llm_translate: 'toggle-llm-translate'
         };
 
+        /**
+         * 根据后端返回或前端回滚后的开关状态，同步页面联动区域与提示文案。
+         * @param {string} key 系统开关字段名（如 enable_points、enable_points_checkin）。
+         * @param {boolean} enabled 切换或回滚后的开关布尔状态。
+         */
+        function syncToggleVisualState(key, enabled) {
+            if (key === 'enable_points') {
+                updatePointsConfigVisibility(enabled);
+            } else if (key.startsWith('enable_points_')) {
+                const masterEl = document.getElementById('toggle-points');
+                updatePointsSubSwitchesVisibility(!!(masterEl && masterEl.checked));
+            } else if (key === 'enable_verification') {
+                updateVerificationVisibility(enabled);
+            } else if (key === 'enable_mkv_process') {
+                updateMkvExcludeVisibility(enabled);
+            } else if (key === 'enable_llm_translate') {
+                updateLlmConfigVisibility(enabled);
+            }
+        }
+
+        /**
+         * 调用后端接口切换系统级开关或积分细粒度子开关，失败时自动恢复复选框与联动状态。
+         * @param {string} key SYSTEM_TOGGLE_ID_MAP 中定义的开关字段名。
+         */
         async function toggleSystem(key) {
             const el = document.getElementById(SYSTEM_TOGGLE_ID_MAP[key] || `toggle-${key.split('_')[1]}`);
             try {
                 const res = await api(`/system/${key}/toggle`, 'POST');
-                if (key === 'enable_points') {
-                    updatePointsConfigVisibility(!!res.new_state);
-                } else if (key === 'enable_verification') {
-                    updateVerificationVisibility(!!res.new_state);
-                } else if (key === 'enable_mkv_process') {
-                    updateMkvExcludeVisibility(res.new_state !== false);
-                } else if (key === 'enable_llm_translate') {
-                    updateLlmConfigVisibility(!!res.new_state);
-                }
+                const nextState = key === 'enable_mkv_process' ? res.new_state !== false : !!res.new_state;
+                syncToggleVisualState(key, nextState);
             } catch (e) {
                 if (el) {
                     el.checked = !el.checked;
-                    if (key === 'enable_points') {
-                        updatePointsConfigVisibility(el.checked);
-                    } else if (key === 'enable_verification') {
-                        updateVerificationVisibility(el.checked);
-                    } else if (key === 'enable_mkv_process') {
-                        updateMkvExcludeVisibility(el.checked);
-                    } else if (key === 'enable_llm_translate') {
-                        updateLlmConfigVisibility(el.checked);
-                    }
+                    syncToggleVisualState(key, !!el.checked);
                 }
             }
         }

@@ -532,6 +532,14 @@ class AccountService:
         if not server:
             return Result(False, "服务器配置已失效。")
 
+        # 仅积分续期受总开关与“积分续期”子开关控制；激活码续期（use_score=False）不受影响
+        if use_score:
+            allowed, reason = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_RENEW
+            )
+            if not allowed:
+                return Result(False, reason)
+
         client = self.media_clients.get(server_id)
         if not client:
             return Result(
@@ -655,10 +663,17 @@ class AccountService:
     async def generate_code(
         self, user_id: int, code_type: str, server_id: int
     ) -> Result:
-        """生成注册码或续期码
+        """为用户或管理员生成注册码或续期码。
+
         Args:
-            user_id (int): 用户的 Telegram ID
-            code_type (str): 码类型，'signup' 或 'renew'
+            user_id: Telegram 用户 ID。
+            code_type: 激活码类型，``signup`` 或 ``renew``。
+            server_id: 目标媒体服务器 ID。
+
+        Returns:
+            包含生成结果与激活码详情文案的 ``Result`` 对象。
+
+        副作用：非管理员用户需校验总开关与“积分生成激活码”子开关并扣减积分，管理员零成本制码。
         """
         if code_type not in ("signup", "renew"):
             return Result(False, "无效的码类型")
@@ -672,6 +687,12 @@ class AccountService:
             expires = None
             score = 0
         else:
+            # 仅非管理员消耗积分生成激活码时校验总开关与“积分生成激活码”子开关；管理员零消费制码不受阻断
+            allowed, reason = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_GENERATE_CODE
+            )
+            if not allowed:
+                return Result(False, reason)
             expires = server.code_expiry_days
             score = int(await self.telegram_repo.get_renew_score())
 

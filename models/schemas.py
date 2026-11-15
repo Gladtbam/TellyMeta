@@ -186,6 +186,13 @@ class SystemConfigResponse(BaseModel):
     ai_concurrency: int = 1
     tmdb_api_key_masked: str = ""
     tvdb_api_key_masked: str = ""
+    enable_points_checkin: bool = True
+    enable_points_chat: bool = True
+    enable_points_renew: bool = True
+    enable_points_request: bool = True
+    enable_points_generate_code: bool = True
+    enable_points_traffic_pack: bool = True
+    effective_points_switches: dict[str, bool] = Field(default_factory=dict)
     points_renew_mode: str = "median"
     points_renew_fixed: int = 100
     points_renew_min: int = 100

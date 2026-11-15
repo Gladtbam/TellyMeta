@@ -230,8 +230,14 @@ async def verify_handler(
 async def group_message_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
 ) -> None:
-    """群组消息处理器
-    根据消息类型，计算积分，连续发送不计入积分
+    """群组消息处理器：按开关状态决定是否累计发言积分，并始终执行防刷屏警告检测。
+
+    Args:
+        app: FastAPI 应用实例，用于读取消息状态机与管理员集合。
+        event: Telegram 群组消息事件对象。
+        session: 异步数据库会话。
+
+    副作用：更新内存连续发言与防刷屏状态；触发刷屏阈值时回复警告并记录警告次数。
     """
     if not event.sender_id or not event.message or not event.message.text:
         return  # 忽略无发送者或无文本的消息
@@ -243,15 +249,15 @@ async def group_message_handler(
 
     user_id = event.sender_id
 
-    if ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_POINTS, "true") != "true":
-        return
-
     text = event.message.text.strip()
     if text.startswith("/"):
         return
 
-    # 无意义水贴关键词仅不计积分，仍纳入防刷屏连续计数
-    count_score = text not in IGNORED_KEYWORDS
+    # 仅在总开关与群聊发言子开关均生效且非水贴关键词时累计积分；关闭发言积分时仍保留防刷屏警告检测
+    chat_points_enabled = await ConfigRepository(session).is_points_feature_enabled(
+        ConfigRepository.KEY_ENABLE_POINTS_CHAT
+    )
+    count_score = chat_points_enabled and (text not in IGNORED_KEYWORDS)
 
     flood_state: MessageTrackingState = app.state.message_tracker
     antiflood_service = ScoreService(session, flood_state)

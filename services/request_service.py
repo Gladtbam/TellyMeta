@@ -165,7 +165,27 @@ class RequestService:
         media_id: int,
         request_cost: int,
     ) -> Result:
-        """提交求片申请：去重校验 -> 锁定并预留积分 -> 发送管理员通知（失败则回滚释放）"""
+        """提交求片申请：开关校验 -> 去重校验 -> 锁定并预留积分 -> 发送管理员通知（失败则回滚释放）。
+
+        Args:
+            user_id: 申请人 Telegram 用户 ID。
+            media_server_id: 目标媒体服务器 ID。
+            library_name: 媒体库名称。
+            media_id: TMDB 或 TVDB 媒体 ID。
+            request_cost: 提交时计算的固定预留积分数量。
+
+        Returns:
+            包含提交状态与提示文案的 ``Result`` 对象；未放行积分求片或校验失败时返回 ``success=False``。
+
+        副作用：原子预留用户积分、创建求片记录并通知管理审核群组/话题。
+        """
+        # 提交新求片前先校验总开关与“积分求片”子开关；撤回、拒审与超时释放等退分路径不受限制
+        allowed, reason = await self.config_repo.check_points_feature(
+            ConfigRepository.KEY_ENABLE_POINTS_REQUEST
+        )
+        if not allowed:
+            return Result(False, reason)
+
         client, binding = await self._get_client_by_library(
             media_server_id, library_name
         )

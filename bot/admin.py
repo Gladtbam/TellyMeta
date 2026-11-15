@@ -11,6 +11,7 @@ from bot.utils import safe_reply, safe_reply_keyboard, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
+from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.score_service import ScoreService
 from services.user_service import UserService
@@ -185,9 +186,23 @@ async def change_handler(
 async def settle_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
 ) -> None:
-    """积分结算处理器
-    手动触发积分结算
+    """积分结算处理器：手动触发每日发言积分结算，受总开关与群聊发言积分子开关控制。
+
+    Args:
+        app: FastAPI 应用实例，用于读取消息计数器与 Telethon 客户端。
+        event: Telegram `/settle` 指令事件对象。
+        session: 异步数据库会话。
+
+    副作用：开启时结算并清空发言积分队列并发送榜单；关闭时清空暂存队列并提示关闭原因。
     """
+    allowed, reason = await ConfigRepository(session).check_points_feature(
+        ConfigRepository.KEY_ENABLE_POINTS_CHAT
+    )
+    if not allowed:
+        app.state.message_tracker.message_counts.clear()
+        await safe_reply(event, reason)
+        return
+
     score_service = ScoreService(session, app.state.message_tracker)
     result = await score_service.settle_and_clear_scores()
     client: TelethonClientWarper = app.state.telethon_client

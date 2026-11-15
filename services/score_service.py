@@ -32,18 +32,27 @@ class ScoreService:
     async def process_message(
         self, user_id: int, admin_ids: list | set, count_score: bool = True
     ) -> Result | None:
-        """处理用户消息，检测是否为刷屏行为并按需累计消息积分。
+        """处理群聊用户消息，按需累计发言积分并检测连续刷屏行为。
 
         Args:
-            user_id (int): 发送消息的用户ID。
-            admin_ids (list | set): BOT 管理员列表。
-            count_score (bool): 是否计入消息积分（无意义关键词仅做刷屏检测不计分）。
+            user_id: 发送消息的 Telegram 用户 ID。
+            admin_ids: 管理员 ID 列表或集合。
+            count_score: 调用方判定的是否允许计分标记（如过滤水贴或已关闭群聊积分）。
+
+        Returns:
+            仅在触发连续刷屏警告门槛时返回带警告文案的 ``Result``，否则返回 ``None``。
+
+        副作用：更新内存连续发言计数；超过刷屏阈值时调用仓储记录警告。
         """
         if self.state.last_user_id != user_id:
             self.state.last_user_id = user_id
             self.state.consecutive_count = 1
 
-            if user_id in admin_ids or not count_score:
+            # 即使直调服务，也需受总开关与群聊发言积分开关控制；非积分防刷屏计数已在上方保留
+            chat_points_enabled = await self.config_repo.is_points_feature_enabled(
+                ConfigRepository.KEY_ENABLE_POINTS_CHAT
+            )
+            if user_id in admin_ids or not count_score or not chat_points_enabled:
                 return None
 
             self.state.message_counts[user_id] = (
@@ -98,8 +107,20 @@ class ScoreService:
 
         return user_deltas, total_deltas
 
-    async def settle_and_clear_scores(self):
-        """结算积分并清理状态"""
+    async def settle_and_clear_scores(self) -> SettlementResult | None:
+        """结算每日群聊发言积分并清理统计队列。
+
+        Returns:
+            成功发放积分时返回 ``SettlementResult``；若无待结算计数或开关已关闭则返回 ``None``。
+
+        副作用：开关放行时批量累加用户积分并清空计数队列；开关关闭时直接清空暂存计数不发分。
+        """
+        if not await self.config_repo.is_points_feature_enabled(
+            ConfigRepository.KEY_ENABLE_POINTS_CHAT
+        ):
+            self.state.message_counts.clear()
+            return None
+
         if not self.state.message_counts:
             return None
 

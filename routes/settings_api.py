@@ -73,6 +73,10 @@ SYSTEM_KEY_MAP = {
     "enable_cleanup_inactive_users": ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
     "enable_mkv_process": ConfigRepository.KEY_ENABLE_MKV_PROCESS,
     "enable_llm_translate": ConfigRepository.KEY_ENABLE_LLM_TRANSLATE,
+    **{
+        field: db_key
+        for field, (db_key, _) in ConfigRepository.POINTS_SUB_SWITCHES.items()
+    },
 }
 
 
@@ -92,7 +96,15 @@ def _is_mkvtoolnix_available(app) -> bool:
     response_model=SystemConfigResponse,
 )
 async def get_system_config(request: Request, session: AsyncSession = Depends(get_db)):
-    """获取系统配置"""
+    """获取管理后台系统配置快照（包含总开关、6 项积分细粒度子开关、生效态及策略参数）。
+
+    Args:
+        request: FastAPI 请求对象，用于读取运行时应用状态（如 mkvtoolnix 可用性）。
+        session: 异步数据库会话。
+
+    Returns:
+        匹配 ``SystemConfigResponse`` 契约的系统配置字典。
+    """
     repo = ConfigRepository(session)
     llm_cfg = await repo.get_llm_config()
     meta_cfg = await repo.get_metadata_config()
@@ -132,6 +144,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         "ai_concurrency": llm_cfg["ai_concurrency"],
         "tmdb_api_key_masked": "******" if meta_cfg["tmdb_api_key"] else "",
         "tvdb_api_key_masked": "******" if meta_cfg["tvdb_api_key"] else "",
+        "effective_points_switches": await repo.get_effective_points_switches(),
         **points_cfg,
         **policy_cfg,
         **ops_cfg,
