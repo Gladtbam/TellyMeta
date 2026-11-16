@@ -158,6 +158,7 @@ class TrafficService(asyncio.DatagramProtocol):
 
         # (server_id, api_key/device_id) -> (media_user_id, expire_monotonic)
         self._token_cache: dict[tuple[int, str], tuple[str, float]] = {}
+        self._play_session_cache: dict[tuple[int, str], tuple[str, float]] = {}
         self._device_cache: dict[tuple[int, str], tuple[str, float]] = {}
         self._last_session_query: dict[int, float] = {}
         self._server_query_locks: dict[int, asyncio.Lock] = {}
@@ -217,6 +218,39 @@ class TrafficService(asyncio.DatagramProtocol):
         """主动失效服务器路由缓存，促使下次日志按最新配置重新加载"""
         self._server_cache_loaded_at = None
 
+    def _store_attribution_keys(
+        self,
+        server_id: int,
+        media_user_id: str | None,
+        *,
+        expires_at: float,
+        api_key: str | None = None,
+        play_session_id: str | None = None,
+        device_id: str | None = None,
+    ) -> None:
+        """将单个媒体用户的令牌、播放会话与设备标识统一写入对应 TTL 归因缓存
+
+        Args:
+            server_id: 媒体服务器实例 ID。
+            media_user_id: 媒体平台侧用户 ID。
+            expires_at: 缓存单调时钟到期时间戳。
+            api_key: 可选客户端认证令牌。
+            play_session_id: 可选播放会话 ID。
+            device_id: 可选客户端设备标识。
+        """
+        if not media_user_id:
+            return
+        clean_uid = media_user_id.strip()
+        if not clean_uid:
+            return
+        for cache, raw_key in (
+            (self._token_cache, api_key),
+            (self._play_session_cache, play_session_id),
+            (self._device_cache, device_id),
+        ):
+            if raw_key and raw_key.strip():
+                cache[(server_id, raw_key.strip())] = (clean_uid, expires_at)
+
     def record_webhook_session(
         self,
         server_id: int,
@@ -224,6 +258,7 @@ class TrafficService(asyncio.DatagramProtocol):
         media_user_id: str | None,
         device_id: str | None = None,
         api_key: str | None = None,
+        play_session_id: str | None = None,
     ) -> None:
         """写入来自播放/认证 Webhook 的会话归因映射缓存
 
@@ -232,17 +267,16 @@ class TrafficService(asyncio.DatagramProtocol):
             media_user_id: 媒体平台侧用户 ID。
             device_id: 客户端设备标识。
             api_key: 客户端认证令牌。
+            play_session_id: 可选播放会话 ID。
         """
-        if not media_user_id:
-            return
-        clean_uid = media_user_id.strip()
-        if not clean_uid:
-            return
-        expires_at = self._monotonic() + self._attribution_cache_ttl_seconds
-        if api_key and api_key.strip():
-            self._token_cache[(server_id, api_key.strip())] = (clean_uid, expires_at)
-        if device_id and device_id.strip():
-            self._device_cache[(server_id, device_id.strip())] = (clean_uid, expires_at)
+        self._store_attribution_keys(
+            server_id,
+            media_user_id,
+            expires_at=self._monotonic() + self._attribution_cache_ttl_seconds,
+            api_key=api_key,
+            play_session_id=play_session_id,
+            device_id=device_id,
+        )
 
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
         """接收单条 UDP syslog/JSON 报文并投递异步处理（遵循 DatagramProtocol 同步契约）
@@ -303,7 +337,11 @@ class TrafficService(asyncio.DatagramProtocol):
             return
 
         url_info = log_entry.url_info
-        if not url_info.api_key and not url_info.device_id:
+        if (
+            not url_info.api_key
+            and not url_info.play_session_id
+            and not url_info.device_id
+        ):
             return
 
         media_user_id = await self._resolve_media_user_id(server.id, url_info)
@@ -371,6 +409,17 @@ class TrafficService(asyncio.DatagramProtocol):
             self._servers_by_hostname = by_hostname
             self._server_cache_loaded_at = self._monotonic()
 
+    def _match_server_by_host(self, raw_host: str) -> ServerInstance | None:
+        """按精确 ``netloc`` 或唯一无端口 ``hostname`` 匹配已缓存服务器实例"""
+        normalized = raw_host.strip().lower()
+        if not normalized:
+            return None
+        matched = self._servers_by_netloc.get(normalized)
+        if matched is not None:
+            return matched
+        bare_host = normalized.split(":", 1)[0]
+        return self._servers_by_hostname.get(bare_host)
+
     async def _resolve_server(self, entry: Nginx) -> ServerInstance | None:
         """依据报文中的 server_id、server_name 或 Host 匹配对应的媒体服务器实例
 
@@ -394,11 +443,13 @@ class TrafficService(asyncio.DatagramProtocol):
 
         host = entry.resolved_host
         if host:
-            matched = self._servers_by_netloc.get(host)
+            matched = self._match_server_by_host(host)
             if matched is not None:
                 return matched
-            bare_host = host.split(":", 1)[0]
-            return self._servers_by_hostname.get(bare_host)
+
+        # Nginx 若以 "$server_name" 上报虚拟主机域名而非系统展示名，按 Host 再做一次回退匹配
+        if srv_name:
+            return self._match_server_by_host(srv_name)
 
         return None
 
@@ -407,33 +458,38 @@ class TrafficService(asyncio.DatagramProtocol):
         server_id: int,
         *,
         api_key: str | None,
+        play_session_id: str | None = None,
         device_id: str | None,
     ) -> str | None:
-        """从带 TTL 的内存归因缓存检索媒体平台用户 ID（Token 优先于设备 ID）
+        """从带 TTL 的内存归因缓存检索媒体平台用户 ID（Token > PlaySessionId > DeviceId）
 
         Args:
             server_id: 目标服务器 ID。
             api_key: 可选客户端认证令牌。
+            play_session_id: 可选播放会话 ID。
             device_id: 可选客户端设备 ID。
 
         Returns:
             命中的媒体用户 ID；均未命中或已过期时返回 ``None``。
         """
         now = self._monotonic()
-        if api_key:
-            uid = _lookup_cache_entry(self._token_cache, (server_id, api_key), now)
+        for cache, key in (
+            (self._token_cache, api_key),
+            (self._play_session_cache, play_session_id),
+            (self._device_cache, device_id),
+        ):
+            if not key:
+                continue
+            uid = _lookup_cache_entry(cache, (server_id, key), now)
             if uid is not None:
                 return uid
-
-        if device_id:
-            return _lookup_cache_entry(self._device_cache, (server_id, device_id), now)
 
         return None
 
     async def _refresh_active_sessions_throttled(self, server_id: int) -> None:
         """带短期节流保护回查目标媒体服务器 ``/Sessions`` 接口并刷新归因缓存
 
-        副作用：在节流窗口外触发外部 ``get_active_sessions()`` 请求并更新令牌/设备缓存。
+        副作用：在节流窗口外触发外部 ``get_active_sessions()`` 请求并更新令牌/会话/设备缓存。
 
         Args:
             server_id: 目标媒体服务器实例 ID。
@@ -466,63 +522,52 @@ class TrafficService(asyncio.DatagramProtocol):
 
             expires_at = self._monotonic() + self._attribution_cache_ttl_seconds
             for sess in sessions:
-                if not sess.user_id:
-                    continue
-                uid = sess.user_id.strip()
-                if not uid:
-                    continue
-                if sess.auth_token and sess.auth_token.strip():
-                    self._token_cache[(server_id, sess.auth_token.strip())] = (
-                        uid,
-                        expires_at,
-                    )
-                if sess.device_id and sess.device_id.strip():
-                    self._device_cache[(server_id, sess.device_id.strip())] = (
-                        uid,
-                        expires_at,
-                    )
+                self._store_attribution_keys(
+                    server_id,
+                    sess.user_id,
+                    expires_at=expires_at,
+                    api_key=sess.auth_token,
+                    play_session_id=sess.play_session_id,
+                    device_id=sess.device_id,
+                )
 
     async def _resolve_media_user_id(
         self,
         server_id: int,
         url_info: UrlInfo,
     ) -> str | None:
-        """优先命中精确 Token 缓存；遇未知 Token 时先节流回查 ``/Sessions`` 再回退设备缓存
+        """按 Token -> PlaySessionId -> DeviceId 优先级检索缓存，未命中时节流回查 ``/Sessions``
 
         Args:
             server_id: 目标媒体服务器实例 ID。
-            url_info: 解析出的请求 ``api_key`` 与 ``device_id`` 上下文。
+            url_info: 解析出的请求 ``api_key``、``play_session_id`` 与 ``device_id`` 上下文。
 
         Returns:
             归因得到的媒体平台用户 ID；无法识别时返回 ``None``。
         """
         now = self._monotonic()
         api_key = url_info.api_key
+        play_session_id = url_info.play_session_id
         device_id = url_info.device_id
 
-        # 1. 若存在 api_key 且已命中 Token 缓存，直接采用精确用户归因
-        if api_key:
-            token_uid = _lookup_cache_entry(
-                self._token_cache, (server_id, api_key), now
-            )
-            if token_uid is not None:
-                return token_uid
-            # 未见过该 api_key 时先按节流策略回查一次 /Sessions，避免共享设备上旧 device_id 掩盖新登录用户
+        # 优先检查最高优先级的非空归因键；未命中时先节流回查一次 /Sessions 再全链路回退，
+        # 防止共享设备上的旧 device_id 缓存遮蔽携带新 Token 或新 PlaySessionId 的用户
+        for cache, primary_key in (
+            (self._token_cache, api_key),
+            (self._play_session_cache, play_session_id),
+            (self._device_cache, device_id),
+        ):
+            if not primary_key:
+                continue
+            matched = _lookup_cache_entry(cache, (server_id, primary_key), now)
+            if matched is not None:
+                return matched
             await self._refresh_active_sessions_throttled(server_id)
             return self._lookup_cached_attribution(
-                server_id, api_key=api_key, device_id=device_id
-            )
-
-        # 2. 无 api_key 时查询 device_id 缓存，未命中则按节流策略回查 /Sessions
-        if device_id:
-            dev_uid = _lookup_cache_entry(
-                self._device_cache, (server_id, device_id), now
-            )
-            if dev_uid is not None:
-                return dev_uid
-            await self._refresh_active_sessions_throttled(server_id)
-            return self._lookup_cached_attribution(
-                server_id, api_key=None, device_id=device_id
+                server_id,
+                api_key=api_key,
+                play_session_id=play_session_id,
+                device_id=device_id,
             )
 
         return None
@@ -873,6 +918,7 @@ def record_traffic_webhook_session(
     media_user_id: str | None,
     device_id: str | None = None,
     api_key: str | None = None,
+    play_session_id: str | None = None,
 ) -> None:
     """安全将 Webhook 携带的用户/设备映射写入当前 ``TrafficService`` 归因缓存
 
@@ -882,6 +928,7 @@ def record_traffic_webhook_session(
         media_user_id: 媒体平台侧用户 ID。
         device_id: 客户端设备标识。
         api_key: 可选客户端认证令牌。
+        play_session_id: 可选播放会话 ID。
     """
     if app is None:
         return
@@ -893,6 +940,7 @@ def record_traffic_webhook_session(
         media_user_id=media_user_id,
         device_id=device_id,
         api_key=api_key,
+        play_session_id=play_session_id,
     )
 
 

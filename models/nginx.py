@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 _MEDIA_SEGMENT_EXTENSIONS = frozenset(
     {
@@ -75,11 +75,13 @@ def format_traffic_bytes(num_bytes: int | None) -> str:
 
 
 def _clean_str(value: str | int | None) -> str | None:
-    """将输入值归一化为去首尾空白的非空字符串，空白串返回 ``None``"""
+    """将输入值归一化为去首尾空白的非空字符串，空白串与 Nginx 占位符 ``-`` 返回 ``None``"""
     if value is None:
         return None
     text = str(value).strip()
-    return text or None
+    if not text or text == "-":
+        return None
+    return text
 
 
 def _extract_auth_header_param(
@@ -105,12 +107,47 @@ def _extract_auth_header_param(
     return None
 
 
+def _resolve_auth_field(
+    query_val: str | None,
+    query_auth: str | None,
+    auth_pattern: re.Pattern[str],
+    direct_candidates: tuple[str | None, ...],
+    auth_headers: tuple[str | None, ...],
+) -> str | None:
+    """按 Query 字段 -> Query 授权串 -> 显式 Header/字段 -> 授权请求头顺序提取鉴权/设备标识
+
+    Args:
+        query_val: URL Query 中直接命中目标参数的值。
+        query_auth: URL Query 中携带的 ``X-Emby-Authorization`` / ``Authorization`` 原文。
+        auth_pattern: 用于匹配键值对的正则（如 ``Token`` 或 ``DeviceId``）。
+        direct_candidates: 按优先级排列的显式模型字段或专用请求头值。
+        auth_headers: 顶层 ``X-Emby-Authorization`` / ``Authorization`` 请求头值。
+
+    Returns:
+        命中后的首个非空标识值，未命中返回 ``None``。
+    """
+    if query_val is not None:
+        return query_val
+    from_query_auth = _extract_auth_header_param(auth_pattern, query_auth)
+    if from_query_auth is not None:
+        return from_query_auth
+    for candidate in direct_candidates:
+        cleaned = _clean_str(candidate)
+        if cleaned is not None:
+            return cleaned
+    return _extract_auth_header_param(auth_pattern, *auth_headers)
+
+
 class UrlInfo(BaseModel):
     """Nginx URL 与请求上下文解析结果"""
 
     item_id: str | None = Field(None, description="媒体项 ID（如 48057 或 UUID）")
     api_key: str | None = Field(None, description="API Key / 认证令牌")
     device_id: str | None = Field(None, description="Device ID")
+    play_session_id: str | None = Field(
+        None, description="PlaySessionId（播放会话标识）"
+    )
+    media_source_id: str | None = Field(None, description="MediaSourceId（媒体源标识）")
 
 
 class Nginx(BaseModel):
@@ -118,13 +155,29 @@ class Nginx(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    timestamp: datetime
-    http_ip: str = ""
-    method: str
-    url: str
+    timestamp: datetime = Field(
+        validation_alias=AliasChoices("timestamp", "time_iso8601", "time"),
+    )
+    http_ip: str = Field(
+        default="",
+        validation_alias=AliasChoices("http_ip", "remote_addr", "client_ip", "ip"),
+    )
+    method: str = Field(
+        validation_alias=AliasChoices("method", "request_method"),
+    )
+    url: str = Field(
+        validation_alias=AliasChoices("url", "request_uri", "uri"),
+    )
     status: int
     body_bytes_sent: int  # 实际发出响应体字节数
-    http_range: str | None = ""
+    http_range: str | None = Field(
+        default="",
+        validation_alias=AliasChoices("http_range", "range"),
+    )
+    http_user_agent: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("http_user_agent", "user_agent", "User-Agent"),
+    )
 
     # 多服识别字段（允许 Nginx 模板传入 server_id、server_name 或 host）
     server_id: int | str | None = Field(
@@ -165,6 +218,20 @@ class Nginx(BaseModel):
             "X-MediaBrowser-Token",
         ),
     )
+    http_x_emby_device_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "http_x_emby_device_id", "x_emby_device_id", "X-Emby-Device-Id"
+        ),
+    )
+    http_x_mediabrowser_device_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "http_x_mediabrowser_device_id",
+            "x_mediabrowser_device_id",
+            "X-MediaBrowser-Device-Id",
+        ),
+    )
     http_authorization: str | None = Field(
         default=None,
         validation_alias=AliasChoices(
@@ -179,6 +246,18 @@ class Nginx(BaseModel):
             "X-Emby-Authorization",
         ),
     )
+
+    @field_validator("http_ip", "http_range", mode="before")
+    @classmethod
+    def _normalize_empty_network_str(cls, value: str | None) -> str:
+        """将 Nginx 缺省占位符 ``-`` 或 ``None`` 归一化为空字符串"""
+        return _clean_str(value) or ""
+
+    @field_validator("http_user_agent", mode="before")
+    @classmethod
+    def _normalize_optional_header(cls, value: str | None) -> str | None:
+        """将 Nginx 缺省占位符 ``-`` 或空白 User-Agent 归一化为 ``None``"""
+        return _clean_str(value)
 
     @property
     def resolved_server_id(self) -> int | None:
@@ -283,10 +362,11 @@ class Nginx(BaseModel):
 
     @property
     def url_info(self) -> UrlInfo:
-        """从 URL 路径、Query 参数与可选请求头中提取媒体项 ID、认证令牌与设备 ID
+        """从 URL 路径、Query 参数与可选请求头中提取媒体项、鉴权、设备及会话标识
 
         Returns:
-            包含 ``item_id``、``api_key`` 与 ``device_id`` 的 ``UrlInfo`` 对象。
+            包含 ``item_id``、``api_key``、``device_id``、``play_session_id``
+            与 ``media_source_id`` 的 ``UrlInfo`` 对象。
         """
         parsed = urlparse(self.url)
         path = parsed.path
@@ -303,31 +383,47 @@ class Nginx(BaseModel):
             return None
 
         item_id = self._match_media_item_id(path)
+        query_auth = first_query("x-emby-authorization", "authorization")
+        auth_headers = (self.http_x_emby_authorization, self.http_authorization)
 
-        # 令牌优先级：URL Query 参数 -> 顶层显式 Token/X-Emby-Token 字段 -> Authorization 请求头 Token
-        api_key = (
+        api_key = _resolve_auth_field(
             first_query(
                 "api_key", "apikey", "token", "x-emby-token", "x-mediabrowser-token"
-            )
-            or _clean_str(self.api_key)
-            or _clean_str(self.http_x_emby_token)
-            or _clean_str(self.http_x_mediabrowser_token)
-            or _extract_auth_header_param(
-                _AUTH_TOKEN_RE,
-                self.http_x_emby_authorization,
-                self.http_authorization,
-            )
+            ),
+            query_auth,
+            _AUTH_TOKEN_RE,
+            (
+                self.api_key,
+                self.http_x_emby_token,
+                self.http_x_mediabrowser_token,
+            ),
+            auth_headers,
         )
 
-        # 设备标识优先级：URL Query 参数 -> 顶层显式 device_id -> Authorization 请求头 DeviceId
-        device_id = (
-            first_query("deviceid", "device_id")
-            or _clean_str(self.device_id)
-            or _extract_auth_header_param(
-                _AUTH_DEVICE_ID_RE,
-                self.http_x_emby_authorization,
-                self.http_authorization,
-            )
+        device_id = _resolve_auth_field(
+            first_query(
+                "deviceid",
+                "device_id",
+                "x-emby-device-id",
+                "x-mediabrowser-device-id",
+            ),
+            query_auth,
+            _AUTH_DEVICE_ID_RE,
+            (
+                self.device_id,
+                self.http_x_emby_device_id,
+                self.http_x_mediabrowser_device_id,
+            ),
+            auth_headers,
         )
 
-        return UrlInfo(item_id=item_id, api_key=api_key, device_id=device_id)
+        play_session_id = first_query("playsessionid", "play_session_id")
+        media_source_id = first_query("mediasourceid", "media_source_id")
+
+        return UrlInfo(
+            item_id=item_id,
+            api_key=api_key,
+            device_id=device_id,
+            play_session_id=play_session_id,
+            media_source_id=media_source_id,
+        )
