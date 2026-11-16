@@ -420,9 +420,7 @@ def _split_by_calendar_day(
     segments: list[tuple[date, datetime, datetime]] = []
     cursor = start_at
     while cursor < end_at:
-        next_midnight = datetime.combine(
-            cursor.date() + timedelta(days=1), time.min
-        )
+        next_midnight = datetime.combine(cursor.date() + timedelta(days=1), time.min)
         seg_end = min(end_at, next_midnight)
         segments.append((cursor.date(), cursor, seg_end))
         cursor = seg_end
@@ -496,7 +494,9 @@ def ensure_emby_heartbeat_job(
     if existing is not None:
         return
 
-    jobstore = "memory" if "memory" in getattr(scheduler, "_jobstores", {}) else "default"
+    jobstore = (
+        "memory" if "memory" in getattr(scheduler, "_jobstores", {}) else "default"
+    )
     scheduler.add_job(
         run_emby_heartbeat_tick,
         "interval",
@@ -594,9 +594,7 @@ async def run_emby_heartbeat_tick(app: FastAPI, server_id: int) -> None:
             media_clients: dict[int, MediaService] = getattr(
                 app.state, "media_clients", {}
             )
-            scheduler: AsyncIOScheduler | None = getattr(
-                app.state, "scheduler", None
-            )
+            scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)
             await service.reconcile_emby_server_heartbeat(
                 server_id,
                 media_client=media_clients.get(server_id),
@@ -628,9 +626,7 @@ async def recover_active_emby_heartbeats(app: FastAPI) -> None:
         try:
             cfg = ConfigRepository(session)
             service = WatchTimeService(session)
-            scheduler: AsyncIOScheduler | None = getattr(
-                app.state, "scheduler", None
-            )
+            scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)
             if not await cfg.is_watch_time_enabled():
                 await service.deactivate_server_sessions(None, commit=True)
                 clear_all_emby_heartbeat_jobs(scheduler)
@@ -655,9 +651,7 @@ async def recover_active_emby_heartbeats(app: FastAPI) -> None:
             )
             orphan_server_ids = (await session.execute(orphan_stmt)).scalars().all()
             for orphan_server_id in orphan_server_ids:
-                await service.deactivate_server_sessions(
-                    orphan_server_id, commit=True
-                )
+                await service.deactivate_server_sessions(orphan_server_id, commit=True)
 
             wt_cfg = await cfg.get_watch_time_config()
             stmt = (
@@ -925,9 +919,7 @@ class WatchTimeService:
             for watch_day, seg_start, seg_end in _split_by_calendar_day(
                 piece_start, piece_end
             ):
-                seg_ms = max(
-                    0, round((seg_end - seg_start).total_seconds() * 1000)
-                )
+                seg_ms = max(0, round((seg_end - seg_start).total_seconds() * 1000))
                 if seg_ms <= 0:
                     continue
 
