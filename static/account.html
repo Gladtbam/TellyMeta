@@ -234,6 +234,10 @@
         let accountData = null;
         let userRenewScore = null;
 
+        /**
+         * 拉取当前媒体账号信息并缓存用户续期积分标准，随后触发账号详情视图渲染。
+         * 副作用：更新全局 ``accountData``、``userRenewScore`` 及页面 DOM 内容。
+         */
         async function fetchAccountInfo() {
             try {
                 const res = await fetch('/api/miniapp/me', {

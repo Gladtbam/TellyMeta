@@ -858,6 +858,7 @@ class AccountService:
         """
         deadline = self._now() + pre_expiry_window
         candidates = await self.media_repo.find_auto_renew_candidates(deadline)
+        # 仅提取主键标量，使逐账号进入锁内执行 end_clean_read_tx() + fresh=True 重查时不受此前 ORM 实例或读快照牵连
         target_pairs = [(mu.id, mu.server_id) for mu in candidates]
         renewed_count = 0
         for uid, sid in target_pairs:
