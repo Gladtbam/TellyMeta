@@ -551,11 +551,12 @@ class AccountService:
             续期操作结果 ``Result``，携带成功状态与通知文案
         """
         async with get_account_lock(user_id, server_id):
-            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            await self.media_repo.end_clean_read_tx()
+            media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if media_user is None:
                 return Result(False, "您尚未注册，请先注册后再续期。")
 
-            server = await self.server_repo.get_by_id(server_id)
+            server = await self.server_repo.get_by_id(server_id, fresh=True)
             if not server:
                 return Result(False, "服务器配置已失效。")
 
@@ -608,8 +609,6 @@ class AccountService:
                 client=client,
                 media_info=media_info,
                 media_user=media_user,
-                user_id=user_id,
-                server_id=server_id,
                 action_label="续期",
             )
             if restore_err is not None:
@@ -670,8 +669,6 @@ class AccountService:
         client: MediaService,
         media_info: User,
         media_user: MediaUser,
-        user_id: int,
-        server_id: int,
         action_label: str,
     ) -> Exception | None:
         """若外部或本地媒体账号处于禁用状态，先在媒体服务器上恢复启用
@@ -680,8 +677,6 @@ class AccountService:
             client: 媒体服务器客户端适配器
             media_info: 已获取的外部媒体用户信息
             media_user: 本地媒体账号 ORM 对象
-            user_id: Telegram 用户 ID
-            server_id: 媒体服务器 ID
             action_label: 日志场景前缀（如 ``续期`` / ``自动保活``）
 
         Returns:
@@ -697,8 +692,8 @@ class AccountService:
             logger.error(
                 "{}恢复媒体账号失败: user_id={}, server_id={}, err={}",
                 action_label,
-                user_id,
-                server_id,
+                media_user.id,
+                media_user.server_id,
                 e,
             )
             return e
@@ -774,7 +769,8 @@ class AccountService:
             结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
         """
         async with get_account_lock(user_id, server_id):
-            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            await self.media_repo.end_clean_read_tx()
+            media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if media_user is None:
                 return AutoRenewOutcome(False, "媒体账号不存在")
             if media_user.is_banned:
@@ -782,7 +778,7 @@ class AccountService:
             if not media_user.auto_renew:
                 return AutoRenewOutcome(False, "用户未开启自动保活")
 
-            server = await self.server_repo.get_by_id(server_id)
+            server = await self.server_repo.get_by_id(server_id, fresh=True)
             if not server or not server.is_enabled:
                 return AutoRenewOutcome(False, "服务器不存在或已停用")
 
@@ -814,8 +810,6 @@ class AccountService:
                 client=client,
                 media_info=media_info,
                 media_user=media_user,
-                user_id=user_id,
-                server_id=server_id,
                 action_label="自动保活",
             )
             if restore_err is not None:
@@ -888,11 +882,12 @@ class AccountService:
             包含最新 ``auto_renew`` 状态与提示文案的 ``Result`` 对象
         """
         async with get_account_lock(user_id, server_id):
-            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            await self.media_repo.end_clean_read_tx()
+            media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if media_user is None:
                 return Result(False, "您尚未注册，请先注册后再设置自动保活。")
 
-            server = await self.server_repo.get_by_id(server_id)
+            server = await self.server_repo.get_by_id(server_id, fresh=True)
             if not server:
                 return Result(False, "服务器配置已失效。")
 

@@ -73,9 +73,26 @@ class ServerRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def get_by_id(self, server_id: int) -> ServerInstance | None:
-        """通过 ID 获取服务器"""
-        return await self.session.get(ServerInstance, server_id)
+    async def get_by_id(
+        self, server_id: int, *, fresh: bool = False
+    ) -> ServerInstance | None:
+        """通过 ID 获取服务器
+
+        Args:
+            server_id: 媒体服务器 ID
+            fresh: 为 ``True`` 时强制从数据库刷新配置，绕过会话身份映射缓存
+
+        Returns:
+            ``ServerInstance`` 实例，不存在时返回 ``None``
+        """
+        if not fresh:
+            return await self.session.get(ServerInstance, server_id)
+        stmt = (
+            select(ServerInstance)
+            .where(ServerInstance.id == server_id)
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_by_token(self, token: str) -> ServerInstance | None:
         """通过 Webhook Token 获取服务器"""

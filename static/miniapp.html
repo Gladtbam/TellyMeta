@@ -407,6 +407,10 @@
             }
         }
 
+        /**
+         * 渲染 Mini App 首页用户概览及各媒体账号卡片（含保活门槛进度与自动保活开关）。
+         * @param {object} data `/api/miniapp/me` 接口返回的用户信息 DTO。
+         */
         function render(data) {
             const user = tg.initDataUnsafe.user;
             if (user && user.photo_url) {
@@ -479,10 +483,10 @@
                         <div class="item">
                             <div class="item-content">
                                 <span class="item-subtitle">自动保活</span>
-                                <span class="item-subtitle" style="font-size:12px">${acc.watch_time_renewal_open ? '临近到期且达标时自动免费续期' : '当前服务器未开放保活续期'}</span>
+                                <span class="item-subtitle" style="font-size:12px">${formatAutoRenewHint(acc)}</span>
                             </div>
                             <label class="switch">
-                                <input type="checkbox" ${acc.auto_renew ? 'checked' : ''} onchange="toggleCardAutoRenew(${acc.server_id}, this)">
+                                <input type="checkbox" ${acc.auto_renew ? 'checked' : ''} onchange="handleAutoRenewToggle(${acc.server_id}, tg, this)">
                                 <span class="slider"></span>
                             </label>
                         </div>
@@ -676,14 +680,8 @@
         }
 
         /**
-         * 切换 Mini App 账号卡片上的自动保活开关。
-         * @param {number|string} serverId 目标服务器 ID。
-         * @param {HTMLInputElement} checkbox 触发切换的复选框元素。
+         * 跳转至管理后台系统设置页。
          */
-        async function toggleCardAutoRenew(serverId, checkbox) {
-            await handleAutoRenewToggle(serverId, tg, checkbox);
-        }
-
         function goToSettings() {
             window.location.href = "settings.html";
         }

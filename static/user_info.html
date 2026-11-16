@@ -749,6 +749,10 @@
             }
         }
 
+        /**
+         * 渲染管理员视角下的用户概览及只读媒体账号保活状态卡片。
+         * @param {object} data 用户详情 DTO 对象。
+         */
         function renderUserInfo(data) {
             document.getElementById('loader').style.display = 'none';
             document.getElementById('main-content').style.display = 'block';

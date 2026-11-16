@@ -32,6 +32,23 @@ function formatWatchTimeRenewalProgress(acc) {
 }
 
 /**
+ * 格式化自动保活开关副标题说明，避免开放状态判断在多个页面重复实现。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @param {boolean} detailed 是否使用账号详情页的完整说明文案。
+ * @returns {string} 自动保活提示文案。
+ */
+function formatAutoRenewHint(acc, detailed = false) {
+    if (acc && acc.watch_time_renewal_open) {
+        return detailed
+            ? '到期前若本周期有效时长达标将自动免费续期'
+            : '临近到期且达标时自动免费续期';
+    }
+    return detailed
+        ? '当前服务器未开放保活续期（开启后暂不生效）'
+        : '当前服务器未开放保活续期';
+}
+
+/**
  * 统一处理 Mini App 账号自动保活开关切换、错误回滚与结果提示。
  * @param {number|string} serverId 服务器 ID。
  * @param {object} tg Telegram WebApp 对象。

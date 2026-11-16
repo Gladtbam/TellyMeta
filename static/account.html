@@ -260,6 +260,10 @@
             }
         }
 
+        /**
+         * 渲染媒体账号详情、有效播放时长进度、保活状态与自动保活开关区域。
+         * @param {object} acc 媒体账号 DTO 对象。
+         */
         function renderAccountInfo(acc) {
             const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
             let expiry = "未知";
@@ -269,9 +273,7 @@
             }
 
             const progressText = formatWatchTimeRenewalProgress(acc);
-            const autoRenewHint = acc.watch_time_renewal_open
-                ? '到期前若本周期有效时长达标将自动免费续期'
-                : '当前服务器未开放保活续期（开启后暂不生效）';
+            const autoRenewHint = formatAutoRenewHint(acc, true);
 
             document.getElementById('account-info').innerHTML = `
                 <div class="item">
@@ -357,6 +359,9 @@
             });
         }
 
+        /**
+         * 发起媒体账号手动续期请求；若本周期有效播放时长已达保活门槛，弹窗明确提示本次免扣积分。
+         */
         async function renewAccount() {
             let confirmMsg = "确认要续期当前媒体账号吗？（将消耗积分）";
             if (accountData && accountData.watch_time_renewal_eligible) {

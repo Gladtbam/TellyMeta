@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from httpx2 import HTTPError, HTTPStatusError
@@ -110,12 +111,14 @@ def apply_ops_schedules(scheduler, ops_cfg: dict[str, Any] | None = None) -> Non
 
 @scheduled_job("cron", hour=0, minute=15, id="ban_expired_users", replace_existing=True)
 async def ban_expired_users() -> None:
-    """封禁过期用户
-    检查所有用户的订阅状态，封禁前先复核是否已开启自动保活且时长达标；
-    未达标或未开启时，先在媒体服务器上禁用已过期账户，再标记本地封禁状态并设置宽限期后的删除时间。
+    """封禁过期媒体账号
+    检查所有过期媒体账号的订阅状态，封禁前先复核是否已开启自动保活且时长达标；
+    未达标或未开启时，在账号串行锁内二次核验最新到期状态，随后先在媒体服务器上禁用已过期账号，
+    再标记本地封禁状态并设置宽限期后的删除时间。
     """
     from main import app  # 避免循环导入
     from services.account_service import AccountService
+    from services.watch_time_service import get_account_lock
 
     async with async_session() as session:
         try:
@@ -130,73 +133,96 @@ async def ban_expired_users() -> None:
             if not users:
                 logger.info("没有需要封禁的用户。")
                 return
+            target_accounts = [(u.id, u.server_id, u.media_id) for u in users]
+            # 释放列表扫描的只读快照，保证每个账号进入锁后都能读取到最新并发提交
+            await media_repo.end_clean_read_tx()
 
-            for user in users:
+            for user_id, server_id, media_id in target_accounts:
                 # 到期封禁前复核自动保活资格：仅用户手动开启且时长达标时免分抢救，绝不自动扣分
                 auto_outcome = await account_service.try_auto_renew_account(
-                    user.id, user.server_id
+                    user_id, server_id
                 )
                 if auto_outcome.renewed:
                     logger.info(
                         "到期封禁前复核触发自动保活成功，跳过封禁: {} (ID: {}) Server: {}",
-                        user.id,
-                        user.media_id,
-                        user.server_id,
+                        user_id,
+                        media_id,
+                        server_id,
                     )
                     continue
                 if auto_outcome.retryable_error:
                     logger.warning(
                         "自动保活账号外部核验临时失败，本次跳过封禁等待重试: {} (ID: {}) Server: {}",
-                        user.id,
-                        user.media_id,
-                        user.server_id,
+                        user_id,
+                        media_id,
+                        server_id,
                     )
                     continue
 
-                client = media_clients.get(user.server_id)
-                if not client:
-                    logger.warning(
-                        "未找到服务器实例(ID: {})，跳过封禁用户: {} (ID: {})",
-                        user.server_id,
-                        user.id,
-                        user.media_id,
+                async with get_account_lock(user_id, server_id):
+                    await media_repo.end_clean_read_tx()
+                    fresh_user = await media_repo.get_by_id(
+                        user_id, server_id, fresh=True
                     )
-                    continue
-                try:
-                    logger.info(
-                        "封禁用户: {} (ID: {}) Server: {}",
-                        user.id,
-                        user.media_id,
-                        user.server_id,
-                    )
-                    await client.ban_or_unban(user_id=user.media_id, is_ban=True)
-                except HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        # 媒体服务器账户已不存在时，仍标记封禁并按到期时间+7天进入待删除队列
+                    if (
+                        fresh_user is None
+                        or fresh_user.is_banned
+                        or fresh_user.expires_at >= datetime.now()
+                    ):
+                        logger.info(
+                            "媒体账号状态已变更或并发完成续期，跳过本次封禁: {} (ID: {}) Server: {}",
+                            user_id,
+                            media_id,
+                            server_id,
+                        )
+                        continue
+
+                    client = media_clients.get(fresh_user.server_id)
+                    if not client:
                         logger.warning(
-                            "封禁用户时媒体服务器账户不存在(404)，标记待删除: {} (ID: {})",
-                            user.id,
-                            user.media_id,
+                            "未找到服务器实例(ID: {})，跳过封禁用户: {} (ID: {})",
+                            fresh_user.server_id,
+                            fresh_user.id,
+                            fresh_user.media_id,
                         )
-                        await media_repo.mark_banned(user)
-                    else:
+                        continue
+                    try:
+                        logger.info(
+                            "封禁用户: {} (ID: {}) Server: {}",
+                            fresh_user.id,
+                            fresh_user.media_id,
+                            fresh_user.server_id,
+                        )
+                        await client.ban_or_unban(
+                            user_id=fresh_user.media_id, is_ban=True
+                        )
+                    except HTTPStatusError as e:
+                        if e.response.status_code == 404:
+                            # 媒体服务器账户已不存在时，仍标记封禁并按到期时间+7天进入待删除队列
+                            logger.warning(
+                                "封禁用户时媒体服务器账户不存在(404)，标记待删除: {} (ID: {})",
+                                fresh_user.id,
+                                fresh_user.media_id,
+                            )
+                            await media_repo.mark_banned(fresh_user)
+                        else:
+                            logger.error(
+                                "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，状态码: {}",
+                                fresh_user.id,
+                                fresh_user.media_id,
+                                e.response.status_code,
+                            )
+                        continue
+                    except (HTTPError, ValueError) as e:
                         logger.error(
-                            "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，状态码: {}",
-                            user.id,
-                            user.media_id,
-                            e.response.status_code,
+                            "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，错误: {}",
+                            fresh_user.id,
+                            fresh_user.media_id,
+                            e,
                         )
-                    continue
-                except (HTTPError, ValueError) as e:
-                    logger.error(
-                        "封禁过期用户失败，保留未封禁状态以便重试: {} (ID: {})，错误: {}",
-                        user.id,
-                        user.media_id,
-                        e,
-                    )
-                    continue
+                        continue
 
-                await media_repo.mark_banned(user)
+                    await media_repo.mark_banned(fresh_user)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("封禁过期用户时出错: {}", e)
             await session.rollback()

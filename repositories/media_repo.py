@@ -17,15 +17,34 @@ class MediaRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_id(self, user_id: int, server_id: int) -> MediaUser | None:
-        """通过 ID 获取 Media 用户
+    async def end_clean_read_tx(self) -> None:
+        """若当前会话仅存在未修改的只读事务快照，关闭该快照以读取最新已提交数据"""
+        if self.session.in_transaction() and not (
+            self.session.new or self.session.dirty or self.session.deleted
+        ):
+            await self.session.rollback()
+
+    async def get_by_id(
+        self, user_id: int, server_id: int, *, fresh: bool = False
+    ) -> MediaUser | None:
+        """通过 ID 获取媒体账号
+
         Args:
-            user_id (int): Telegram 用户ID
+            user_id (int): Telegram 用户 ID
             server_id (int): 媒体服务器 ID
+            fresh (bool): 为 ``True`` 时强制从数据库刷新记录，绕过会话身份映射缓存
+
         Returns:
-            MediaUser | None: 如果找到用户则返回用户对象，否则返回None
+            MediaUser | None: 如果找到账号则返回对象，否则返回 ``None``
         """
-        return await self.session.get(MediaUser, (user_id, server_id))
+        if not fresh:
+            return await self.session.get(MediaUser, (user_id, server_id))
+        stmt = (
+            select(MediaUser)
+            .where(MediaUser.id == user_id, MediaUser.server_id == server_id)
+            .execution_options(populate_existing=True)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def get_all_by_id(self, user_id: int) -> Sequence[MediaUser]:
         """获取指定 Telegram 用户的所有媒体账户
