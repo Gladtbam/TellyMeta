@@ -28,9 +28,18 @@ from core.dependencies import (
 )
 from core.task_utils import create_background_task
 from core.telegram_message import TelegramMessage
-from models.emby_webhook import EmbyPayload, LibraryDeletedEvent, LibraryNewEvent
+from models.emby_webhook import (
+    EmbyPayload,
+    LibraryDeletedEvent,
+    LibraryNewEvent,
+    UserAuthenticatedEvent,
+)
 from models.events import NotificationEvent
-from models.jellyfin_webhook import JellyfinPayload, NotificationType
+from models.jellyfin_webhook import (
+    AuthenticationEvent,
+    JellyfinPayload,
+    NotificationType,
+)
 from models.orm import ServerInstance
 from models.radarr_webhook import (
     RadarrPayload,
@@ -46,6 +55,7 @@ from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.media_service import MediaService
 from services.notification_service import NotificationService
+from services.traffic_service import record_traffic_webhook_session
 from services.watch_time_service import (
     NormalizedPlaybackEvent,
     WatchTimeService,
@@ -334,6 +344,38 @@ async def _process_playback_webhook(
     )
 
 
+def _warm_traffic_attribution_cache(
+    request: Request,
+    server_id: int,
+    *,
+    media_user_id: str | None,
+    device_id: str | None,
+) -> None:
+    """将 Emby/Jellyfin 认证与播放 Webhook 携带的用户设备映射预热到流量归因缓存
+
+    Args:
+        request: FastAPI 请求对象，用于定位 ``app.state.traffic_service``。
+        server_id: 当前触发 Webhook 的服务器实例 ID。
+        media_user_id: 媒体平台侧用户 ID。
+        device_id: 客户端设备标识（可为空）。
+    """
+    if not media_user_id or not device_id:
+        return
+    record_traffic_webhook_session(
+        request.app,
+        server_id,
+        media_user_id=media_user_id,
+        device_id=device_id,
+    )
+
+
+def _extract_emby_device_id(payload: EmbyPayload) -> str | None:
+    """从 Emby Webhook 载荷的 Session 或 DeviceInfo 中提取设备 ID"""
+    session_obj = getattr(payload, "session", None)
+    device_obj = getattr(payload, "device_info", None)
+    return getattr(session_obj, "device_id", None) or getattr(device_obj, "id", None)
+
+
 @router.post("/webhook/emby", status_code=202)
 async def emby_webhook(
     request: Request,
@@ -366,8 +408,24 @@ async def emby_webhook(
             )
     elif isinstance(payload, LibraryDeletedEvent) and ai_client:
         await cancel_translate_media_item(server_instance.id, payload.item.id)
+    elif isinstance(payload, UserAuthenticatedEvent):
+        # 登录事件提前预热设备映射，减少后续首片流请求对 /Sessions 的回查
+        _warm_traffic_attribution_cache(
+            request,
+            server_instance.id,
+            media_user_id=payload.user.id,
+            device_id=_extract_emby_device_id(payload),
+        )
     else:
         playback_event = normalize_emby_playback_event(payload)
+        if playback_event is not None:
+            # 播放事件同步刷新设备归因缓存，确保同一设备切换账号后实时覆盖旧映射
+            _warm_traffic_attribution_cache(
+                request,
+                server_instance.id,
+                media_user_id=playback_event.media_user_id,
+                device_id=_extract_emby_device_id(payload),
+            )
         await _process_playback_webhook(
             request, session, server_instance, playback_event
         )
@@ -409,8 +467,27 @@ async def jellyfin(
             )
     elif payload.notification_type == NotificationType.ITEM_DELETED and ai_client:
         await cancel_translate_media_item(server_instance.id, payload.item_id)
+    elif isinstance(payload, AuthenticationEvent) and payload.notification_type in (
+        NotificationType.AUTHENTICATION_SUCCESS,
+        NotificationType.SESSION_START,
+    ):
+        # 认证或会话启动事件提前预热设备映射，减少后续首片流请求对 /Sessions 的回查
+        _warm_traffic_attribution_cache(
+            request,
+            server_instance.id,
+            media_user_id=payload.user_id,
+            device_id=payload.device_id,
+        )
     else:
         playback_event = normalize_jellyfin_playback_event(payload)
+        if playback_event is not None:
+            # 播放事件同步刷新设备归因缓存，确保同一设备切换账号后实时覆盖旧映射
+            _warm_traffic_attribution_cache(
+                request,
+                server_instance.id,
+                media_user_id=playback_event.media_user_id,
+                device_id=getattr(payload, "device_id", None),
+            )
         await _process_playback_webhook(
             request, session, server_instance, playback_event
         )

@@ -285,7 +285,13 @@ class MediaRepository:
         *,
         now: datetime | None = None,
     ) -> MediaUser:
-        """按锚定自然月周期延长媒体账号有效期、清零本期保活时长并保留历史总时长
+        """按锚定自然月周期延长媒体账号有效期、清零本期保活时长并保留历史累计统计
+
+        副作用：
+        - 延长 ``expires_at``、解除 ``is_banned`` 并清空 ``delete_at``；
+        - 清零本周期有效播放时长及亚秒余数（保留 ``total_watch_time_seconds``）；
+        - 若发生过期重锚（``cycle.is_reset`` 为 ``True``），同步清零本周期基础流量与 80%/100% 告警标志
+          （保留 ``total_traffic_bytes``），未过期提前续期则保留当前进行中的流量账期不变。
 
         Args:
             media_user: 需要续期的媒体账号对象
@@ -312,6 +318,11 @@ class MediaRepository:
         # 仅重置本期保活计数与亚秒余数，绝不清除历史累计总时长 total_watch_time_seconds
         media_user.cycle_watch_time_seconds = 0
         media_user.watch_time_remainder_ms = 0
+        if cycle.is_reset:
+            # 过期后补续重锚到新周期时清零本期流量计数与预警标记，提前续期则留待 next_reset_at 重置
+            media_user.cycle_traffic_bytes = 0
+            media_user.traffic_alert_80_sent = False
+            media_user.traffic_alert_100_sent = False
         await self.session.commit()
         await self.session.refresh(media_user)
         return media_user

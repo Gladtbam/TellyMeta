@@ -10,6 +10,7 @@ from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.billing_anchor import backfill_billing_cycle
 from core.config import get_settings
 from core.telegram_message import TelegramMessage
 from models.orm import RegistrationMode, ServerType, TelegramUser
@@ -261,14 +262,18 @@ class UserService:
     async def get_user_info_data(self, user_id: int) -> dict:
         """获取指定 Telegram 用户的结构化个人与媒体账号概览数据
 
+        包括基础积分、签到统计、周期/总有效播放时长、各媒体账号的保活资格、
+        本周期流量消耗、月基础流量配额、剩余基础流量及平滑推导后的下次重置时间。
+
         Args:
-            user_id: Telegram 用户 ID
+            user_id: Telegram 用户 ID。
 
         Returns:
-            包含 Telegram 用户记录、各媒体账号明细（含保活进度与自动保活状态）及可注册服务器的字典
+            包含 Telegram 用户记录、各媒体账号明细及可注册服务器的聚合字典。
         """
         user = await self.telegram_repo.get_or_create(user_id)
         renew_score = int(await self.telegram_repo.get_renew_score())
+        global_traffic_enabled = await self.config_repo.is_traffic_enabled()
 
         media_accounts = []
         registered_server_ids: set[int] = set()
@@ -283,6 +288,36 @@ class UserService:
                 cycle_watch_time_seconds += cycle_watch
                 total_watch_time_seconds += total_watch
                 wt_status = evaluate_watch_time_renewal(server, mu)
+
+                anchor_day = mu.anchor_day
+                next_reset_at = mu.next_reset_at
+                # 存量历史账号缺失锚定字段时，按现有到期日平滑推算周期重置点以保证展示完整
+                if anchor_day is None or next_reset_at is None:
+                    derived_anchor, _, derived_reset = backfill_billing_cycle(
+                        current_expires_at=mu.expires_at,
+                        anchor_day=anchor_day,
+                        current_cycle_started_at=mu.cycle_started_at,
+                        current_next_reset_at=next_reset_at,
+                    )
+                    anchor_day = derived_anchor
+                    next_reset_at = derived_reset
+
+                # 仅当全局流量总开关与单服流量开关同时开启时，账号采集状态才视为启用
+                enable_traffic = (
+                    global_traffic_enabled and bool(server.enable_traffic)
+                    if server
+                    else False
+                )
+                cycle_traffic = max(0, int(mu.cycle_traffic_bytes or 0))
+                total_traffic = max(0, int(mu.total_traffic_bytes or 0))
+                quota_bytes = (
+                    max(0, int(server.traffic_quota_bytes or 0)) if server else 0
+                )
+                # 配额为 0 表示不限量（剩余量置为 None）；有限额时钳位至 >= 0 防止返回负数
+                remaining_bytes = (
+                    max(0, quota_bytes - cycle_traffic) if quota_bytes > 0 else None
+                )
+
                 media_accounts.append(
                     {
                         "media_user": mu,
@@ -307,8 +342,8 @@ class UserService:
                         "tos": server.tos if server else None,
                         "cycle_watch_time_seconds": cycle_watch,
                         "total_watch_time_seconds": total_watch,
-                        "anchor_day": mu.anchor_day,
-                        "next_reset_at": mu.next_reset_at,
+                        "anchor_day": anchor_day,
+                        "next_reset_at": next_reset_at,
                         "auto_renew": bool(mu.auto_renew),
                         "enable_watch_time_renewal": (
                             bool(server.enable_watch_time_renewal) if server else False
@@ -317,6 +352,11 @@ class UserService:
                         "watch_time_renewal_open": wt_status.is_open,
                         "watch_time_renewal_eligible": wt_status.is_eligible,
                         "watch_time_renewal_status_text": wt_status.status_text,
+                        "enable_traffic": enable_traffic,
+                        "cycle_traffic_bytes": cycle_traffic,
+                        "total_traffic_bytes": total_traffic,
+                        "traffic_quota_bytes": quota_bytes,
+                        "traffic_remaining_bytes": remaining_bytes,
                     }
                 )
 

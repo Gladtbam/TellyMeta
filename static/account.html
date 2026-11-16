@@ -278,6 +278,14 @@
 
             const progressText = formatWatchTimeRenewalProgress(acc);
             const autoRenewHint = formatAutoRenewHint(acc, true);
+            const quotaText = Number(acc.traffic_quota_bytes || 0) > 0
+                ? formatTrafficBytes(acc.traffic_quota_bytes)
+                : '不限';
+            const remainingText = acc.traffic_remaining_bytes !== null && acc.traffic_remaining_bytes !== undefined
+                ? formatTrafficBytes(acc.traffic_remaining_bytes)
+                : '不限';
+            const resetDateText = formatResetDate(acc.next_reset_at);
+            const trafficSummaryText = formatTrafficQuotaSummary(acc);
 
             document.getElementById('account-info').innerHTML = `
                 <div class="item">
@@ -308,6 +316,25 @@
                         <span class="item-subtitle">保活门槛进度</span>
                         <span class="item-subtitle" style="font-size:12px;">${progressText}</span>
                     </div>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">本周期已用流量</span></div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.cycle_traffic_bytes)}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-subtitle">月基础流量配额 / 剩余</span>
+                        <span class="item-subtitle" style="font-size:12px;">${trafficSummaryText}</span>
+                    </div>
+                    <span class="item-value" style="font-size:14px">${quotaText} / ${remainingText}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">累计总流量</span></div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.total_traffic_bytes)}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">下次周期重置</span></div>
+                    <span class="item-value" style="font-size:15px">${resetDateText}</span>
                 </div>
                 <div class="item">
                     <div class="item-content">

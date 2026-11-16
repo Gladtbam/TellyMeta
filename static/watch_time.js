@@ -78,3 +78,55 @@ async function handleAutoRenewToggle(serverId, tg, checkbox, onSuccess = null) {
         tg.showAlert(e.message || '切换自动保活失败');
     }
 }
+
+/**
+ * 将字节数转换为 1024 进制可读流量字符串（B / KiB / MiB / GiB / TiB）。
+ * @param {number|null|undefined} bytes 流量字节数。
+ * @returns {string} 格式化后的流量文本。
+ */
+function formatTrafficBytes(bytes) {
+    let size = Math.max(0, Number(bytes) || 0);
+    if (size === 0) return '0.00 B';
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+        size /= 1024;
+        idx += 1;
+    }
+    return `${size.toFixed(2)} ${units[idx]}`;
+}
+
+/**
+ * 格式化媒体账号的本周期基础流量进度与剩余配额说明。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @returns {string} 流量消耗与配额汇总文案。
+ */
+function formatTrafficQuotaSummary(acc) {
+    if (!acc) return '暂无数据';
+    const usedText = formatTrafficBytes(acc.cycle_traffic_bytes);
+    if (!acc.enable_traffic) {
+        return acc.cycle_traffic_bytes > 0
+            ? `已用 ${usedText}（当前未开启采集）`
+            : '当前服务器未开启流量采集';
+    }
+    const quota = Number(acc.traffic_quota_bytes || 0);
+    if (quota <= 0) {
+        return `已用 ${usedText} / 不限`;
+    }
+    const remaining = acc.traffic_remaining_bytes !== null && acc.traffic_remaining_bytes !== undefined
+        ? Number(acc.traffic_remaining_bytes)
+        : Math.max(0, quota - Number(acc.cycle_traffic_bytes || 0));
+    return `已用 ${usedText} / 配额 ${formatTrafficBytes(quota)}（剩余 ${formatTrafficBytes(remaining)}）`;
+}
+
+/**
+ * 格式化下次锚定自然月重置日期为 YYYY-MM-DD。
+ * @param {string|null|undefined} isoStr ISO 时间字符串。
+ * @returns {string} 格式化后的日期字符串。
+ */
+function formatResetDate(isoStr) {
+    if (!isoStr) return '未知';
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return '未知';
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+}

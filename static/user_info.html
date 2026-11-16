@@ -810,6 +810,7 @@
                                 <span class="item-subtitle">账号: <b>${acc.media_name}</b> | 到期: ${expiry}</span>
                                 <span class="item-subtitle">观看时长: 本周期 ${formatWatchDuration(acc.cycle_watch_time_seconds)} · 累计 ${formatWatchDuration(acc.total_watch_time_seconds)}</span>
                                 <span class="item-subtitle">保活状态: ${formatWatchTimeRenewalProgress(acc)} · 自动保活: ${acc.auto_renew ? '已开启' : '未开启'}</span>
+                                <span class="item-subtitle">流量进度: ${formatTrafficQuotaSummary(acc)} · 重置日: ${formatResetDate(acc.next_reset_at)}</span>
                             </div>
                             <span style="font-size: 13px; font-weight: 500; color: ${statusColor};">${acc.status_text}</span>
                         </div>

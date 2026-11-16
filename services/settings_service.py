@@ -34,6 +34,7 @@ from models.schemas import (
     PolicyConfigUpdateDto,
     QualityProfileDto,
     RootFolderDto,
+    TrafficConfigUpdateDto,
     WatchTimeConfigUpdateDto,
 )
 from repositories.binding_repo import BindingRepository
@@ -41,6 +42,10 @@ from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
+from services.traffic_service import (
+    invalidate_traffic_server_cache,
+    sync_traffic_listener,
+)
 from services.user_service import Result
 from services.watch_time_service import (
     WatchTimeService,
@@ -207,6 +212,7 @@ class SettingsServices:
         if server.is_enabled:
             try:
                 await self._init_and_add_client(server)
+                invalidate_traffic_server_cache(self.app)
                 return Result(
                     True,
                     TelegramMessage.render_markdown(
@@ -225,6 +231,7 @@ class SettingsServices:
             await self._remove_and_close_client(server)
             # 停用服务器时同步停用遗留活跃会话并清理 Emby 按需播放心跳（保留历史时长统计）
             await self.handle_watch_time_disabled(server_id)
+            invalidate_traffic_server_cache(self.app)
             return Result(
                 True,
                 TelegramMessage.render_markdown(
@@ -449,7 +456,14 @@ class SettingsServices:
         """
         try:
             default_val = (
-                "false" if key == ConfigRepository.KEY_ENABLE_LLM_TRANSLATE else "true"
+                "false"
+                if key
+                in (
+                    ConfigRepository.KEY_ENABLE_LLM_TRANSLATE,
+                    ConfigRepository.KEY_ENABLE_TRAFFIC,
+                    ConfigRepository.KEY_ENABLE_CLEANUP_INACTIVE_USERS,
+                )
+                else "true"
             )
             current = await self.config_repo.get_settings(key, default_val)
             new_state_str = "false" if current == "true" else "true"
@@ -463,6 +477,16 @@ class SettingsServices:
             ):
                 # 全局关闭播放时长统计时停用所有活跃会话并清空全部 Emby 心跳（保留历史累计）
                 await self.handle_watch_time_disabled(None)
+            elif key == ConfigRepository.KEY_ENABLE_TRAFFIC:
+                try:
+                    await sync_traffic_listener(self.app)
+                except OSError as exc:
+                    # 端口占用等监听启动异常时回滚开关状态，避免管理端显示开启但实际未监听
+                    await self.config_repo.set_settings(key, current or default_val)
+                    return Result(
+                        success=False,
+                        message=f"流量 UDP 监听切换失败: {exc!s}",
+                    )
 
             status_text = "开启" if new_state_str == "true" else "关闭"
             label = ConfigRepository.get_points_sub_switch_label(key)
@@ -697,6 +721,54 @@ class SettingsServices:
 
         return Result(success=True, message="播放时长与 Emby 心跳配置已保存并生效")
 
+    async def update_traffic_config(self, payload: TrafficConfigUpdateDto) -> Result:
+        """校验并保存 Nginx 流量 UDP 监听地址、端口与刷盘间隔配置，并按需重载监听
+
+        Args:
+            payload: 流量采集 UDP 与刷盘配置更新载体。
+
+        Returns:
+            包含校验、重载结果或错误提示的 ``Result`` 对象。
+        """
+        udp_host = payload.udp_host.strip()
+        if not udp_host:
+            return Result(success=False, message="UDP 监听地址不能为空")
+        if payload.udp_port < 1 or payload.udp_port > 65535:
+            return Result(success=False, message="UDP 监听端口必须在 1 到 65535 之间")
+        if payload.flush_interval_seconds < 1:
+            return Result(success=False, message="内存聚合刷盘间隔至少为 1 秒")
+
+        prev_cfg = await self.config_repo.get_traffic_config()
+        items = {
+            ConfigRepository.KEY_TRAFFIC_UDP_HOST: udp_host,
+            ConfigRepository.KEY_TRAFFIC_UDP_PORT: str(payload.udp_port),
+            ConfigRepository.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS: str(
+                payload.flush_interval_seconds
+            ),
+        }
+        for key, value in items.items():
+            await self.config_repo.set_settings(key, value)
+
+        try:
+            await sync_traffic_listener(self.app)
+        except OSError as exc:
+            # 监听重载失败时自动回滚到上一组可用 UDP 参数，防止配置与运行态撕裂
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TRAFFIC_UDP_HOST, str(prev_cfg["traffic_udp_host"])
+            )
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TRAFFIC_UDP_PORT, str(prev_cfg["traffic_udp_port"])
+            )
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS,
+                str(prev_cfg["traffic_flush_interval_seconds"]),
+            )
+            with contextlib.suppress(OSError):
+                await sync_traffic_listener(self.app)
+            return Result(success=False, message=f"UDP 监听绑定失败: {exc!s}")
+
+        return Result(success=True, message="流量 UDP 监听与刷盘配置已保存并生效")
+
     async def update_ops_config(self, payload: OpsConfigUpdateDto) -> Result:
         """校验并保存定时任务调度与运维策略配置，同时热更新调度器。
 
@@ -901,6 +973,9 @@ class SettingsServices:
         server_type: str,
         url: str,
         api_key: str,
+        enable_traffic: bool = False,
+        enable_traffic_alert: bool = True,
+        traffic_quota_bytes: int = 0,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
@@ -919,6 +994,9 @@ class SettingsServices:
                 url,
                 api_key,
                 priority=0,
+                enable_traffic=enable_traffic,
+                enable_traffic_alert=enable_traffic_alert,
+                traffic_quota_bytes=traffic_quota_bytes,
                 qb_username=qb_username,
                 qb_torrent_limit=qb_torrent_limit,
                 qb_server_id=qb_server_id,
@@ -952,6 +1030,7 @@ class SettingsServices:
                 await new_client.login()
                 self.qb_clients[instance.id] = new_client
 
+            invalidate_traffic_server_cache(self.app)
             return Result(
                 True,
                 TelegramMessage.render_markdown(
@@ -989,4 +1068,5 @@ class SettingsServices:
                 await qb_client.close()
 
         await self.server_repo.delete(server_id)
+        invalidate_traffic_server_cache(self.app)
         return Result(True, "服务器已删除")

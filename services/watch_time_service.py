@@ -258,7 +258,7 @@ def _clean_str(value: str | None) -> str | None:
     return stripped or None
 
 
-def _expand_media_id_candidates(raw_media_id: str) -> list[str]:
+def expand_media_id_candidates(raw_media_id: str) -> list[str]:
     """扩展媒体用户 ID 匹配候选集，兼容 Jellyfin 带连字符与无连字符 UUID 写法"""
     cleaned = raw_media_id.strip()
     candidates = [cleaned]
@@ -764,7 +764,7 @@ class WatchTimeService:
         Returns:
             匹配的 ``MediaUser``；未绑定则返回 ``None``。
         """
-        candidates = _expand_media_id_candidates(media_user_id)
+        candidates = expand_media_id_candidates(media_user_id)
         stmt = (
             select(MediaUser)
             .where(

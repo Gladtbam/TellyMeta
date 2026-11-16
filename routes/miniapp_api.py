@@ -240,6 +240,11 @@ def _build_user_info_dto(
                     item.get("watch_time_renewal_status_text")
                     or "当前服务器未开放保活续期"
                 ),
+                enable_traffic=bool(item.get("enable_traffic", False)),
+                cycle_traffic_bytes=int(item.get("cycle_traffic_bytes", 0)),
+                total_traffic_bytes=int(item.get("total_traffic_bytes", 0)),
+                traffic_quota_bytes=int(item.get("traffic_quota_bytes", 0)),
+                traffic_remaining_bytes=item.get("traffic_remaining_bytes"),
             )
             for item in media_accounts_data
         ],

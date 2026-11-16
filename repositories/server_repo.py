@@ -22,11 +22,14 @@ class ServerRepository:
         url: str,
         api_key: str,
         priority: int = 0,
+        enable_traffic: bool = False,
+        enable_traffic_alert: bool = True,
+        traffic_quota_bytes: int = 0,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
     ) -> ServerInstance:
-        """添加服务器"""
+        """添加服务器并持久化基础与流量配额配置"""
         token = secrets.token_urlsafe(32)
         instance = ServerInstance(
             name=name,
@@ -35,6 +38,9 @@ class ServerRepository:
             api_key=api_key,
             priority=priority,
             webhook_token=token,
+            enable_traffic=enable_traffic,
+            enable_traffic_alert=enable_traffic_alert,
+            traffic_quota_bytes=max(0, int(traffic_quota_bytes)),
             qb_username=qb_username,
             qb_torrent_limit=qb_torrent_limit,
             qb_server_id=qb_server_id,

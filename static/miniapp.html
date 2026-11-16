@@ -482,6 +482,12 @@
                         </div>
                         <div class="item">
                             <div class="item-content">
+                                <span class="item-subtitle">流量用量（下次重置: ${formatResetDate(acc.next_reset_at)}）</span>
+                                <span class="item-subtitle" style="font-size:12px">${formatTrafficQuotaSummary(acc)}</span>
+                            </div>
+                        </div>
+                        <div class="item">
+                            <div class="item-content">
                                 <span class="item-subtitle">自动保活</span>
                                 <span class="item-subtitle" style="font-size:12px">${formatAutoRenewHint(acc)}</span>
                             </div>

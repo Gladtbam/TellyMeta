@@ -1,9 +1,17 @@
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import BotConfiguration
+
+
+class TrafficConfigDict(TypedDict):
+    """流量 UDP 监听与刷盘参数配置类型字典"""
+
+    traffic_udp_host: str
+    traffic_udp_port: int
+    traffic_flush_interval_seconds: int
 
 
 class ConfigRepository:
@@ -98,6 +106,12 @@ class ConfigRepository:
     )
     KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS = "watch_time:disconnect_grace_seconds"
 
+    # 流量统计、UDP 接收与刷盘配置键
+    KEY_ENABLE_TRAFFIC = "traffic:enable"
+    KEY_TRAFFIC_UDP_HOST = "traffic:udp_host"
+    KEY_TRAFFIC_UDP_PORT = "traffic:udp_port"
+    KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS = "traffic:flush_interval_seconds"
+
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
         """解析 MKV 排除关键词列表（支持逗号或换行分隔）"""
@@ -183,6 +197,10 @@ class ConfigRepository:
             cls.KEY_WATCH_TIME_DAILY_CAP_SECONDS: "43200",
             cls.KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS: "30",
             cls.KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS: "45",
+            cls.KEY_ENABLE_TRAFFIC: "false",
+            cls.KEY_TRAFFIC_UDP_HOST: "0.0.0.0",
+            cls.KEY_TRAFFIC_UDP_PORT: "5140",
+            cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS: "10",
         }
 
         new_items = []
@@ -709,3 +727,72 @@ class ConfigRepository:
             if val is not None:
                 source[key] = val
         return self._build_watch_time_config(source)
+
+    @classmethod
+    def _build_traffic_config(cls, source: dict[str, str]) -> TrafficConfigDict:
+        """从配置键值字典解析 Nginx 流量 UDP 监听地址、端口与内存刷盘周期参数
+
+        Args:
+            source: 包含流量监听与刷盘配置键的字典。
+
+        Returns:
+            经过端口上下界保底与类型转换后的 ``TrafficConfigDict``。
+        """
+        raw_host = (source.get(cls.KEY_TRAFFIC_UDP_HOST) or "").strip()
+        udp_host = raw_host or "0.0.0.0"
+        udp_port = cls._parse_int(source.get(cls.KEY_TRAFFIC_UDP_PORT), 5140, 1)
+        # UDP 端口号有效范围为 1..65535，越界时回退默认端口 5140
+        if udp_port > 65535:
+            udp_port = 5140
+        flush_interval = cls._parse_int(
+            source.get(cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS), 10, 1
+        )
+        return {
+            "traffic_udp_host": udp_host,
+            "traffic_udp_port": udp_port,
+            "traffic_flush_interval_seconds": flush_interval,
+        }
+
+    @classmethod
+    def get_traffic_config_from_cache(cls) -> TrafficConfigDict:
+        """同步读取内存缓存中的流量 UDP 监听与刷盘参数
+
+        Returns:
+            包含当前缓存流量监听参数的 ``TrafficConfigDict``。
+        """
+        return cls._build_traffic_config(cls.cache)
+
+    @classmethod
+    def is_traffic_enabled_from_cache(cls) -> bool:
+        """同步读取全局流量采集总开关状态（默认关闭以确保未配置 Nginx 时安全降级）
+
+        Returns:
+            全局流量总开关开启返回 ``True``，否则返回 ``False``。
+        """
+        return cls.cache.get(cls.KEY_ENABLE_TRAFFIC, "false") == "true"
+
+    async def is_traffic_enabled(self) -> bool:
+        """异步读取全局流量采集总开关状态
+
+        Returns:
+            全局流量总开关开启返回 ``True``，否则返回 ``False``。
+        """
+        return await self.get_settings(self.KEY_ENABLE_TRAFFIC, "false") == "true"
+
+    async def get_traffic_config(self) -> TrafficConfigDict:
+        """读取数据库/缓存中的流量 UDP 监听与刷盘周期配置
+
+        Returns:
+            经规范化与默认值兜底后的 ``TrafficConfigDict``。
+        """
+        keys = (
+            self.KEY_TRAFFIC_UDP_HOST,
+            self.KEY_TRAFFIC_UDP_PORT,
+            self.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS,
+        )
+        source: dict[str, str] = {}
+        for key in keys:
+            val = await self.get_settings(key)
+            if val is not None:
+                source[key] = val
+        return self._build_traffic_config(source)

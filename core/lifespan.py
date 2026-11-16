@@ -40,6 +40,7 @@ from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.score_service import MessageTrackingState
 from services.settings_service import SettingsServices
+from services.traffic_service import sync_traffic_listener
 from services.watch_time_service import recover_active_emby_heartbeats
 from workers.mkv_worker import mkv_merge_task
 
@@ -203,9 +204,19 @@ async def lifespan(app: FastAPI):
     # 若重启前存在未收尾的 Emby 活跃播放会话，恢复其内存心跳并由对账逻辑兜底结算
     await recover_active_emby_heartbeats(app)
 
+    # 根据全局流量总开关按需绑定 Nginx UDP 日志监听并启动周期刷盘协程
+    try:
+        await sync_traffic_listener(app)
+    except OSError as exc:
+        logger.error("启动 Nginx 流量 UDP 监听失败（已降级跳过）: {}", exc)
+
     yield
 
     logger.info("关闭应用程序生命周期上下文")
+
+    traffic_service = getattr(app.state, "traffic_service", None)
+    if traffic_service is not None:
+        await traffic_service.stop_listener()
 
     if app.state.mkv_worker:
         app.state.mkv_worker.cancel()

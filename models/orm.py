@@ -145,6 +145,16 @@ class ServerInstance(Base):
     watch_time_renewal_threshold_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
     )
+    # 服务器级流量采集、超流告警与月基础流量配额（字节，0 表示不限）
+    enable_traffic: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    enable_traffic_alert: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    traffic_quota_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -204,6 +214,19 @@ class MediaUser(Base):
     )
     # 用户可控自动保活开关（默认关闭，仅手动开启且时长达标时触发）
     auto_renew: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # 本周期基础流量消耗与历史总流量消耗（字节），以及本周期 80%/100% 告警单次去重标记
+    cycle_traffic_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    total_traffic_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    traffic_alert_80_sent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    traffic_alert_100_sent: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
 

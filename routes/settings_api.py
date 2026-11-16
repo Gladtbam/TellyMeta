@@ -35,12 +35,14 @@ from models.schemas import (
     SystemConfigResponse,
     ToggleResponse,
     TopicsResponse,
+    TrafficConfigUpdateDto,
     WatchTimeConfigUpdateDto,
 )
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from services.account_service import AccountService
 from services.settings_service import SettingsServices
+from services.traffic_service import invalidate_traffic_server_cache
 from workers.nfo_worker import (
     rebuild_radarr_metadata_task,
     rebuild_sonarr_metadata_task,
@@ -75,6 +77,7 @@ SYSTEM_KEY_MAP = {
     "enable_mkv_process": ConfigRepository.KEY_ENABLE_MKV_PROCESS,
     "enable_llm_translate": ConfigRepository.KEY_ENABLE_LLM_TRANSLATE,
     "enable_watch_time": ConfigRepository.KEY_ENABLE_WATCH_TIME,
+    "enable_traffic": ConfigRepository.KEY_ENABLE_TRAFFIC,
     **{
         field: db_key
         for field, (db_key, _) in ConfigRepository.POINTS_SUB_SWITCHES.items()
@@ -114,6 +117,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
     policy_cfg = await repo.get_policy_config()
     ops_cfg = await repo.get_ops_config()
     watch_time_cfg = await repo.get_watch_time_config()
+    traffic_cfg = await repo.get_traffic_config()
     return {
         "enable_points": await repo.get_settings(
             ConfigRepository.KEY_ENABLE_POINTS, "true"
@@ -132,6 +136,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         )
         == "true",
         "enable_watch_time": await repo.is_watch_time_enabled(),
+        "enable_traffic": await repo.is_traffic_enabled(),
         "mkvtoolnix_available": _is_mkvtoolnix_available(request.app),
         "mkv_exclude_keywords": await repo.get_settings(
             ConfigRepository.KEY_MKV_EXCLUDE_KEYWORDS, ""
@@ -153,6 +158,7 @@ async def get_system_config(request: Request, session: AsyncSession = Depends(ge
         **policy_cfg,
         **ops_cfg,
         **watch_time_cfg,
+        **traffic_cfg,
     }
 
 
@@ -218,6 +224,28 @@ async def update_watch_time_config_endpoint(
     return {
         "success": True,
         "key": "watch_time_config",
+        "message": result.message,
+    }
+
+
+@router.post(
+    "/system/traffic",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=ToggleResponse,
+)
+async def update_traffic_config_endpoint(
+    request: Request,
+    payload: TrafficConfigUpdateDto,
+    session: AsyncSession = Depends(get_db),
+):
+    """更新 Nginx 流量 UDP 监听地址、端口与内存聚合刷盘间隔配置"""
+    service = SettingsServices(request.app, session)
+    result = await service.update_traffic_config(payload)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    return {
+        "success": True,
+        "key": "traffic_config",
         "message": result.message,
     }
 
@@ -441,6 +469,9 @@ async def create_server(
         data.server_type,
         data.url,
         data.api_key,
+        enable_traffic=data.enable_traffic,
+        enable_traffic_alert=data.enable_traffic_alert,
+        traffic_quota_bytes=data.traffic_quota_bytes,
         qb_username=data.qb_username,
         qb_torrent_limit=data.qb_torrent_limit,
         qb_server_id=data.qb_server_id,
@@ -511,6 +542,12 @@ async def update_server(
         update_dict["watch_time_renewal_threshold_seconds"] = (
             data.watch_time_renewal_threshold_seconds
         )
+    if data.enable_traffic is not None:
+        update_dict["enable_traffic"] = data.enable_traffic
+    if data.enable_traffic_alert is not None:
+        update_dict["enable_traffic_alert"] = data.enable_traffic_alert
+    if data.traffic_quota_bytes is not None:
+        update_dict["traffic_quota_bytes"] = data.traffic_quota_bytes
     if data.qb_username is not None:
         update_dict["qb_username"] = data.qb_username.strip() or None
     if data.qb_torrent_limit is not None:
@@ -569,6 +606,7 @@ async def update_server(
     # 执行基础信息更新与重载（仅在连接或鉴权等客户端相关字段变更时重载客户端，避免开关切换触发不必要重连）
     if update_dict:
         await repo.update_basic_info(server_id, **update_dict)
+        invalidate_traffic_server_cache(request.app)
         if data.enable_watch_time is False:
             # 关闭单台服务器播放时长采集时立即停用活跃会话并清理 Emby 心跳（保留历史记录）
             await service.handle_watch_time_disabled(server_id)

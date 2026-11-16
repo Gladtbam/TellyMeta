@@ -107,6 +107,9 @@ class ServerDto(BaseModel):
     enable_watch_time: bool = True
     enable_watch_time_renewal: bool = False
     watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
+    enable_traffic: bool = False
+    enable_traffic_alert: bool = True
+    traffic_quota_bytes: int = Field(default=0, ge=0)
     tos: str | None = None
 
     # 高级配置
@@ -126,6 +129,9 @@ class ServerCreate(BaseModel):
     server_type: str
     url: str
     api_key: str
+    enable_traffic: bool = False
+    enable_traffic_alert: bool = True
+    traffic_quota_bytes: int = Field(default=0, ge=0)
     qb_username: str | None = None
     qb_torrent_limit: int = 43200
     qb_server_id: int | None = None
@@ -160,6 +166,9 @@ class ServerUpdate(BaseModel):
     enable_watch_time: bool | None = None
     enable_watch_time_renewal: bool | None = None
     watch_time_renewal_threshold_seconds: int | None = Field(default=None, ge=0)
+    enable_traffic: bool | None = None
+    enable_traffic_alert: bool | None = None
+    traffic_quota_bytes: int | None = Field(default=None, ge=0)
     tos: str | None = None
 
     # 高级配置
@@ -235,6 +244,10 @@ class SystemConfigResponse(BaseModel):
     watch_time_daily_cap_seconds: int = 43200
     watch_time_heartbeat_interval_seconds: int = 30
     watch_time_disconnect_grace_seconds: int = 45
+    enable_traffic: bool = False
+    traffic_udp_host: str = "0.0.0.0"
+    traffic_udp_port: int = 5140
+    traffic_flush_interval_seconds: int = 10
 
 
 class OpsConfigUpdateDto(BaseModel):
@@ -290,6 +303,14 @@ class WatchTimeConfigUpdateDto(BaseModel):
     daily_cap_seconds: int = 43200
     heartbeat_interval_seconds: int = 30
     disconnect_grace_seconds: int = 45
+
+
+class TrafficConfigUpdateDto(BaseModel):
+    """Nginx 流量 UDP 监听与内存聚合刷盘参数更新请求"""
+
+    udp_host: str = "0.0.0.0"
+    udp_port: int = 5140
+    flush_interval_seconds: int = 10
 
 
 class MkvConfigUpdateDto(BaseModel):
@@ -418,6 +439,11 @@ class MediaAccountDto(BaseModel):
     watch_time_renewal_open: bool = False
     watch_time_renewal_eligible: bool = False
     watch_time_renewal_status_text: str = "当前服务器未开放保活续期"
+    enable_traffic: bool = False
+    cycle_traffic_bytes: int = 0
+    total_traffic_bytes: int = 0
+    traffic_quota_bytes: int = 0
+    traffic_remaining_bytes: int | None = None
 
 
 class AvailableServerDto(BaseModel):

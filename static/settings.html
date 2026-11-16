@@ -442,6 +442,16 @@
                             type="checkbox" id="toggle-watch-time"
                             onchange="toggleSystem('enable_watch_time')"><span class="slider"></span></label>
                 </div>
+                <div class="item">
+                    <div class="item-content" style="cursor:pointer;" onclick="openModal('traffic-modal')">
+                        <span class="item-title">Nginx 流量采集与配额</span>
+                        <span class="item-subtitle" id="traffic-summary">加载中...</span>
+                    </div>
+                    <span class="config-link" id="traffic-config-btn" onclick="openModal('traffic-modal')">配置 ›</span>
+                    <label class="switch"><input
+                            type="checkbox" id="toggle-traffic"
+                            onchange="toggleSystem('enable_traffic')"><span class="slider"></span></label>
+                </div>
                 <div class="item" style="cursor:pointer;" onclick="openModal('metadata-modal')">
                     <div class="item-content">
                         <span class="item-title">元数据 API (TMDB / TVDB)</span>
@@ -769,6 +779,34 @@
         </div>
     </div>
 
+    <!-- Nginx 流量 UDP 监听与刷盘参数弹窗 -->
+    <div class="modal-overlay" id="traffic-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>Nginx 流量采集与 UDP 监听</span>
+                <span class="modal-close" onclick="closeModal('traffic-modal')">取消</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div class="form-group" style="margin-bottom:0">
+                    <label class="form-label">UDP 监听主机</label>
+                    <input type="text" id="traffic-udp-host" class="form-input" placeholder="0.0.0.0">
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">UDP 监听端口</label>
+                        <input type="number" min="1" max="65535" id="traffic-udp-port" class="form-input" placeholder="5140">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">内存刷盘间隔 (秒)</label>
+                        <input type="number" min="1" id="traffic-flush-interval" class="form-input" placeholder="10">
+                    </div>
+                </div>
+                <span class="item-subtitle">开启全局总开关后将绑定本地 UDP 端口接收 Nginx JSON syslog 报文；关闭时自动强制刷盘残余字节并释放监听。</span>
+                <button type="button" class="btn btn-primary" onclick="saveTrafficConfig()">保存流量配置</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 定时任务与运维策略弹窗 -->
     <div class="modal-overlay" id="ops-modal">
         <div class="modal">
@@ -1006,6 +1044,20 @@
                         <label class="form-label">保活门槛时长 (小时，0 表示未设定门槛)</label>
                         <input type="number" class="form-input" id="srv-watch-time-threshold-hours" min="0" step="any" placeholder="0">
                     </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>流量采集</span>
+                        <label class="switch"><input type="checkbox" id="srv-traffic"><span
+                                class="slider"></span></label>
+                    </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>超流通知 (80% / 100%)</span>
+                        <label class="switch"><input type="checkbox" id="srv-traffic-alert"><span
+                                class="slider"></span></label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">月基础流量配额 (GiB，0 表示不限)</label>
+                        <input type="number" class="form-input" id="srv-traffic-quota-gib" min="0" step="any" placeholder="0">
+                    </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
                     <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
@@ -1211,6 +1263,13 @@
                 document.getElementById('wt-heartbeat-interval').value = s.watch_time_heartbeat_interval_seconds ?? 30;
                 document.getElementById('wt-disconnect-grace').value = s.watch_time_disconnect_grace_seconds ?? 45;
                 updateWatchTimeVisibility(watchTimeEnabled);
+
+                const trafficEnabled = !!s.enable_traffic;
+                document.getElementById('toggle-traffic').checked = trafficEnabled;
+                document.getElementById('traffic-udp-host').value = s.traffic_udp_host || '0.0.0.0';
+                document.getElementById('traffic-udp-port').value = s.traffic_udp_port ?? 5140;
+                document.getElementById('traffic-flush-interval').value = s.traffic_flush_interval_seconds ?? 10;
+                updateTrafficVisibility(trafficEnabled);
 
                 document.getElementById('ops-ban-expired-day').value = s.schedule_ban_expired_day || '*';
                 document.getElementById('ops-ban-expired-time').value = s.schedule_ban_expired_time || '00:15';
@@ -1513,6 +1572,43 @@
             tg.showAlert('✅ ' + (res.message || '播放时长配置已保存'));
         }
 
+        /**
+         * 根据全局流量总开关状态同步流量设置按钮显隐与监听摘要文案。
+         * @param {boolean} enabled 当前全局流量开关布尔状态。
+         */
+        function updateTrafficVisibility(enabled) {
+            const btn = document.getElementById('traffic-config-btn');
+            if (btn) btn.style.display = enabled ? 'inline' : 'none';
+            const summary = document.getElementById('traffic-summary');
+            if (!summary) return;
+            const host = document.getElementById('traffic-udp-host').value.trim() || '0.0.0.0';
+            const port = document.getElementById('traffic-udp-port').value || 5140;
+            const flush = document.getElementById('traffic-flush-interval').value || 10;
+            if (!enabled) {
+                summary.innerText = `已关闭（历史流量已保留 · 预设 UDP ${host}:${port}）`;
+                return;
+            }
+            summary.innerText = `UDP ${host}:${port} · 刷盘 ${flush}s`;
+        }
+
+        /**
+         * 保存 Nginx 流量 UDP 监听地址、端口与内存刷盘间隔配置并热重载监听。
+         */
+        async function saveTrafficConfig() {
+            const host = document.getElementById('traffic-udp-host').value.trim() || '0.0.0.0';
+            const portRaw = parseInt(document.getElementById('traffic-udp-port').value.trim(), 10);
+            const flushRaw = parseInt(document.getElementById('traffic-flush-interval').value.trim(), 10);
+            const payload = {
+                udp_host: host,
+                udp_port: Number.isNaN(portRaw) ? 5140 : portRaw,
+                flush_interval_seconds: Number.isNaN(flushRaw) ? 10 : flushRaw
+            };
+            const res = await api('/system/traffic', 'POST', payload);
+            updateTrafficVisibility(document.getElementById('toggle-traffic').checked);
+            closeModal('traffic-modal');
+            tg.showAlert('✅ ' + (res.message || '流量配置已保存'));
+        }
+
         async function savePolicyConfig(modalId = 'policy-modal') {
             const parseIntOr = (id, def) => {
                 const raw = document.getElementById(id).value.trim();
@@ -1634,6 +1730,9 @@
             if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = true;
             if (document.getElementById('srv-watch-time-renewal')) document.getElementById('srv-watch-time-renewal').checked = false;
             if (document.getElementById('srv-watch-time-threshold-hours')) document.getElementById('srv-watch-time-threshold-hours').value = 0;
+            if (document.getElementById('srv-traffic')) document.getElementById('srv-traffic').checked = false;
+            if (document.getElementById('srv-traffic-alert')) document.getElementById('srv-traffic-alert').checked = true;
+            if (document.getElementById('srv-traffic-quota-gib')) document.getElementById('srv-traffic-quota-gib').value = 0;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
@@ -1723,6 +1822,12 @@
                 if (document.getElementById('srv-watch-time-threshold-hours')) {
                     const thresholdSecs = Number(s.watch_time_renewal_threshold_seconds || 0);
                     document.getElementById('srv-watch-time-threshold-hours').value = thresholdSecs > 0 ? Number((thresholdSecs / 3600).toFixed(4)) : 0;
+                }
+                if (document.getElementById('srv-traffic')) document.getElementById('srv-traffic').checked = Boolean(s.enable_traffic);
+                if (document.getElementById('srv-traffic-alert')) document.getElementById('srv-traffic-alert').checked = s.enable_traffic_alert !== false;
+                if (document.getElementById('srv-traffic-quota-gib')) {
+                    const quotaBytes = Number(s.traffic_quota_bytes || 0);
+                    document.getElementById('srv-traffic-quota-gib').value = quotaBytes > 0 ? Number((quotaBytes / 1073741824).toFixed(4)) : 0;
                 }
                 onRegModeChange();
             } else {
@@ -1916,6 +2021,10 @@
                 payload.enable_watch_time_renewal = document.getElementById('srv-watch-time-renewal').checked;
                 const thresholdHours = parseFloat(document.getElementById('srv-watch-time-threshold-hours').value);
                 payload.watch_time_renewal_threshold_seconds = Number.isFinite(thresholdHours) && thresholdHours > 0 ? Math.round(thresholdHours * 3600) : 0;
+                payload.enable_traffic = document.getElementById('srv-traffic').checked;
+                payload.enable_traffic_alert = document.getElementById('srv-traffic-alert').checked;
+                const quotaGib = parseFloat(document.getElementById('srv-traffic-quota-gib').value);
+                payload.traffic_quota_bytes = Number.isFinite(quotaGib) && quotaGib > 0 ? Math.round(quotaGib * 1073741824) : 0;
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
                 payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;
@@ -1996,7 +2105,8 @@
             enable_cleanup_inactive_users: 'toggle-cleanup',
             enable_mkv_process: 'toggle-mkv-process',
             enable_llm_translate: 'toggle-llm-translate',
-            enable_watch_time: 'toggle-watch-time'
+            enable_watch_time: 'toggle-watch-time',
+            enable_traffic: 'toggle-traffic'
         };
 
         /**
@@ -2018,6 +2128,8 @@
                 updateLlmConfigVisibility(enabled);
             } else if (key === 'enable_watch_time') {
                 updateWatchTimeVisibility(enabled);
+            } else if (key === 'enable_traffic') {
+                updateTrafficVisibility(enabled);
             }
         }
 
