@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import errors
@@ -31,6 +31,7 @@ from core.webapp_auth import (
 from models.orm import RegistrationMode
 from models.schemas import (
     AdminActionResponse,
+    AutoRenewToggleDto,
     AvailableServerDto,
     ChangeScoreDto,
     MediaAccountDto,
@@ -220,6 +221,25 @@ def _build_user_info_dto(
                 tos=item.get("tos"),
                 cycle_watch_time_seconds=int(item.get("cycle_watch_time_seconds", 0)),
                 total_watch_time_seconds=int(item.get("total_watch_time_seconds", 0)),
+                anchor_day=item.get("anchor_day"),
+                next_reset_at=item.get("next_reset_at"),
+                auto_renew=bool(item.get("auto_renew", False)),
+                enable_watch_time_renewal=bool(
+                    item.get("enable_watch_time_renewal", False)
+                ),
+                watch_time_renewal_threshold_seconds=int(
+                    item.get("watch_time_renewal_threshold_seconds", 0)
+                ),
+                watch_time_renewal_open=bool(
+                    item.get("watch_time_renewal_open", False)
+                ),
+                watch_time_renewal_eligible=bool(
+                    item.get("watch_time_renewal_eligible", False)
+                ),
+                watch_time_renewal_status_text=str(
+                    item.get("watch_time_renewal_status_text")
+                    or "当前服务器未开放保活续期"
+                ),
             )
             for item in media_accounts_data
         ],
@@ -583,6 +603,47 @@ async def renew_account(
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
+
+
+@router.post("/accounts/{server_id}/toggle_auto_renew", response_model=ToggleResponse)
+async def toggle_account_auto_renew(
+    request: Request,
+    server_id: int,
+    payload: AutoRenewToggleDto | None = Body(default=None),
+    user_id: int = Depends(require_owned_media_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """切换或设置指定媒体账户的自动保活开关
+
+    Args:
+        request: FastAPI 请求对象
+        server_id: 目标媒体服务器 ID
+        payload: 可选状态负载；为空时按当前状态取反
+        user_id: 已校验归属权的当前 Telegram 用户 ID
+        session: 异步数据库会话
+
+    Returns:
+        包含操作结果、最新 ``new_state`` 与提示消息的字典
+    """
+    service = AccountService(request.app, session)
+    result = await service.toggle_auto_renew(
+        user_id,
+        server_id,
+        enabled=payload.enabled if payload is not None else None,
+    )
+    if not result.success:
+        return {"success": False, "message": result.message}
+    new_state = (
+        bool(result.extra_data.get("auto_renew"))
+        if isinstance(result.extra_data, dict)
+        else None
+    )
+    return {
+        "success": True,
+        "key": "auto_renew",
+        "new_state": new_state,
+        "message": result.message,
+    }
 
 
 @router.post("/accounts/{server_id}/generate_code", response_model=ToggleResponse)

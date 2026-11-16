@@ -9,7 +9,7 @@ from core.billing_anchor import (
     calculate_registration_cycle,
     calculate_renewal_cycle,
 )
-from models.orm import MediaUser
+from models.orm import MediaUser, ServerInstance
 from repositories.config_repo import ConfigRepository
 
 
@@ -128,6 +128,34 @@ class MediaRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def find_auto_renew_candidates(
+        self, deadline: datetime
+    ) -> Sequence[MediaUser]:
+        """查找在临近到期截止时间前满足自动保活初步条件的媒体账号列表
+
+        Args:
+            deadline: 临近到期截止时间点（通常为 ``now + pre_expiry_window``）
+
+        Returns:
+            开启自动保活、未封禁、所属服务器启用保活且观看时长已达门槛的账号列表
+        """
+        stmt = (
+            select(MediaUser)
+            .join(ServerInstance, MediaUser.server_id == ServerInstance.id)
+            .where(
+                MediaUser.auto_renew.is_(True),
+                MediaUser.is_banned.is_(False),
+                MediaUser.expires_at <= deadline,
+                ServerInstance.is_enabled.is_(True),
+                ServerInstance.enable_watch_time_renewal.is_(True),
+                ServerInstance.watch_time_renewal_threshold_seconds > 0,
+                MediaUser.cycle_watch_time_seconds
+                >= ServerInstance.watch_time_renewal_threshold_seconds,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def mark_banned(
         self, media_user: MediaUser, delete_at: datetime | None = None
     ) -> MediaUser:
@@ -232,9 +260,13 @@ class MediaRepository:
         return len(users)
 
     async def extend_anchored_cycle(
-        self, media_user: MediaUser, months: int, *, now: datetime | None = None
+        self,
+        media_user: MediaUser,
+        months: int,
+        *,
+        now: datetime | None = None,
     ) -> MediaUser:
-        """按锚定自然月周期延长媒体账号有效期并同步更新解封状态
+        """按锚定自然月周期延长媒体账号有效期、清零本期保活时长并保留历史总时长
 
         Args:
             media_user: 需要续期的媒体账号对象
@@ -258,6 +290,24 @@ class MediaRepository:
         media_user.expires_at = cycle.expires_at
         media_user.is_banned = False  # 续期时自动解封
         media_user.delete_at = None  # 清除删除时间
+        # 仅重置本期保活计数与亚秒余数，绝不清除历史累计总时长 total_watch_time_seconds
+        media_user.cycle_watch_time_seconds = 0
+        media_user.watch_time_remainder_ms = 0
+        await self.session.commit()
+        await self.session.refresh(media_user)
+        return media_user
+
+    async def set_auto_renew(self, media_user: MediaUser, enabled: bool) -> MediaUser:
+        """持久化更新媒体账号的自动保活开关状态
+
+        Args:
+            media_user: 目标媒体账号对象
+            enabled: 目标开关状态
+
+        Returns:
+            刷新后的 ``MediaUser`` 对象
+        """
+        media_user.auto_renew = enabled
         await self.session.commit()
         await self.session.refresh(media_user)
         return media_user

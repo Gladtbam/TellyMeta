@@ -105,6 +105,8 @@ class ServerDto(BaseModel):
     allow_request: bool = True
     allow_nfo: bool = True
     enable_watch_time: bool = True
+    enable_watch_time_renewal: bool = False
+    watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
     tos: str | None = None
 
     # 高级配置
@@ -156,6 +158,8 @@ class ServerUpdate(BaseModel):
     allow_request: bool | None = None
     allow_nfo: bool | None = None
     enable_watch_time: bool | None = None
+    enable_watch_time_renewal: bool | None = None
+    watch_time_renewal_threshold_seconds: int | None = Field(default=None, ge=0)
     tos: str | None = None
 
     # 高级配置
@@ -383,6 +387,12 @@ class RequestSubmitDto(BaseModel):
 # --- User Models (用户相关) ---
 
 
+class AutoRenewToggleDto(BaseModel):
+    """媒体账号自动保活开关切换请求体"""
+
+    enabled: bool | None = None
+
+
 class MediaAccountDto(BaseModel):
     """媒体账户信息"""
 
@@ -400,6 +410,14 @@ class MediaAccountDto(BaseModel):
     tos: str | None = None
     cycle_watch_time_seconds: int = 0
     total_watch_time_seconds: int = 0
+    anchor_day: int | None = None
+    next_reset_at: datetime | None = None
+    auto_renew: bool = False
+    enable_watch_time_renewal: bool = False
+    watch_time_renewal_threshold_seconds: int = 0
+    watch_time_renewal_open: bool = False
+    watch_time_renewal_eligible: bool = False
+    watch_time_renewal_status_text: str = "当前服务器未开放保活续期"
 
 
 class AvailableServerDto(BaseModel):

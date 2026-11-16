@@ -111,13 +111,16 @@ def apply_ops_schedules(scheduler, ops_cfg: dict[str, Any] | None = None) -> Non
 @scheduled_job("cron", hour=0, minute=15, id="ban_expired_users", replace_existing=True)
 async def ban_expired_users() -> None:
     """封禁过期用户
-    检查所有用户的订阅状态，先在媒体服务器上禁用已过期账户，再标记本地封禁状态并设置7天宽限期后的删除时间。
+    检查所有用户的订阅状态，封禁前先复核是否已开启自动保活且时长达标；
+    未达标或未开启时，先在媒体服务器上禁用已过期账户，再标记本地封禁状态并设置宽限期后的删除时间。
     """
     from main import app  # 避免循环导入
+    from services.account_service import AccountService
 
     async with async_session() as session:
         try:
             media_repo = MediaRepository(session)
+            account_service = AccountService(app, session)
             media_clients: dict[int, MediaService] = app.state.media_clients
 
             # 兼容历史数据：为已封禁但未设置删除时间的过期账户补全删除时间
@@ -129,6 +132,27 @@ async def ban_expired_users() -> None:
                 return
 
             for user in users:
+                # 到期封禁前复核自动保活资格：仅用户手动开启且时长达标时免分抢救，绝不自动扣分
+                auto_outcome = await account_service.try_auto_renew_account(
+                    user.id, user.server_id
+                )
+                if auto_outcome.renewed:
+                    logger.info(
+                        "到期封禁前复核触发自动保活成功，跳过封禁: {} (ID: {}) Server: {}",
+                        user.id,
+                        user.media_id,
+                        user.server_id,
+                    )
+                    continue
+                if auto_outcome.retryable_error:
+                    logger.warning(
+                        "自动保活账号外部核验临时失败，本次跳过封禁等待重试: {} (ID: {}) Server: {}",
+                        user.id,
+                        user.media_id,
+                        user.server_id,
+                    )
+                    continue
+
                 client = media_clients.get(user.server_id)
                 if not client:
                     logger.warning(
@@ -175,6 +199,32 @@ async def ban_expired_users() -> None:
                 await media_repo.mark_banned(user)
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("封禁过期用户时出错: {}", e)
+            await session.rollback()
+        finally:
+            await session.close()
+
+
+# 在 Issue 09 引入每账号单次 add_job（pre_expiry_check/expiry_ban）前，该周期扫描承担临近到期窗口自动保活，
+# 并在 Issue 09 上线后降级保留为停机恢复兜底巡检（遵循 ADR-0003）
+@scheduled_job(
+    "interval",
+    minutes=30,
+    id="auto_renew_watch_time_users",
+    replace_existing=True,
+)
+async def auto_renew_watch_time_users() -> None:
+    """周期检查临近到期窗口内开启自动保活且时长达标的媒体账号并自动免分续期"""
+    from main import app  # 避免循环导入
+    from services.account_service import AccountService
+
+    async with async_session() as session:
+        try:
+            account_service = AccountService(app, session)
+            renewed_count = await account_service.process_auto_renewals()
+            if renewed_count > 0:
+                logger.info("本次自动保活续期完成账号数: {}", renewed_count)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.exception("执行自动保活续期任务时出错: {}", e)
             await session.rollback()
         finally:
             await session.close()

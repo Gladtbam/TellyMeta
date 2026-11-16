@@ -4,7 +4,9 @@ import json
 import re
 import socket
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any, Literal
 from urllib.parse import urlparse
 
@@ -16,7 +18,7 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
 from core.telegram_message import TelegramMessage
-from models.orm import RegistrationMode, ServerInstance, ServerType
+from models.orm import MediaUser, RegistrationMode, ServerInstance, ServerType
 from models.protocols import User
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import ConfigRepository
@@ -24,9 +26,29 @@ from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
+from services.notification_service import NotificationService
 from services.user_service import Result
+from services.watch_time_service import evaluate_watch_time_renewal, get_account_lock
 
 settings = get_settings()
+
+
+class _RenewChannel(StrEnum):
+    """续期通道枚举，区分激活码续期、时长保活免积分续期与积分扣费续期"""
+
+    CODE = "code"
+    WATCH_TIME = "watch_time"
+    SCORE = "score"
+
+
+@dataclass(slots=True, frozen=True)
+class AutoRenewOutcome:
+    """自动保活单账号执行结果，显式区分成功与外部临时可重试故障"""
+
+    renewed: bool
+    message: str
+    retryable_error: bool = False
+    expires_at: datetime | None = None
 
 
 class AccountService:
@@ -514,93 +536,382 @@ class AccountService:
     async def renew(self, user_id: int, server_id: int, use_score: bool) -> Result:
         """按服务器有效自然月数与锚定自然月周期续期指定媒体账号
 
-        副作用：必要时先恢复外部媒体服务器启用状态、按需扣减用户积分并提交本地周期更新。
+        优先判定时长保活资格（启用时长保活且本周期有效播放时长达标时免积分续期，
+        不受积分续期开关或余额限制）；未达标或未开启保活时，回退至积分续期
+        （全额扣分、纯门槛不打折）或激活码续期通道。
+        副作用：必要时恢复外部媒体服务器启用状态、按需扣减用户积分、延长锚定周期并清零本期保活时长。
 
         Args:
             user_id: Telegram 用户 ID
             server_id: 目标媒体服务器 ID
-            use_score: 是否使用用户积分续期（兑换续期激活码场景传 ``False``）
+            use_score: 保留既有方法签名以兼容全部调用方；``True`` 表示自助续期
+                （优先走时长保活，不满足时回退积分扣费），``False`` 表示激活码兑换续期
 
         Returns:
             续期操作结果 ``Result``，携带成功状态与通知文案
         """
-        media_user = await self.media_repo.get_by_id(user_id, server_id)
-        if media_user is None:
-            return Result(False, "您尚未注册，请先注册后再续期。")
+        async with get_account_lock(user_id, server_id):
+            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            if media_user is None:
+                return Result(False, "您尚未注册，请先注册后再续期。")
 
-        server = await self.server_repo.get_by_id(server_id)
-        if not server:
-            return Result(False, "服务器配置已失效。")
+            server = await self.server_repo.get_by_id(server_id)
+            if not server:
+                return Result(False, "服务器配置已失效。")
 
-        # 仅积分续期受总开关与“积分续期”子开关控制；激活码续期（use_score=False）不受影响
-        if use_score:
-            allowed, reason = await self.config_repo.check_points_feature(
-                ConfigRepository.KEY_ENABLE_POINTS_RENEW
-            )
-            if not allowed:
-                return Result(False, reason)
+            wt_status = evaluate_watch_time_renewal(server, media_user)
+            if not use_score:
+                renew_channel = _RenewChannel.CODE
+            elif wt_status.is_eligible:
+                # 达标保活续期完全独立于积分开关与余额，且遵循 ADR-0001 绝不向钱包发分
+                renew_channel = _RenewChannel.WATCH_TIME
+            else:
+                renew_channel = _RenewChannel.SCORE
+                allowed, reason = await self.config_repo.check_points_feature(
+                    ConfigRepository.KEY_ENABLE_POINTS_RENEW
+                )
+                if not allowed:
+                    return Result(False, reason)
 
-        client = self.media_clients.get(server_id)
-        if not client:
-            return Result(
-                False,
-                TelegramMessage.render_markdown(t"客户端未运行: {server.name}"),
-            )
-
-        try:
-            media_info = await client.get_user_info(media_user.media_id)
-        except HTTPError:
-            return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
-        if not isinstance(media_info, User):
-            return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
-
-        now = self._now()
-        policy_cfg = await self.config_repo.get_policy_config()
-        renew_advance_days = policy_cfg["account_renew_advance_days"]
-        if media_user.expires_at > now + timedelta(days=renew_advance_days):
-            return Result(
-                False,
-                f"续期失败，您的账户有效期还有 {(media_user.expires_at - now).days} 天，无需续期。",
-            )
-
-        renew_score = 0
-        if use_score:
-            user = await self.telegram_repo.get_or_create(user_id)
-            renew_score = int(await self.telegram_repo.get_renew_score())
-            if user.score < renew_score:
+            client = self.media_clients.get(server_id)
+            if not client:
                 return Result(
-                    False, f"续期失败，您的积分不足，续期需要 {renew_score} 积分。"
+                    False,
+                    TelegramMessage.render_markdown(t"客户端未运行: {server.name}"),
                 )
 
-        # 宽限期内续期时，先在媒体服务器上恢复账户，再清除待删除状态与扣减积分
+            media_info, _ = await self._fetch_external_user(client, media_user.media_id)
+            if media_info is None:
+                return Result(False, "续期失败，无法获取您的账户信息，请联系管理员。")
+
+            now = self._now()
+            policy_cfg = await self.config_repo.get_policy_config()
+            renew_advance_days = policy_cfg["account_renew_advance_days"]
+            if media_user.expires_at > now + timedelta(days=renew_advance_days):
+                return Result(
+                    False,
+                    f"续期失败，您的账户有效期还有 {(media_user.expires_at - now).days} 天，无需续期。",
+                )
+
+            renew_score = 0
+            if renew_channel == _RenewChannel.SCORE:
+                user = await self.telegram_repo.get_or_create(user_id)
+                # 纯门槛不打折：未达时长门槛时按完整续期积分计费
+                renew_score = int(await self.telegram_repo.get_renew_score())
+                if user.score < renew_score:
+                    return Result(
+                        False, f"续期失败，您的积分不足，续期需要 {renew_score} 积分。"
+                    )
+
+            # 宽限期内续期时，先在媒体服务器上恢复账户，再扣减积分并更新本地周期与清零本期保活时长
+            restore_err = await self._restore_external_if_disabled(
+                client=client,
+                media_info=media_info,
+                media_user=media_user,
+                user_id=user_id,
+                server_id=server_id,
+                action_label="续期",
+            )
+            if restore_err is not None:
+                return Result(False, "续期失败，恢复媒体账号状态时出错，请联系管理员。")
+
+            if renew_channel == _RenewChannel.SCORE and renew_score > 0:
+                await self.telegram_repo.update_score(user_id, -renew_score)
+
+            media_user = await self.media_repo.extend_anchored_cycle(
+                media_user,
+                self._get_server_expiry_months(server),
+                now=now,
+            )
+
+            expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+            if renew_channel == _RenewChannel.WATCH_TIME:
+                return Result(
+                    True,
+                    TelegramMessage.render_markdown(
+                        t"续期成功（时长保活免积分），您的 {server.name} 媒体账号已延长至 {expires_str}。"
+                    ),
+                )
+
+            return Result(
+                True,
+                TelegramMessage.render_markdown(
+                    t"续期成功，您的 {server.name} 媒体账号已延长至 {expires_str}。"
+                ),
+            )
+
+    async def _fetch_external_user(
+        self, client: MediaService, media_id: str
+    ) -> tuple[User | None, bool]:
+        """向媒体服务器查询外部用户信息并返回 ``(User | None, is_retryable)``
+
+        Args:
+            client: 媒体服务器客户端适配器
+            media_id: 外部媒体账号 ID
+
+        Returns:
+            查询成功返回 ``(User, False)``；失败时返回 ``(None, is_retryable)``，
+            其中 HTTP 404 表示外部账号已不存在（不可重试），其余通信异常为可重试故障
+        """
+        try:
+            media_info = await client.get_user_info(media_id)
+        except HTTPStatusError as e:
+            # 外部返回 404 说明账号已不存在，无需阻止后续过期封禁的 404 本地清理流程
+            return None, e.response.status_code != 404
+        except HTTPError:
+            return None, True
+        if not isinstance(media_info, User):
+            return None, True
+        return media_info, False
+
+    async def _restore_external_if_disabled(
+        self,
+        *,
+        client: MediaService,
+        media_info: User,
+        media_user: MediaUser,
+        user_id: int,
+        server_id: int,
+        action_label: str,
+    ) -> Exception | None:
+        """若外部或本地媒体账号处于禁用状态，先在媒体服务器上恢复启用
+
+        Args:
+            client: 媒体服务器客户端适配器
+            media_info: 已获取的外部媒体用户信息
+            media_user: 本地媒体账号 ORM 对象
+            user_id: Telegram 用户 ID
+            server_id: 媒体服务器 ID
+            action_label: 日志场景前缀（如 ``续期`` / ``自动保活``）
+
+        Returns:
+            恢复成功或无需恢复时返回 ``None``；外部调用失败时返回异常对象供调用方中止或重试
+        """
         is_policy_disabled = bool(media_info.Policy and media_info.Policy.IsDisabled)
-        if is_policy_disabled or media_user.is_banned:
-            try:
-                await client.ban_or_unban(media_user.media_id, is_ban=False)
-            except (HTTPError, ValueError) as e:
-                logger.error(
-                    "续期恢复媒体账户失败: user_id={}, server_id={}, err={}",
+        if not (is_policy_disabled or media_user.is_banned):
+            return None
+        try:
+            await client.ban_or_unban(media_user.media_id, is_ban=False)
+            return None
+        except (HTTPError, ValueError) as e:
+            logger.error(
+                "{}恢复媒体账号失败: user_id={}, server_id={}, err={}",
+                action_label,
+                user_id,
+                server_id,
+                e,
+            )
+            return e
+
+    async def _send_auto_renew_dm(
+        self,
+        *,
+        user_id: int,
+        server_name: str,
+        media_name: str,
+        expires_at: datetime,
+    ) -> bool:
+        """向用户发送自动保活成功 Bot 私聊通知
+
+        副作用：尝试通过 Telegram 发送私聊消息；发送失败仅记录告警日志，绝不回滚已完成续期。
+
+        Args:
+            user_id: Telegram 用户 ID
+            server_name: 媒体服务器名称
+            media_name: 媒体账号用户名
+            expires_at: 续期后的新到期时间
+
+        Returns:
+            私聊通知送达成功返回 ``True``，未配置客户端或发送失败返回 ``False``
+        """
+        if getattr(self.app.state, "telethon_client", None) is None:
+            return False
+        exp_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
+        msg = TelegramMessage.render_html(t"""\
+            ✅ <b>自动保活续期成功</b>
+
+            服务器: <code>{server_name}</code>
+            媒体账号: <code>{media_name}</code>
+            消耗积分: <code>0</code>（有效播放时长已达标）
+            有效期延长至: <code>{exp_str}</code>
+        """)
+        try:
+            ok = await NotificationService(self.app).send_text_to_user(user_id, msg)
+            if not ok:
+                logger.warning(
+                    "自动保活私聊通知送达失败（不影响已完成续期）: user_id={}, server={}",
                     user_id,
-                    server_id,
-                    e,
+                    server_name,
                 )
-                return Result(False, "续期失败，恢复媒体账户状态时出错，请联系管理员。")
+            return ok
+        except (HTTPError, ValueError, TypeError, OSError) as e:
+            logger.warning(
+                "自动保活私聊通知发送异常（不影响已完成续期）: user_id={}, server={}, err={}",
+                user_id,
+                server_name,
+                e,
+            )
+            return False
 
-        if use_score:
-            await self.telegram_repo.update_score(user_id, -renew_score)
+    async def try_auto_renew_account(
+        self,
+        user_id: int,
+        server_id: int,
+        *,
+        pre_expiry_window: timedelta = timedelta(hours=24),
+    ) -> AutoRenewOutcome:
+        """尝试对单个媒体账号执行临近到期窗口下的时长自动保活
 
-        media_user = await self.media_repo.extend_anchored_cycle(
-            media_user,
-            self._get_server_expiry_months(server),
-            now=now,
-        )
+        仅当用户已手动开启 ``auto_renew``、未封禁、对应服务器开启保活且门槛大于 0、
+        当前周期有效播放时长达标且已进入临近到期窗口时免积分续期并推送私聊通知（绝不扣减或增发积分）。
 
-        return Result(
-            True,
-            TelegramMessage.render_markdown(
-                t"续期成功，您的 {server.name} 账户已延长至 {media_user.expires_at.strftime('%Y-%m-{} %H:%M:{}')}。"
-            ),
-        )
+        Args:
+            user_id: Telegram 用户 ID
+            server_id: 目标媒体服务器 ID
+            pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）
+
+        Returns:
+            结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
+        """
+        async with get_account_lock(user_id, server_id):
+            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            if media_user is None:
+                return AutoRenewOutcome(False, "媒体账号不存在")
+            if media_user.is_banned:
+                return AutoRenewOutcome(False, "媒体账号已处于过期封禁状态")
+            if not media_user.auto_renew:
+                return AutoRenewOutcome(False, "用户未开启自动保活")
+
+            server = await self.server_repo.get_by_id(server_id)
+            if not server or not server.is_enabled:
+                return AutoRenewOutcome(False, "服务器不存在或已停用")
+
+            wt_status = evaluate_watch_time_renewal(server, media_user)
+            if not wt_status.is_eligible:
+                return AutoRenewOutcome(False, wt_status.status_text)
+
+            now = self._now()
+            if media_user.expires_at > now + pre_expiry_window:
+                return AutoRenewOutcome(False, "尚未进入临近到期自动保活窗口")
+
+            client = self.media_clients.get(server_id)
+            if not client:
+                return AutoRenewOutcome(
+                    False, f"客户端未运行: {server.name}", retryable_error=True
+                )
+
+            media_info, is_retryable = await self._fetch_external_user(
+                client, media_user.media_id
+            )
+            if media_info is None:
+                return AutoRenewOutcome(
+                    False,
+                    "自动保活获取外部媒体账号失败",
+                    retryable_error=is_retryable,
+                )
+
+            restore_err = await self._restore_external_if_disabled(
+                client=client,
+                media_info=media_info,
+                media_user=media_user,
+                user_id=user_id,
+                server_id=server_id,
+                action_label="自动保活",
+            )
+            if restore_err is not None:
+                return AutoRenewOutcome(
+                    False, "自动保活恢复外部媒体账号状态失败", retryable_error=True
+                )
+
+            media_user = await self.media_repo.extend_anchored_cycle(
+                media_user,
+                self._get_server_expiry_months(server),
+                now=now,
+            )
+
+            await self._send_auto_renew_dm(
+                user_id=user_id,
+                server_name=server.name,
+                media_name=media_user.media_name,
+                expires_at=media_user.expires_at,
+            )
+
+            exp_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(
+                "自动保活续期成功: user_id={}, server_id={}, expires_at={}",
+                user_id,
+                server_id,
+                exp_str,
+            )
+            return AutoRenewOutcome(
+                True,
+                f"已通过有效播放时长自动保活续期至 {exp_str}",
+                expires_at=media_user.expires_at,
+            )
+
+    async def process_auto_renewals(
+        self,
+        *,
+        pre_expiry_window: timedelta = timedelta(hours=24),
+    ) -> int:
+        """批量扫描临近到期窗口内符合自动保活条件的媒体账号并执行免积分续期
+
+        Args:
+            pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）
+
+        Returns:
+            本次成功完成自动保活续期的账号数量
+        """
+        deadline = self._now() + pre_expiry_window
+        candidates = await self.media_repo.find_auto_renew_candidates(deadline)
+        target_pairs = [(mu.id, mu.server_id) for mu in candidates]
+        renewed_count = 0
+        for uid, sid in target_pairs:
+            outcome = await self.try_auto_renew_account(
+                uid, sid, pre_expiry_window=pre_expiry_window
+            )
+            if outcome.renewed:
+                renewed_count += 1
+        return renewed_count
+
+    async def toggle_auto_renew(
+        self, user_id: int, server_id: int, enabled: bool | None = None
+    ) -> Result:
+        """切换或设置指定媒体账号的用户可控自动保活开关
+
+        Args:
+            user_id: Telegram 用户 ID
+            server_id: 目标媒体服务器 ID
+            enabled: 指定目标状态；传入 ``None`` 时在当前布尔值上取反
+
+        Returns:
+            包含最新 ``auto_renew`` 状态与提示文案的 ``Result`` 对象
+        """
+        async with get_account_lock(user_id, server_id):
+            media_user = await self.media_repo.get_by_id(user_id, server_id)
+            if media_user is None:
+                return Result(False, "您尚未注册，请先注册后再设置自动保活。")
+
+            server = await self.server_repo.get_by_id(server_id)
+            if not server:
+                return Result(False, "服务器配置已失效。")
+
+            target_state = (not media_user.auto_renew) if enabled is None else enabled
+            media_user = await self.media_repo.set_auto_renew(media_user, target_state)
+
+            wt_status = evaluate_watch_time_renewal(server, media_user)
+            if target_state:
+                if wt_status.is_open:
+                    msg = "已开启自动保活：临近到期且本周期有效播放时长达标时将自动免积分续期。"
+                else:
+                    msg = (
+                        "已开启自动保活（提示：当前服务器未开放保活续期，"
+                        "仅在服务器开启保活并设定大于 0 的门槛后生效）。"
+                    )
+            else:
+                msg = "已关闭自动保活。"
+
+            return Result(True, msg, extra_data={"auto_renew": target_state})
 
     async def redeem_code(
         self, user_id: int, username: str | Literal[False] | None, code_str: str

@@ -19,6 +19,7 @@ from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.media_service import MediaService
+from services.watch_time_service import evaluate_watch_time_renewal
 
 settings = get_settings()
 
@@ -258,7 +259,14 @@ class UserService:
         return Result(success=True, message=msg)
 
     async def get_user_info_data(self, user_id: int) -> dict:
-        """获取结构化用户信息"""
+        """获取指定 Telegram 用户的结构化个人与媒体账号概览数据
+
+        Args:
+            user_id: Telegram 用户 ID
+
+        Returns:
+            包含 Telegram 用户记录、各媒体账号明细（含保活进度与自动保活状态）及可注册服务器的字典
+        """
         user = await self.telegram_repo.get_or_create(user_id)
         renew_score = int(await self.telegram_repo.get_renew_score())
 
@@ -274,6 +282,7 @@ class UserService:
                 total_watch = int(mu.total_watch_time_seconds or 0)
                 cycle_watch_time_seconds += cycle_watch
                 total_watch_time_seconds += total_watch
+                wt_status = evaluate_watch_time_renewal(server, mu)
                 media_accounts.append(
                     {
                         "media_user": mu,
@@ -298,6 +307,16 @@ class UserService:
                         "tos": server.tos if server else None,
                         "cycle_watch_time_seconds": cycle_watch,
                         "total_watch_time_seconds": total_watch,
+                        "anchor_day": mu.anchor_day,
+                        "next_reset_at": mu.next_reset_at,
+                        "auto_renew": bool(mu.auto_renew),
+                        "enable_watch_time_renewal": (
+                            bool(server.enable_watch_time_renewal) if server else False
+                        ),
+                        "watch_time_renewal_threshold_seconds": wt_status.threshold_seconds,
+                        "watch_time_renewal_open": wt_status.is_open,
+                        "watch_time_renewal_eligible": wt_status.is_eligible,
+                        "watch_time_renewal_status_text": wt_status.status_text,
                     }
                 )
 

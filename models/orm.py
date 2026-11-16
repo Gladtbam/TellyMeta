@@ -137,6 +137,14 @@ class ServerInstance(Base):
     enable_watch_time: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )
+    # 服务器级时长保活续期开关（默认关闭，实现观测与保活解耦灰度上线）
+    enable_watch_time_renewal: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # 时长保活续期门槛秒数（0 表示未设定门槛）
+    watch_time_renewal_threshold_seconds: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -193,6 +201,10 @@ class MediaUser(Base):
     )
     watch_time_remainder_ms: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
+    )
+    # 用户可控自动保活开关（默认关闭，仅手动开启且时长达标时触发）
+    auto_renew: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
 
     telegram_user: Mapped[TelegramUser] = relationship(back_populates="media_users")

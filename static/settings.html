@@ -997,6 +997,15 @@
                         <label class="switch"><input type="checkbox" id="srv-watch-time"><span
                                 class="slider"></span></label>
                     </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>时长保活续期</span>
+                        <label class="switch"><input type="checkbox" id="srv-watch-time-renewal"><span
+                                class="slider"></span></label>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">保活门槛时长 (小时，0 表示未设定门槛)</label>
+                        <input type="number" class="form-input" id="srv-watch-time-threshold-hours" min="0" step="any" placeholder="0">
+                    </div>
                     <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
                     <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
@@ -1620,6 +1629,8 @@
             if (document.getElementById('srv-reg-months')) document.getElementById('srv-reg-months').value = 1;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
             if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = true;
+            if (document.getElementById('srv-watch-time-renewal')) document.getElementById('srv-watch-time-renewal').checked = false;
+            if (document.getElementById('srv-watch-time-threshold-hours')) document.getElementById('srv-watch-time-threshold-hours').value = 0;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
@@ -1701,6 +1712,11 @@
                 if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
                 if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = s.allow_request !== false;
                 if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = s.enable_watch_time !== false;
+                if (document.getElementById('srv-watch-time-renewal')) document.getElementById('srv-watch-time-renewal').checked = Boolean(s.enable_watch_time_renewal);
+                if (document.getElementById('srv-watch-time-threshold-hours')) {
+                    const thresholdSecs = Number(s.watch_time_renewal_threshold_seconds || 0);
+                    document.getElementById('srv-watch-time-threshold-hours').value = thresholdSecs > 0 ? Number((thresholdSecs / 3600).toFixed(4)) : 0;
+                }
                 onRegModeChange();
             } else {
                 renderPathMappings(s.path_mappings || []);
@@ -1886,6 +1902,9 @@
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
                 payload.allow_request = document.getElementById('srv-request').checked;
                 payload.enable_watch_time = document.getElementById('srv-watch-time').checked;
+                payload.enable_watch_time_renewal = document.getElementById('srv-watch-time-renewal').checked;
+                const thresholdHours = parseFloat(document.getElementById('srv-watch-time-threshold-hours').value);
+                payload.watch_time_renewal_threshold_seconds = Number.isFinite(thresholdHours) && thresholdHours > 0 ? Math.round(thresholdHours * 3600) : 0;
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
                 payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;

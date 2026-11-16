@@ -86,6 +86,91 @@ class WatchTimePolicy:
 
 
 @dataclass(slots=True, frozen=True)
+class WatchTimeRenewalStatus:
+    """媒体账号当前周期时长保活续期资格评估快照"""
+
+    is_open: bool
+    is_eligible: bool
+    threshold_seconds: int
+    current_seconds: int
+    status_text: str
+
+
+def format_watch_duration_cn(seconds: int) -> str:
+    """将有效播放时长秒数格式化为可读中文时长字符串
+
+    Args:
+        seconds: 时长秒数
+
+    Returns:
+        形如 ``10 小时``、``1 小时 30 分钟`` 或 ``45 秒`` 的中文描述
+    """
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours} 小时 {minutes} 分钟" if minutes > 0 else f"{hours} 小时"
+    if minutes > 0:
+        return f"{minutes} 分钟"
+    return f"{secs} 秒"
+
+
+def evaluate_watch_time_renewal(
+    server: ServerInstance | None, media_user: MediaUser
+) -> WatchTimeRenewalStatus:
+    """统一评估指定媒体账号当前周期的时长保活续期开放状态与达标资格
+
+    Args:
+        server: 所属服务器实例（不存在时按未开放保活处理）
+        media_user: 目标媒体账号实例
+
+    Returns:
+        包含开放状态、达标标志、门槛/当前秒数及展示文案的 ``WatchTimeRenewalStatus``
+    """
+    threshold_seconds = (
+        max(0, int(server.watch_time_renewal_threshold_seconds or 0))
+        if server is not None
+        else 0
+    )
+    current_seconds = max(0, int(media_user.cycle_watch_time_seconds or 0))
+    is_open = bool(
+        server is not None
+        and server.enable_watch_time_renewal
+        and threshold_seconds > 0
+    )
+    if not is_open:
+        return WatchTimeRenewalStatus(
+            is_open=False,
+            is_eligible=False,
+            threshold_seconds=threshold_seconds,
+            current_seconds=current_seconds,
+            status_text="当前服务器未开放保活续期",
+        )
+
+    is_eligible = current_seconds >= threshold_seconds
+    remaining_seconds = max(0, threshold_seconds - current_seconds)
+    if is_eligible:
+        status_text = (
+            f"已达标（{format_watch_duration_cn(current_seconds)} / "
+            f"{format_watch_duration_cn(threshold_seconds)}，可免积分续期）"
+        )
+    else:
+        status_text = (
+            f"未达标（{format_watch_duration_cn(current_seconds)} / "
+            f"{format_watch_duration_cn(threshold_seconds)}，还差 "
+            f"{format_watch_duration_cn(remaining_seconds)}）"
+        )
+
+    return WatchTimeRenewalStatus(
+        is_open=True,
+        is_eligible=is_eligible,
+        threshold_seconds=threshold_seconds,
+        current_seconds=current_seconds,
+        status_text=status_text,
+    )
+
+
+@dataclass(slots=True, frozen=True)
 class NormalizedPlaybackEvent:
     """跨媒体服务器平台统一抽象后的播放事件"""
 
@@ -110,8 +195,8 @@ def emby_heartbeat_job_id(server_id: int) -> str:
     return f"{EMBY_HEARTBEAT_JOB_PREFIX}{server_id}"
 
 
-def _get_account_lock(user_id: int, server_id: int) -> asyncio.Lock:
-    """获取同一媒体账号的串行化异步锁
+def get_account_lock(user_id: int, server_id: int) -> asyncio.Lock:
+    """获取同一媒体账号的串行化异步锁（供跨服务并发更新账号状态时共用）
 
     Args:
         user_id: Telegram 用户 ID。
@@ -1156,7 +1241,7 @@ class WatchTimeService:
             await self.session.commit()
 
         for row_id, row_user_id in candidates:
-            lock = _get_account_lock(row_user_id, server_id)
+            lock = get_account_lock(row_user_id, server_id)
             async with lock:
                 row = (
                     await self.session.execute(
@@ -1237,7 +1322,7 @@ class WatchTimeService:
                 commit=commit,
             )
 
-        lock = _get_account_lock(user_id, server_id)
+        lock = get_account_lock(user_id, server_id)
         async with lock:
             fresh_server = await self._reload_server(server_id)
             if (
@@ -1773,7 +1858,7 @@ class WatchTimeService:
 
         total_added = 0
         for sess_id, user_id in candidates:
-            lock = _get_account_lock(user_id, server_id)
+            lock = get_account_lock(user_id, server_id)
             async with lock:
                 fresh_server = await self._reload_server(server_id)
                 if (
@@ -1864,7 +1949,7 @@ class WatchTimeService:
 
         closed_count = 0
         for uid, sid in account_pairs:
-            lock = _get_account_lock(uid, sid)
+            lock = get_account_lock(uid, sid)
             async with lock:
                 rows_stmt = (
                     select(MediaPlaybackSession)

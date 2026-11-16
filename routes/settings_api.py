@@ -505,6 +505,12 @@ async def update_server(
         update_dict["allow_nfo"] = data.allow_nfo
     if data.enable_watch_time is not None:
         update_dict["enable_watch_time"] = data.enable_watch_time
+    if data.enable_watch_time_renewal is not None:
+        update_dict["enable_watch_time_renewal"] = data.enable_watch_time_renewal
+    if data.watch_time_renewal_threshold_seconds is not None:
+        update_dict["watch_time_renewal_threshold_seconds"] = (
+            data.watch_time_renewal_threshold_seconds
+        )
     if data.qb_username is not None:
         update_dict["qb_username"] = data.qb_username.strip() or None
     if data.qb_torrent_limit is not None:

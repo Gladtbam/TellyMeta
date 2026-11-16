@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="watch_time.css">
     <script src="watch_time.js"></script>
     <title>账户管理</title>
     <style>
@@ -231,6 +232,7 @@
         }
 
         let accountData = null;
+        let userRenewScore = null;
 
         async function fetchAccountInfo() {
             try {
@@ -244,6 +246,7 @@
                 }
 
                 const data = await res.json();
+                userRenewScore = data.renew_score;
                 const account = data.media_accounts.find(acc => acc.server_id == serverId);
 
                 if (!account) {
@@ -264,6 +267,11 @@
                 const d = new Date(acc.expires_at);
                 expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
             }
+
+            const progressText = formatWatchTimeRenewalProgress(acc);
+            const autoRenewHint = acc.watch_time_renewal_open
+                ? '到期前若本周期有效时长达标将自动免费续期'
+                : '当前服务器未开放保活续期（开启后暂不生效）';
 
             document.getElementById('account-info').innerHTML = `
                 <div class="item">
@@ -288,6 +296,22 @@
                 <div class="item">
                     <div class="item-content"><span class="item-subtitle">累计观看时长</span></div>
                     <span class="item-value" style="font-size:15px">${formatWatchDuration(acc.total_watch_time_seconds)}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-subtitle">保活门槛进度</span>
+                        <span class="item-subtitle" style="font-size:12px;">${progressText}</span>
+                    </div>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title" style="font-size:15px;">自动保活</span>
+                        <span class="item-subtitle" style="font-size:12px;">${autoRenewHint}</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="auto-renew-toggle" ${acc.auto_renew ? 'checked' : ''} onchange="toggleAutoRenew(this)">
+                        <span class="slider"></span>
+                    </label>
                 </div>
             `;
 
@@ -321,8 +345,27 @@
             }
         }
 
+        /**
+         * 切换当前媒体账号的自动保活开关并同步本地缓存状态。
+         * @param {HTMLInputElement} checkbox 触发切换的复选框元素。
+         */
+        async function toggleAutoRenew(checkbox) {
+            await handleAutoRenewToggle(serverId, tg, checkbox, (finalState) => {
+                if (accountData) {
+                    accountData.auto_renew = finalState;
+                }
+            });
+        }
+
         async function renewAccount() {
-            if (!confirm("确认要续期当前账户吗？（将消耗积分）")) return;
+            let confirmMsg = "确认要续期当前媒体账号吗？（将消耗积分）";
+            if (accountData && accountData.watch_time_renewal_eligible) {
+                confirmMsg = "当前周期有效播放时长已达标，本次续期将通过时长保活免消耗积分，确认续期吗？";
+            } else if (accountData) {
+                const costHint = userRenewScore !== null ? `将消耗 ${userRenewScore} 积分` : "将按规则消耗积分";
+                confirmMsg = `确认要续期当前媒体账号吗？（${costHint}）`;
+            }
+            if (!confirm(confirmMsg)) return;
 
             try {
                 tg.MainButton.text = "正在续期...";
