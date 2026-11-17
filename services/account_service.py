@@ -14,10 +14,12 @@ from fastapi import FastAPI
 from httpx2 import AsyncClient, HTTPError, HTTPStatusError, RequestError
 from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.config import get_settings
 from core.telegram_message import TelegramMessage
+from models.nginx import format_traffic_bytes
 from models.orm import MediaUser, RegistrationMode, ServerInstance, ServerType
 from models.protocols import User
 from repositories.code_repo import CodeRepository
@@ -25,12 +27,43 @@ from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
-from services.media_service import MediaService
+from services.media_service import (
+    MediaService,
+    compute_external_disabled_state,
+    sync_external_disabled_state,
+)
 from services.notification_service import NotificationService
 from services.user_service import Result
 from services.watch_time_service import evaluate_watch_time_renewal, get_account_lock
 
 settings = get_settings()
+
+
+def format_traffic_release_summary(
+    released_count: int, failed_count: int, *, as_suffix: bool = False
+) -> str:
+    """统一格式化关闭流量或超流自动停用开关后的账号释放结果说明
+
+    Args:
+        released_count: 本次成功清除或释放的超流停用账号数量。
+        failed_count: 外部媒体服务器解封失败、待后续重试的账号数量。
+        as_suffix: 为 ``True`` 时返回拼接在单服更新消息后的后缀；为 ``False`` 时返回完整全局提示。
+
+    Returns:
+        格式化后的提示文本；当没有任何超流停用账号受影响时返回空字符串。
+    """
+    if failed_count > 0:
+        if as_suffix:
+            return f"；已处理 {released_count} 个超流停用账号，另有 {failed_count} 个外部解封失败，请重试"
+        return (
+            f"已关闭全局流量开关并释放 {released_count} 个超流停用账号，"
+            f"另有 {failed_count} 个账号外部解封失败，请检查媒体服务器后重试。"
+        )
+    if released_count > 0:
+        if as_suffix:
+            return f"；已自动释放 {released_count} 个超流停用账号（历史流量已保留）"
+        return f"已关闭全局流量开关，并安全释放 {released_count} 个超流停用账号（历史流量已永久保留）。"
+    return ""
 
 
 class _RenewChannel(StrEnum):
@@ -624,18 +657,23 @@ class AccountService:
             )
 
             expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+            suspension_note = (
+                "（提示：账号当前仍处于超流停用状态，兑换流量包或等待账期重置后可恢复播放）"
+                if media_user.is_traffic_suspended
+                else ""
+            )
             if renew_channel == _RenewChannel.WATCH_TIME:
                 return Result(
                     True,
                     TelegramMessage.render_markdown(
-                        t"续期成功（时长保活免积分），您的 {server.name} 媒体账号已延长至 {expires_str}。"
+                        t"续期成功（时长保活免积分），您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
                     ),
                 )
 
             return Result(
                 True,
                 TelegramMessage.render_markdown(
-                    t"续期成功，您的 {server.name} 媒体账号已延长至 {expires_str}。"
+                    t"续期成功，您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
                 ),
             )
 
@@ -671,7 +709,10 @@ class AccountService:
         media_user: MediaUser,
         action_label: str,
     ) -> Exception | None:
-        """若外部或本地媒体账号处于禁用状态，先在媒体服务器上恢复启用
+        """在续期解除过期封禁时，按组合状态（过期封禁 OR 超流停用）同步外部禁用态
+
+        仅当解除过期封禁后账号不同时处于超流停用时才在媒体服真正解封；
+        若仍处于超流停用，则绝不误放并在外部未禁用时补齐禁用状态。
 
         Args:
             client: 媒体服务器客户端适配器
@@ -683,20 +724,27 @@ class AccountService:
             恢复成功或无需恢复时返回 ``None``；外部调用失败时返回异常对象供调用方中止或重试
         """
         is_policy_disabled = bool(media_info.Policy and media_info.Policy.IsDisabled)
-        if not (is_policy_disabled or media_user.is_banned):
+        target_disabled = compute_external_disabled_state(
+            is_banned=False,
+            is_traffic_suspended=bool(media_user.is_traffic_suspended),
+        )
+        if not target_disabled and not (is_policy_disabled or media_user.is_banned):
             return None
-        try:
-            await client.ban_or_unban(media_user.media_id, is_ban=False)
+        if target_disabled and is_policy_disabled:
             return None
-        except (HTTPError, ValueError) as e:
-            logger.error(
-                "{}恢复媒体账号失败: user_id={}, server_id={}, err={}",
-                action_label,
-                media_user.id,
-                media_user.server_id,
-                e,
-            )
-            return e
+        outcome = await sync_external_disabled_state(
+            client,
+            media_id=media_user.media_id,
+            target_disabled=target_disabled,
+            log_context=(
+                f"{action_label}维持超流停用外部禁用态"
+                if target_disabled
+                else f"{action_label}恢复媒体账号"
+            ),
+            user_id=media_user.id,
+            server_id=media_user.server_id,
+        )
+        return outcome.error
 
     async def _send_auto_renew_dm(
         self,
@@ -908,6 +956,225 @@ class AccountService:
                 msg = "已关闭自动保活。"
 
             return Result(True, msg, extra_data={"auto_renew": target_state})
+
+    async def _send_traffic_unsuspended_dm(
+        self,
+        *,
+        user_id: int,
+        server_name: str,
+        media_name: str,
+        added_bytes: int,
+        total_pack_bytes: int,
+    ) -> bool:
+        """向因超流停用且兑换流量包后立即恢复播放权限的用户发送 Bot 私聊通知
+
+        副作用：尝试发送 Telegram 私聊提醒；发送失败仅记录日志，不影响已完成兑换。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_name: 媒体服务器名称。
+            media_name: 媒体账号用户名。
+            added_bytes: 本次兑换增加的流量包字节数。
+            total_pack_bytes: 兑换后的流量包总余额字节数。
+
+        Returns:
+            私聊送达成功返回 ``True``，未配置客户端或送达失败返回 ``False``。
+        """
+        if getattr(self.app.state, "telethon_client", None) is None:
+            return False
+        added_str = format_traffic_bytes(added_bytes)
+        total_pack_str = format_traffic_bytes(total_pack_bytes)
+        msg = TelegramMessage.render_html(t"""\
+            ✅ <b>流量包兑换成功，超流停用已解除</b>
+
+            服务器: <code>{server_name}</code>
+            媒体账号: <code>{media_name}</code>
+            本次增加: <code>+{added_str}</code>
+            流量包余额: <code>{total_pack_str}</code>
+            您的播放权限已立即恢复，祝观影愉快！
+        """)
+        try:
+            return await NotificationService(self.app).send_text_to_user(user_id, msg)
+        except (HTTPError, ValueError, TypeError, OSError) as exc:
+            logger.warning(
+                "发送流量包解封私聊通知失败（不影响兑换结果）: user_id={}, server={}, err={}",
+                user_id,
+                server_name,
+                exc,
+            )
+            return False
+
+    async def redeem_traffic_pack(
+        self, user_id: int, server_id: int, quantity: int = 1
+    ) -> Result:
+        """消耗 Telegram 积分兑换指定媒体账号的持久化流量包，并在安全时自动解除超流停用
+
+        受全局积分总开关与“积分兑换流量包”子开关共同控制；仅当账号当时仅因超流停用
+        且未处于过期封禁（``is_banned == False``）时才解除外部媒体服务器禁用并通知用户。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+            quantity: 兑换份数（必须 >= 1）。
+
+        Returns:
+            包含成功状态、提示文案及 ``extra_data`` 账务明细的 ``Result`` 对象。
+        """
+        if quantity < 1:
+            return Result(False, "兑换数量至少为 1 份。")
+
+        allowed, reason = await self.config_repo.check_points_feature(
+            ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
+        )
+        if not allowed:
+            return Result(False, reason)
+
+        traffic_cfg = await self.config_repo.get_traffic_config()
+        unit_cost = max(1, int(traffic_cfg["traffic_pack_cost_score"]))
+        unit_bytes = max(1, int(traffic_cfg["traffic_pack_unit_bytes"]))
+        total_cost = unit_cost * quantity
+        added_bytes = unit_bytes * quantity
+
+        should_unban_external = False
+        server_name = ""
+        media_name = ""
+        new_pack_bytes = 0
+        remaining_score = 0
+        still_banned = False
+
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            if media_user is None:
+                return Result(False, "您尚未注册该服务器，请先注册后再兑换流量包。")
+
+            server = await self.server_repo.get_by_id(server_id, fresh=True)
+            if not server or not server.is_enabled:
+                return Result(False, "服务器不存在或已停用，暂不支持兑换流量包。")
+
+            server_name = server.name
+            media_name = media_user.media_name
+
+            deducted = await self.telegram_repo.deduct_score_if_sufficient(
+                user_id, total_cost
+            )
+            if not deducted:
+                return Result(
+                    False,
+                    f"兑换失败，您的积分不足，兑换需要 {total_cost} 积分。",
+                )
+
+            try:
+                fresh_mu = await self.media_repo.get_by_id(
+                    user_id, server_id, fresh=True
+                )
+                if fresh_mu is None:
+                    await self.telegram_repo.update_score(user_id, total_cost)
+                    return Result(False, "媒体账号状态已变更，已退回积分。")
+
+                was_suspended = bool(fresh_mu.is_traffic_suspended)
+                still_banned = bool(fresh_mu.is_banned)
+                target_disabled = compute_external_disabled_state(
+                    is_banned=still_banned,
+                    is_traffic_suspended=False,
+                )
+                should_unban_external = was_suspended and not target_disabled
+
+                if should_unban_external:
+                    outcome = await sync_external_disabled_state(
+                        self.media_clients.get(server_id),
+                        media_id=fresh_mu.media_id,
+                        target_disabled=False,
+                        log_context="兑换流量包解除超流停用",
+                        user_id=user_id,
+                        server_id=server_id,
+                    )
+                    if not outcome.ok:
+                        await self.telegram_repo.update_score(user_id, total_cost)
+                        if outcome.missing_client:
+                            return Result(
+                                False,
+                                "兑换失败，服务器客户端未连接，积分已退回，请稍后重试。",
+                            )
+                        return Result(
+                            False,
+                            "兑换失败，恢复媒体账号状态时出错，积分已退回，请联系管理员。",
+                        )
+
+                fresh_mu.traffic_pack_bytes = (
+                    max(0, int(fresh_mu.traffic_pack_bytes or 0)) + added_bytes
+                )
+                fresh_mu.is_traffic_suspended = False
+
+                quota = max(0, int(server.traffic_quota_bytes or 0))
+                if quota > 0:
+                    base_remaining = max(
+                        0, quota - int(fresh_mu.cycle_traffic_bytes or 0)
+                    )
+                    new_pack = int(fresh_mu.traffic_pack_bytes)
+                    new_total_remaining = base_remaining + new_pack
+                    if new_total_remaining > 0:
+                        fresh_mu.traffic_alert_100_sent = False
+                    if new_total_remaining * 5 > (quota + new_pack):
+                        fresh_mu.traffic_alert_80_sent = False
+
+                await self.media_repo.session.commit()
+                await self.media_repo.session.refresh(fresh_mu)
+                new_pack_bytes = int(fresh_mu.traffic_pack_bytes)
+                tg_user = await self.telegram_repo.get_or_create(user_id)
+                remaining_score = int(tg_user.score)
+            except (SQLAlchemyError, ValueError, RuntimeError) as exc:
+                logger.exception(
+                    "兑换流量包提交数据库失败，退回已扣积分: user_id={}, server_id={}, err={}",
+                    user_id,
+                    server_id,
+                    exc,
+                )
+                await self.media_repo.session.rollback()
+                await self.telegram_repo.update_score(user_id, total_cost)
+                return Result(
+                    False, "兑换过程中发生数据库异常，积分已退回，请稍后重试。"
+                )
+
+        if should_unban_external:
+            await self._send_traffic_unsuspended_dm(
+                user_id=user_id,
+                server_name=server_name,
+                media_name=media_name,
+                added_bytes=added_bytes,
+                total_pack_bytes=new_pack_bytes,
+            )
+
+        added_str = format_traffic_bytes(added_bytes)
+        total_pack_str = format_traffic_bytes(new_pack_bytes)
+        if should_unban_external:
+            msg = (
+                f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
+                f"当前流量包余额 {total_pack_str}，已为您立即解除超流停用。"
+            )
+        elif still_banned:
+            msg = (
+                f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
+                f"当前流量包余额 {total_pack_str}。由于账号仍处于过期封禁状态，续期后将恢复播放。"
+            )
+        else:
+            msg = (
+                f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
+                f"当前流量包余额 {total_pack_str}。"
+            )
+
+        return Result(
+            True,
+            msg,
+            extra_data={
+                "added_bytes": added_bytes,
+                "cost_score": total_cost,
+                "remaining_score": remaining_score,
+                "traffic_pack_bytes": new_pack_bytes,
+                "is_traffic_suspended": False,
+                "unsuspended": should_unban_external,
+            },
+        )
 
     async def redeem_code(
         self, user_id: int, username: str | Literal[False] | None, code_str: str
@@ -1281,3 +1548,71 @@ class AccountService:
 
         await self.media_repo.delete(media_user)
         return Result(True, "账户已成功删除。")
+
+    async def release_traffic_suspensions(
+        self, server_id: int | None = None
+    ) -> tuple[int, int]:
+        """关闭流量采集或超流自动停用开关时，安全批量释放超流停用账号
+
+        永久保留历史流量与流量包余额；仅当账号不同时处于过期封禁（``is_banned``）时
+        才在外部媒体服务器解除禁用，绝不误放过期封禁账号。
+
+        Args:
+            server_id: 目标服务器 ID；为 ``None`` 时扫描全部服务器（用于全局开关关闭）。
+
+        Returns:
+            ``(成功清除或释放账号数, 外部解封失败待重试账号数)`` 二元组。
+        """
+        suspended = await self.media_repo.find_traffic_suspended(server_id)
+        if not suspended:
+            return 0, 0
+
+        target_pairs = [(int(mu.id), int(mu.server_id)) for mu in suspended]
+        # 释放只读扫描快照，保证进入账号锁后能读取最新并发提交状态
+        await self.media_repo.end_clean_read_tx()
+
+        released_count = 0
+        failed_count = 0
+        global_traffic_on = ConfigRepository.is_traffic_enabled_from_cache()
+
+        for uid, sid in target_pairs:
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                if fresh_mu is None or not fresh_mu.is_traffic_suspended:
+                    continue
+
+                fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                # 防止锁等待期间管理员已重新同时开启了全局及单服自动停用开关
+                if (
+                    global_traffic_on
+                    and fresh_srv is not None
+                    and fresh_srv.is_enabled
+                    and fresh_srv.enable_traffic
+                    and fresh_srv.enable_traffic_auto_suspend
+                ):
+                    continue
+
+                keep_disabled = compute_external_disabled_state(
+                    is_banned=bool(fresh_mu.is_banned),
+                    is_traffic_suspended=False,
+                )
+                if not keep_disabled:
+                    outcome = await sync_external_disabled_state(
+                        self.media_clients.get(sid),
+                        media_id=fresh_mu.media_id,
+                        target_disabled=False,
+                        treat_404_as_synced=True,
+                        log_context="释放超流停用外部解封",
+                        user_id=uid,
+                        server_id=sid,
+                    )
+                    if not outcome.ok:
+                        failed_count += 1
+                        continue
+
+                fresh_mu.is_traffic_suspended = False
+                await self.media_repo.session.commit()
+                released_count += 1
+
+        return released_count, failed_count

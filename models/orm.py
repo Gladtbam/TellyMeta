@@ -145,12 +145,15 @@ class ServerInstance(Base):
     watch_time_renewal_threshold_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
     )
-    # 服务器级流量采集、超流告警与月基础流量配额（字节，0 表示不限）
+    # 服务器级流量采集、超流告警、超流自动停用与月基础流量配额（字节，0 表示不限）
     enable_traffic: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
     enable_traffic_alert: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    enable_traffic_auto_suspend: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
     )
     traffic_quota_bytes: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default=text("0"), nullable=False
@@ -216,8 +219,11 @@ class MediaUser(Base):
     auto_renew: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
-    # 本周期基础流量消耗与历史总流量消耗（字节），以及本周期 80%/100% 告警单次去重标记
+    # 本周期基础流量消耗、跨周期流量包余额与历史总流量消耗（字节），以及本周期 80%/100% 告警单次去重与超流停用隔离标记
     cycle_traffic_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    traffic_pack_bytes: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default=text("0"), nullable=False
     )
     total_traffic_bytes: Mapped[int] = mapped_column(
@@ -227,6 +233,10 @@ class MediaUser(Base):
         Boolean, default=False, server_default=text("false"), nullable=False
     )
     traffic_alert_100_sent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # 独立于过期封禁 is_banned 与 delete_at 的超流停用标记（遵循 ADR-0002）
+    is_traffic_suspended: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
 

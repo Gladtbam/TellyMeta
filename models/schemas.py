@@ -2,6 +2,12 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from repositories.config_repo import (
+    DEFAULT_TRAFFIC_PACK_COST_SCORE,
+    DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+    DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
+)
+
 # --- 子模型 ---
 
 
@@ -109,6 +115,7 @@ class ServerDto(BaseModel):
     watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
     enable_traffic: bool = False
     enable_traffic_alert: bool = True
+    enable_traffic_auto_suspend: bool = False
     traffic_quota_bytes: int = Field(default=0, ge=0)
     tos: str | None = None
 
@@ -131,6 +138,7 @@ class ServerCreate(BaseModel):
     api_key: str
     enable_traffic: bool = False
     enable_traffic_alert: bool = True
+    enable_traffic_auto_suspend: bool = False
     traffic_quota_bytes: int = Field(default=0, ge=0)
     qb_username: str | None = None
     qb_torrent_limit: int = 43200
@@ -168,6 +176,7 @@ class ServerUpdate(BaseModel):
     watch_time_renewal_threshold_seconds: int | None = Field(default=None, ge=0)
     enable_traffic: bool | None = None
     enable_traffic_alert: bool | None = None
+    enable_traffic_auto_suspend: bool | None = None
     traffic_quota_bytes: int | None = Field(default=None, ge=0)
     tos: str | None = None
 
@@ -248,6 +257,9 @@ class SystemConfigResponse(BaseModel):
     traffic_udp_host: str = "0.0.0.0"
     traffic_udp_port: int = 5140
     traffic_flush_interval_seconds: int = 10
+    traffic_pack_cost_score: int = DEFAULT_TRAFFIC_PACK_COST_SCORE
+    traffic_pack_size_gib: float = DEFAULT_TRAFFIC_PACK_SIZE_GIB
+    traffic_pack_unit_bytes: int = DEFAULT_TRAFFIC_PACK_UNIT_BYTES
 
 
 class OpsConfigUpdateDto(BaseModel):
@@ -286,6 +298,8 @@ class PointsConfigUpdateDto(BaseModel):
     points_checkin_lucky_interval: int = 7
     points_message_daily_cap: int = 20
     points_spam_threshold: int = 5
+    traffic_pack_cost_score: int | None = None
+    traffic_pack_size_gib: float | None = None
 
 
 class PolicyConfigUpdateDto(BaseModel):
@@ -306,11 +320,13 @@ class WatchTimeConfigUpdateDto(BaseModel):
 
 
 class TrafficConfigUpdateDto(BaseModel):
-    """Nginx 流量 UDP 监听与内存聚合刷盘参数更新请求"""
+    """Nginx 流量 UDP 监听、内存聚合刷盘及流量包单价参数更新请求"""
 
     udp_host: str = "0.0.0.0"
     udp_port: int = 5140
     flush_interval_seconds: int = 10
+    traffic_pack_cost_score: int | None = None
+    traffic_pack_size_gib: float | None = None
 
 
 class MkvConfigUpdateDto(BaseModel):
@@ -441,9 +457,13 @@ class MediaAccountDto(BaseModel):
     watch_time_renewal_status_text: str = "当前服务器未开放保活续期"
     enable_traffic: bool = False
     cycle_traffic_bytes: int = 0
+    traffic_pack_bytes: int = 0
     total_traffic_bytes: int = 0
     traffic_quota_bytes: int = 0
     traffic_remaining_bytes: int | None = None
+    traffic_total_remaining_bytes: int | None = None
+    is_traffic_suspended: bool = False
+    enable_traffic_auto_suspend: bool = False
 
 
 class AvailableServerDto(BaseModel):
@@ -477,8 +497,31 @@ class UserInfoDto(BaseModel):
     has_username: bool = False
     cycle_watch_time_seconds: int = 0
     total_watch_time_seconds: int = 0
+    enable_points_traffic_pack: bool = True
+    traffic_pack_cost_score: int = DEFAULT_TRAFFIC_PACK_COST_SCORE
+    traffic_pack_size_gib: float = DEFAULT_TRAFFIC_PACK_SIZE_GIB
+    traffic_pack_unit_bytes: int = DEFAULT_TRAFFIC_PACK_UNIT_BYTES
     media_accounts: list[MediaAccountDto]
     available_servers: list[AvailableServerDto] = []
+
+
+class TrafficPackRedeemDto(BaseModel):
+    """Mini App 积分兑换流量包请求体"""
+
+    quantity: int = Field(default=1, ge=1, le=100)
+
+
+class TrafficPackRedeemResponse(BaseModel):
+    """Mini App 积分兑换流量包响应"""
+
+    success: bool
+    message: str
+    added_bytes: int = 0
+    cost_score: int = 0
+    remaining_score: int | None = None
+    traffic_pack_bytes: int = 0
+    is_traffic_suspended: bool = False
+    unsuspended: bool = False
 
 
 class ChangeScoreDto(BaseModel):

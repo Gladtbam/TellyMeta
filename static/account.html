@@ -165,6 +165,11 @@
                     <span class="action-text">续期</span>
                     <span class="action-arrow">›</span>
                 </div>
+                <div class="action-item" id="btn-redeem-traffic-pack" onclick="redeemTrafficPack()">
+                    <span class="action-icon">📦</span>
+                    <span class="action-text" id="redeem-traffic-pack-text">积分兑换流量包</span>
+                    <span class="action-arrow">›</span>
+                </div>
                 <div class="action-item" onclick="toggleNsfw()">
                     <span class="action-icon">🔞</span>
                     <span class="action-text">切换 NSFW</span>
@@ -233,10 +238,11 @@
 
         let accountData = null;
         let userRenewScore = null;
+        let trafficPackConfig = { enabled: true, costScore: 50, sizeGib: 10, packUnitBytes: 10 * 1024 ** 3 };
 
         /**
-         * 拉取当前媒体账号信息并缓存用户续期积分标准，随后触发账号详情视图渲染。
-         * 副作用：更新全局 ``accountData``、``userRenewScore`` 及页面 DOM 内容。
+         * 拉取当前媒体账号信息并缓存用户续期积分与流量包单价配置，随后触发账号详情视图渲染。
+         * 副作用：更新全局 ``accountData``、``userRenewScore``、``trafficPackConfig`` 及页面 DOM 内容。
          */
         async function fetchAccountInfo() {
             try {
@@ -251,6 +257,12 @@
 
                 const data = await res.json();
                 userRenewScore = data.renew_score;
+                trafficPackConfig = {
+                    enabled: data.enable_points_traffic_pack !== false,
+                    costScore: data.traffic_pack_cost_score ?? 50,
+                    sizeGib: data.traffic_pack_size_gib ?? 10,
+                    packUnitBytes: data.traffic_pack_unit_bytes ?? (10 * 1024 ** 3)
+                };
                 const account = data.media_accounts.find(acc => acc.server_id == serverId);
 
                 if (!account) {
@@ -265,11 +277,11 @@
         }
 
         /**
-         * 渲染媒体账号详情、有效播放时长进度、保活状态与自动保活开关区域。
+         * 渲染媒体账号详情、有效播放时长进度、流量包余额与自动保活开关区域。
          * @param {object} acc 媒体账号 DTO 对象。
          */
         function renderAccountInfo(acc) {
-            const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+            const statusColor = resolveAccountStatusColor(acc);
             let expiry = "未知";
             if (acc.expires_at) {
                 const d = new Date(acc.expires_at);
@@ -283,6 +295,9 @@
                 : '不限';
             const remainingText = acc.traffic_remaining_bytes !== null && acc.traffic_remaining_bytes !== undefined
                 ? formatTrafficBytes(acc.traffic_remaining_bytes)
+                : '不限';
+            const totalRemainingText = acc.traffic_total_remaining_bytes !== null && acc.traffic_total_remaining_bytes !== undefined
+                ? formatTrafficBytes(acc.traffic_total_remaining_bytes)
                 : '不限';
             const resetDateText = formatResetDate(acc.next_reset_at);
             const trafficSummaryText = formatTrafficQuotaSummary(acc);
@@ -329,6 +344,13 @@
                     <span class="item-value" style="font-size:14px">${quotaText} / ${remainingText}</span>
                 </div>
                 <div class="item">
+                    <div class="item-content">
+                        <span class="item-subtitle">流量包余额（跨周期保留）</span>
+                        <span class="item-subtitle" style="font-size:12px;">总可用剩余流量: ${totalRemainingText}</span>
+                    </div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.traffic_pack_bytes)}</span>
+                </div>
+                <div class="item">
                     <div class="item-content"><span class="item-subtitle">累计总流量</span></div>
                     <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.total_traffic_bytes)}</span>
                 </div>
@@ -347,6 +369,13 @@
                     </label>
                 </div>
             `;
+
+            const packActionText = document.getElementById('redeem-traffic-pack-text');
+            if (packActionText) {
+                packActionText.textContent = trafficPackConfig.enabled
+                    ? `积分兑换流量包（${trafficPackConfig.costScore} 积分 / ${trafficPackConfig.sizeGib} GiB）`
+                    : '积分兑换流量包（已关闭）';
+            }
 
             const btnUpload = document.getElementById('btn-upload-subtitle');
             if (btnUpload) {
@@ -387,6 +416,15 @@
                 if (accountData) {
                     accountData.auto_renew = finalState;
                 }
+            });
+        }
+
+        /**
+         * 使用积分兑换当前媒体账号的持久化流量包，并在成功后刷新账户详情。
+         */
+        async function redeemTrafficPack() {
+            await handleRedeemTrafficPack(serverId, tg, accountData, trafficPackConfig, () => {
+                fetchAccountInfo();
             });
         }
 

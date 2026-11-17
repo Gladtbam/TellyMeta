@@ -40,7 +40,7 @@ from models.schemas import (
 )
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
-from services.account_service import AccountService
+from services.account_service import AccountService, format_traffic_release_summary
 from services.settings_service import SettingsServices
 from services.traffic_service import invalidate_traffic_server_cache
 from workers.nfo_worker import (
@@ -471,6 +471,7 @@ async def create_server(
         data.api_key,
         enable_traffic=data.enable_traffic,
         enable_traffic_alert=data.enable_traffic_alert,
+        enable_traffic_auto_suspend=data.enable_traffic_auto_suspend,
         traffic_quota_bytes=data.traffic_quota_bytes,
         qb_username=data.qb_username,
         qb_torrent_limit=data.qb_torrent_limit,
@@ -546,6 +547,8 @@ async def update_server(
         update_dict["enable_traffic"] = data.enable_traffic
     if data.enable_traffic_alert is not None:
         update_dict["enable_traffic_alert"] = data.enable_traffic_alert
+    if data.enable_traffic_auto_suspend is not None:
+        update_dict["enable_traffic_auto_suspend"] = data.enable_traffic_auto_suspend
     if data.traffic_quota_bytes is not None:
         update_dict["traffic_quota_bytes"] = data.traffic_quota_bytes
     if data.qb_username is not None:
@@ -604,12 +607,23 @@ async def update_server(
         await repo.update_expiry_config(server_id, **expiry_kwargs)
 
     # 执行基础信息更新与重载（仅在连接或鉴权等客户端相关字段变更时重载客户端，避免开关切换触发不必要重连）
+    traffic_release_note = ""
     if update_dict:
         await repo.update_basic_info(server_id, **update_dict)
         invalidate_traffic_server_cache(request.app)
         if data.enable_watch_time is False:
             # 关闭单台服务器播放时长采集时立即停用活跃会话并清理 Emby 心跳（保留历史记录）
             await service.handle_watch_time_disabled(server_id)
+        if data.enable_traffic is False or data.enable_traffic_auto_suspend is False:
+            # 关闭单服流量采集或超流自动停用开关时，安全清除本服超流停用标记并按组合状态解封
+            account_service = AccountService(request.app, session)
+            (
+                released_count,
+                failed_count,
+            ) = await account_service.release_traffic_suspensions(server_id)
+            traffic_release_note = format_traffic_release_summary(
+                released_count, failed_count, as_suffix=True
+            )
         if {"name", "url", "api_key", "path_mappings", "qb_username"} & set(
             update_dict
         ):
@@ -629,18 +643,21 @@ async def update_server(
                     "success": True,
                     "message": (
                         f"NSFW 开关已关闭（已禁止成员新开启），但有 {failed_count} 个现有账户撤权失败，"
-                        "已加入待重试队列，请检查媒体服务器状态。"
+                        f"已加入待重试队列，请检查媒体服务器状态{traffic_release_note}。"
                     ),
                 }
             return {
                 "success": True,
-                "message": f"配置已保存，NSFW 开关已关闭，已撤销 {revoked_count} 个现有账户的 NSFW 权限。",
+                "message": (
+                    f"配置已保存，NSFW 开关已关闭，已撤销 {revoked_count} 个现有账户的 NSFW 权限"
+                    f"{traffic_release_note}。"
+                ),
             }
         pending = getattr(request.app.state, "_pending_nsfw_revokes", None)
         if isinstance(pending, dict):
             pending.pop(server_id, None)
 
-    return {"success": True, "message": "配置已保存"}
+    return {"success": True, "message": f"配置已保存{traffic_release_note}"}
 
 
 @router.delete(

@@ -5,13 +5,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.orm import BotConfiguration
 
+BYTES_PER_GIB = 1024**3
+DEFAULT_TRAFFIC_PACK_COST_SCORE = 50
+DEFAULT_TRAFFIC_PACK_SIZE_GIB = 10.0
+DEFAULT_TRAFFIC_PACK_UNIT_BYTES = round(DEFAULT_TRAFFIC_PACK_SIZE_GIB * BYTES_PER_GIB)
+
 
 class TrafficConfigDict(TypedDict):
-    """流量 UDP 监听与刷盘参数配置类型字典"""
+    """流量 UDP 监听、刷盘参数及流量包单价配置类型字典"""
 
     traffic_udp_host: str
     traffic_udp_port: int
     traffic_flush_interval_seconds: int
+    traffic_pack_cost_score: int
+    traffic_pack_size_gib: float
+    traffic_pack_unit_bytes: int
 
 
 class ConfigRepository:
@@ -106,11 +114,13 @@ class ConfigRepository:
     )
     KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS = "watch_time:disconnect_grace_seconds"
 
-    # 流量统计、UDP 接收与刷盘配置键
+    # 流量统计、UDP 接收、刷盘与流量包兑换单价配置键
     KEY_ENABLE_TRAFFIC = "traffic:enable"
     KEY_TRAFFIC_UDP_HOST = "traffic:udp_host"
     KEY_TRAFFIC_UDP_PORT = "traffic:udp_port"
     KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS = "traffic:flush_interval_seconds"
+    KEY_TRAFFIC_PACK_COST_SCORE = "traffic:pack_cost_score"
+    KEY_TRAFFIC_PACK_SIZE_GIB = "traffic:pack_size_gib"
 
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
@@ -201,6 +211,8 @@ class ConfigRepository:
             cls.KEY_TRAFFIC_UDP_HOST: "0.0.0.0",
             cls.KEY_TRAFFIC_UDP_PORT: "5140",
             cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS: "10",
+            cls.KEY_TRAFFIC_PACK_COST_SCORE: str(DEFAULT_TRAFFIC_PACK_COST_SCORE),
+            cls.KEY_TRAFFIC_PACK_SIZE_GIB: str(int(DEFAULT_TRAFFIC_PACK_SIZE_GIB)),
         }
 
         new_items = []
@@ -730,10 +742,10 @@ class ConfigRepository:
 
     @classmethod
     def _build_traffic_config(cls, source: dict[str, str]) -> TrafficConfigDict:
-        """从配置键值字典解析 Nginx 流量 UDP 监听地址、端口与内存刷盘周期参数
+        """从配置键值字典解析 Nginx 流量 UDP 监听、刷盘周期及流量包积分兑换单价
 
         Args:
-            source: 包含流量监听与刷盘配置键的字典。
+            source: 包含流量监听、刷盘及流量包单价配置键的字典。
 
         Returns:
             经过端口上下界保底与类型转换后的 ``TrafficConfigDict``。
@@ -747,18 +759,34 @@ class ConfigRepository:
         flush_interval = cls._parse_int(
             source.get(cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS), 10, 1
         )
+        pack_cost_score = cls._parse_int(
+            source.get(cls.KEY_TRAFFIC_PACK_COST_SCORE),
+            DEFAULT_TRAFFIC_PACK_COST_SCORE,
+            1,
+        )
+        pack_size_gib = cls._parse_float(
+            source.get(cls.KEY_TRAFFIC_PACK_SIZE_GIB),
+            DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+            0.0,
+        )
+        if pack_size_gib <= 0:
+            pack_size_gib = DEFAULT_TRAFFIC_PACK_SIZE_GIB
+        pack_unit_bytes = max(1, round(pack_size_gib * BYTES_PER_GIB))
         return {
             "traffic_udp_host": udp_host,
             "traffic_udp_port": udp_port,
             "traffic_flush_interval_seconds": flush_interval,
+            "traffic_pack_cost_score": pack_cost_score,
+            "traffic_pack_size_gib": pack_size_gib,
+            "traffic_pack_unit_bytes": pack_unit_bytes,
         }
 
     @classmethod
     def get_traffic_config_from_cache(cls) -> TrafficConfigDict:
-        """同步读取内存缓存中的流量 UDP 监听与刷盘参数
+        """同步读取内存缓存中的流量 UDP 监听、刷盘及流量包单价参数
 
         Returns:
-            包含当前缓存流量监听参数的 ``TrafficConfigDict``。
+            包含当前缓存流量参数的 ``TrafficConfigDict``。
         """
         return cls._build_traffic_config(cls.cache)
 
@@ -780,7 +808,7 @@ class ConfigRepository:
         return await self.get_settings(self.KEY_ENABLE_TRAFFIC, "false") == "true"
 
     async def get_traffic_config(self) -> TrafficConfigDict:
-        """读取数据库/缓存中的流量 UDP 监听与刷盘周期配置
+        """读取数据库/缓存中的流量 UDP 监听、刷盘周期及流量包兑换单价配置
 
         Returns:
             经规范化与默认值兜底后的 ``TrafficConfigDict``。
@@ -789,6 +817,8 @@ class ConfigRepository:
             self.KEY_TRAFFIC_UDP_HOST,
             self.KEY_TRAFFIC_UDP_PORT,
             self.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS,
+            self.KEY_TRAFFIC_PACK_COST_SCORE,
+            self.KEY_TRAFFIC_PACK_SIZE_GIB,
         )
         source: dict[str, str] = {}
         for key in keys:

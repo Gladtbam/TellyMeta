@@ -447,7 +447,7 @@
                     const card = document.createElement('div');
                     card.className = 'card';
 
-                    const statusColor = acc.is_banned ? 'var(--destructive-text-color)' : '#34c759';
+                    const statusColor = resolveAccountStatusColor(acc);
                     let expiry = "未知";
                     if (acc.expires_at) {
                         const d = new Date(acc.expires_at);
@@ -484,6 +484,7 @@
                             <div class="item-content">
                                 <span class="item-subtitle">流量用量（下次重置: ${formatResetDate(acc.next_reset_at)}）</span>
                                 <span class="item-subtitle" style="font-size:12px">${formatTrafficQuotaSummary(acc)}</span>
+                                <span class="item-subtitle" style="font-size:12px">流量包余额: ${formatTrafficBytes(acc.traffic_pack_bytes)}</span>
                             </div>
                         </div>
                         <div class="item">

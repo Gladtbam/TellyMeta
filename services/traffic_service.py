@@ -24,13 +24,16 @@ from core.telegram_message import TelegramMessage
 from models.nginx import Nginx, UrlInfo, format_traffic_bytes
 from models.orm import MediaUser, ServerInstance, ServerType
 from repositories.config_repo import ConfigRepository
+from services.media_service import (
+    MediaService,
+    compute_external_disabled_state,
+    sync_external_disabled_state,
+)
 from services.notification_service import NotificationService
 from services.watch_time_service import expand_media_id_candidates, get_account_lock
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
-
-    from services.media_service import MediaService
 
 __all__ = [
     "TrafficService",
@@ -61,6 +64,8 @@ class _PendingTrafficAlert:
     quota_bytes: int
     next_reset_at: datetime | None
     level_percent: int
+    pack_bytes: int = 0
+    auto_suspended: bool = False
 
 
 def _lookup_cache_entry(
@@ -89,7 +94,7 @@ def _lookup_cache_entry(
 
 
 def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
-    """渲染 80% 预警或 100% 耗尽的 Telegram HTML 私聊提醒消息
+    """渲染 80% 预警、100% 耗尽或超流自动停用的 Telegram HTML 私聊提醒消息
 
     Args:
         alert: 已提交账务后生成的配额告警上下文。
@@ -99,6 +104,11 @@ def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
     """
     used_str = format_traffic_bytes(alert.used_bytes)
     quota_str = format_traffic_bytes(alert.quota_bytes)
+    pack_line = (
+        f"\n剩余流量包: <code>{format_traffic_bytes(alert.pack_bytes)}</code>"
+        if alert.pack_bytes > 0
+        else ""
+    )
     reset_str = (
         alert.next_reset_at.strftime("%Y-%m-%d %H:%M")
         if alert.next_reset_at is not None
@@ -106,7 +116,13 @@ def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
     )
     server_name = alert.server_name
     media_name = alert.media_name
-    if alert.level_percent >= 100:
+    if alert.auto_suspended:
+        header = "⛔ <b>流量已耗尽（100%），账号已超流停用</b>"
+        footer = (
+            "本周期基础配额与流量包均已用尽，播放权限已临时停用（不会触发删号）。"
+            "可在 Mini App 使用积分兑换流量包立即恢复，或等待下次重置后自动解除。"
+        )
+    elif alert.level_percent >= 100:
         header = "🚨 <b>基础流量配额已耗尽（100%）</b>"
         footer = "当前处于软告警模式，暂不会触发超流停用，请注意控制播放码率。"
     else:
@@ -118,7 +134,7 @@ def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
 
         服务器: <code>{server_name}</code>
         媒体账号: <code>{media_name}</code>
-        本周期已用: <code>{used_str}</code> / <code>{quota_str}</code>
+        本周期已用: <code>{used_str}</code> / <code>{quota_str}</code>{pack_line:raw}
         下次重置时间: <code>{reset_str}</code>
         {footer:raw}
     """)
@@ -737,12 +753,24 @@ class TrafficService(asyncio.DatagramProtocol):
                             if fresh_mu is None:
                                 continue
 
-                            fresh_mu.cycle_traffic_bytes += delta_bytes
-                            fresh_mu.total_traffic_bytes += delta_bytes
-                            alert = self._evaluate_quota_alert(fresh_srv, fresh_mu)
-
+                            self._apply_traffic_consumption(
+                                fresh_srv, fresh_mu, delta_bytes
+                            )
+                            # 先持久化已消费字节数，避免后续外部禁用 API 失败导致流量丢失或重复扣减
                             await session.commit()
                             flushed_total += delta_bytes
+
+                            suspended_now = False
+                            if self._should_auto_suspend(fresh_srv, fresh_mu):
+                                suspended_now = await self._suspend_media_account(
+                                    fresh_srv, fresh_mu
+                                )
+
+                            alert = self._evaluate_quota_alert(
+                                fresh_srv, fresh_mu, auto_suspended=suspended_now
+                            )
+                            if suspended_now or alert is not None:
+                                await session.commit()
                             if alert is not None:
                                 pending_alerts.append(alert)
                     except SQLAlchemyError as exc:
@@ -761,36 +789,149 @@ class TrafficService(asyncio.DatagramProtocol):
             return flushed_total
 
     @staticmethod
+    def _apply_traffic_consumption(
+        server: ServerInstance,
+        media_user: MediaUser,
+        delta_bytes: int,
+    ) -> None:
+        """按「本周期基础配额 -> 跨周期流量包」顺序扣减流量并累计历史总流量
+
+        Args:
+            server: 当前服务器实例配置。
+            media_user: 待扣减的媒体账号 ORM 对象。
+            delta_bytes: 本次增量消费字节数。
+        """
+        quota = max(0, int(server.traffic_quota_bytes or 0))
+        prev_cycle = max(0, int(media_user.cycle_traffic_bytes or 0))
+        prev_pack = max(0, int(media_user.traffic_pack_bytes or 0))
+        if quota > 0:
+            base_remaining_before = max(0, quota - prev_cycle)
+            from_base = min(delta_bytes, base_remaining_before)
+            overflow = delta_bytes - from_base
+            from_pack = min(overflow, prev_pack)
+            unmet = overflow - from_pack
+            # 未被流量包吸收的溢出字节记入周期消耗，确保软告警与超额审计保持完整
+            media_user.cycle_traffic_bytes = prev_cycle + from_base + unmet
+            media_user.traffic_pack_bytes = prev_pack - from_pack
+        else:
+            media_user.cycle_traffic_bytes = prev_cycle + delta_bytes
+        media_user.total_traffic_bytes = (
+            max(0, int(media_user.total_traffic_bytes or 0)) + delta_bytes
+        )
+
+    @staticmethod
+    def _should_auto_suspend(
+        server: ServerInstance,
+        media_user: MediaUser,
+    ) -> bool:
+        """判断是否满足触发超流自动停用的全部前提条件
+
+        仅当全局流量、服务器启用、单服流量、单服超流自动停用均开启且配置了有限配额、
+        账号当前尚未停用且基础配额与持久化流量包剩余合计归零时返回 ``True``。
+
+        Args:
+            server: 目标媒体服务器配置实例。
+            media_user: 待评估的媒体账号 ORM 对象。
+
+        Returns:
+            满足自动停用触发条件时返回 ``True``，否则返回 ``False``。
+        """
+        if not ConfigRepository.is_traffic_enabled_from_cache():
+            return False
+        quota = max(0, int(server.traffic_quota_bytes or 0))
+        if (
+            quota <= 0
+            or not server.is_enabled
+            or not server.enable_traffic
+            or not server.enable_traffic_auto_suspend
+        ):
+            return False
+        if media_user.is_traffic_suspended:
+            return False
+        base_remaining = max(0, quota - int(media_user.cycle_traffic_bytes or 0))
+        pack_remaining = max(0, int(media_user.traffic_pack_bytes or 0))
+        return (base_remaining + pack_remaining) <= 0
+
+    async def _suspend_media_account(
+        self,
+        server: ServerInstance,
+        media_user: MediaUser,
+    ) -> bool:
+        """调用媒体服务器接口禁用播放权限并仅标记超流停用（绝不写入 is_banned 或 delete_at）
+
+        Args:
+            server: 目标服务器实例。
+            media_user: 待停用的媒体账号 ORM 对象。
+
+        Returns:
+            成功置为超流停用返回 ``True``，外部禁用失败或客户端未连接返回 ``False``。
+        """
+        media_clients: dict[int, MediaService] = (
+            getattr(getattr(self.app, "state", None), "media_clients", None) or {}
+        )
+        target_disabled = compute_external_disabled_state(
+            is_banned=bool(media_user.is_banned),
+            is_traffic_suspended=True,
+        )
+        outcome = await sync_external_disabled_state(
+            media_clients.get(server.id),
+            media_id=media_user.media_id,
+            target_disabled=target_disabled,
+            treat_404_as_synced=True,
+            log_context="超流自动停用",
+            user_id=media_user.id,
+            server_id=server.id,
+        )
+        if not outcome.ok:
+            return False
+
+        # 严格遵循 ADR-0002：仅置位超流停用标志，绝不触碰 is_banned、delete_at 或 expires_at
+        media_user.is_traffic_suspended = True
+        return True
+
+    @staticmethod
     def _evaluate_quota_alert(
         server: ServerInstance,
         media_user: MediaUser,
+        *,
+        auto_suspended: bool = False,
     ) -> _PendingTrafficAlert | None:
         """评估并更新本周期 80%/100% 配额告警去重标志，满足条件时返回待发告警上下文
 
         Args:
             server: 当前服务器实例（含配额与通知开关）。
-            media_user: 已累加本次字节增量的媒体账号 ORM 对象。
+            media_user: 已完成字节扣减与停用判定的媒体账号 ORM 对象。
+            auto_suspended: 本次刷盘是否刚刚触发了超流自动停用。
 
         Returns:
             达到阈值且尚未发送过该档位告警时返回 ``_PendingTrafficAlert``，否则返回 ``None``。
         """
         quota = int(server.traffic_quota_bytes or 0)
-        if quota <= 0 or not server.enable_traffic_alert:
+        if quota <= 0:
             return None
 
         used = int(media_user.cycle_traffic_bytes or 0)
+        base_remaining = max(0, quota - used)
+        pack_remaining = max(0, int(media_user.traffic_pack_bytes or 0))
+        total_remaining = base_remaining + pack_remaining
+        total_pool = quota + pack_remaining
+
         level: int | None = None
-        if used >= quota and not media_user.traffic_alert_100_sent:
-            # 直接跨越 100% 时同步置位 80% 去重标记，避免连续发送两条提醒
-            media_user.traffic_alert_100_sent = True
-            media_user.traffic_alert_80_sent = True
-            level = 100
-        # 使用整数交叉乘法等价判定 used / quota >= 4 / 5，消除浮点精度边界误差
-        elif used * 5 >= quota * 4 and not media_user.traffic_alert_80_sent:
+        if total_remaining <= 0:
+            # 开启自动停用时，仅在本次停用真正落定（或此前未通知且已停用）时发 100% 通知
+            if (
+                not server.enable_traffic_auto_suspend or auto_suspended
+            ) and not media_user.traffic_alert_100_sent:
+                # 直接跨越 100% 时同步置位 80% 去重标记，避免连续发送两条提醒
+                media_user.traffic_alert_100_sent = True
+                media_user.traffic_alert_80_sent = True
+                level = 100
+        # 使用整数交叉乘法等价判定 total_remaining / total_pool <= 1 / 5（剩余不足 20% 即已用达 80%）
+        elif total_remaining * 5 <= total_pool and not media_user.traffic_alert_80_sent:
             media_user.traffic_alert_80_sent = True
             level = 80
 
-        if level is None:
+        if level is None or not server.enable_traffic_alert:
             return None
 
         return _PendingTrafficAlert(
@@ -801,6 +942,8 @@ class TrafficService(asyncio.DatagramProtocol):
             quota_bytes=quota,
             next_reset_at=media_user.next_reset_at,
             level_percent=level,
+            pack_bytes=pack_remaining,
+            auto_suspended=auto_suspended,
         )
 
     async def _send_quota_alert_dm(self, alert: _PendingTrafficAlert) -> bool:

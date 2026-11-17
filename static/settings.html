@@ -610,6 +610,14 @@
                         <label class="form-label">刷屏警告连发阈值(0关闭)</label>
                         <input type="number" min="0" id="points-spam-threshold" class="form-input">
                     </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">流量包单价(积分/包)</label>
+                        <input type="number" min="1" id="points-traffic-pack-cost" class="form-input" placeholder="50">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0">
+                        <label class="form-label">流量包容量(GiB/包)</label>
+                        <input type="number" min="0.01" step="any" id="points-traffic-pack-gib" class="form-input" placeholder="10">
+                    </div>
                 </div>
                 <button type="button" class="btn btn-primary" onclick="savePointsConfig()">保存积分与定价配置</button>
             </div>
@@ -1054,6 +1062,11 @@
                         <label class="switch"><input type="checkbox" id="srv-traffic-alert"><span
                                 class="slider"></span></label>
                     </div>
+                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>超流自动停用（不触发删号）</span>
+                        <label class="switch"><input type="checkbox" id="srv-traffic-auto-suspend"><span
+                                class="slider"></span></label>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">月基础流量配额 (GiB，0 表示不限)</label>
                         <input type="number" class="form-input" id="srv-traffic-quota-gib" min="0" step="any" placeholder="0">
@@ -1220,6 +1233,8 @@
                 document.getElementById('points-checkin-lucky-interval').value = s.points_checkin_lucky_interval ?? 7;
                 document.getElementById('points-message-daily-cap').value = s.points_message_daily_cap ?? 20;
                 document.getElementById('points-spam-threshold').value = s.points_spam_threshold ?? 5;
+                document.getElementById('points-traffic-pack-cost').value = s.traffic_pack_cost_score ?? 50;
+                document.getElementById('points-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
                 updatePointsModeFields();
                 updatePointsConfigVisibility(pointsEnabled);
 
@@ -1374,7 +1389,9 @@
                 : `${Math.round(parseFloat(document.getElementById('points-request-ratio').value || '0.1') * 100)}%`;
             const cMin = document.getElementById('points-checkin-min').value || 1;
             const cMax = document.getElementById('points-checkin-max').value || 3;
-            summary.innerText = `续费: ${renewText} · 求片: ${reqText} · 签到: ${cMin}-${cMax}分`;
+            const packCost = document.getElementById('points-traffic-pack-cost').value || 50;
+            const packGib = document.getElementById('points-traffic-pack-gib').value || 10;
+            summary.innerText = `续费: ${renewText} · 求片: ${reqText} · 签到: ${cMin}-${cMax}分 · 流量包: ${packCost}分/${packGib}GiB`;
         }
 
         function updatePointsModeFields() {
@@ -1411,7 +1428,9 @@
                 points_checkin_consecutive_bonus: parseIntOr('points-checkin-consecutive-bonus', 2),
                 points_checkin_lucky_interval: parseIntOr('points-checkin-lucky-interval', 7),
                 points_message_daily_cap: parseIntOr('points-message-daily-cap', 20),
-                points_spam_threshold: parseIntOr('points-spam-threshold', 5)
+                points_spam_threshold: parseIntOr('points-spam-threshold', 5),
+                traffic_pack_cost_score: parseIntOr('points-traffic-pack-cost', 50),
+                traffic_pack_size_gib: parseFloatOr('points-traffic-pack-gib', 10)
             };
             const res = await api('/system/points', 'POST', payload);
             updatePointsConfigVisibility(document.getElementById('toggle-points').checked);
@@ -1732,6 +1751,7 @@
             if (document.getElementById('srv-watch-time-threshold-hours')) document.getElementById('srv-watch-time-threshold-hours').value = 0;
             if (document.getElementById('srv-traffic')) document.getElementById('srv-traffic').checked = false;
             if (document.getElementById('srv-traffic-alert')) document.getElementById('srv-traffic-alert').checked = true;
+            if (document.getElementById('srv-traffic-auto-suspend')) document.getElementById('srv-traffic-auto-suspend').checked = false;
             if (document.getElementById('srv-traffic-quota-gib')) document.getElementById('srv-traffic-quota-gib').value = 0;
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
@@ -1825,6 +1845,7 @@
                 }
                 if (document.getElementById('srv-traffic')) document.getElementById('srv-traffic').checked = Boolean(s.enable_traffic);
                 if (document.getElementById('srv-traffic-alert')) document.getElementById('srv-traffic-alert').checked = s.enable_traffic_alert !== false;
+                if (document.getElementById('srv-traffic-auto-suspend')) document.getElementById('srv-traffic-auto-suspend').checked = Boolean(s.enable_traffic_auto_suspend);
                 if (document.getElementById('srv-traffic-quota-gib')) {
                     const quotaBytes = Number(s.traffic_quota_bytes || 0);
                     document.getElementById('srv-traffic-quota-gib').value = quotaBytes > 0 ? Number((quotaBytes / 1073741824).toFixed(4)) : 0;
@@ -2023,6 +2044,7 @@
                 payload.watch_time_renewal_threshold_seconds = Number.isFinite(thresholdHours) && thresholdHours > 0 ? Math.round(thresholdHours * 3600) : 0;
                 payload.enable_traffic = document.getElementById('srv-traffic').checked;
                 payload.enable_traffic_alert = document.getElementById('srv-traffic-alert').checked;
+                payload.enable_traffic_auto_suspend = document.getElementById('srv-traffic-auto-suspend').checked;
                 const quotaGib = parseFloat(document.getElementById('srv-traffic-quota-gib').value);
                 payload.traffic_quota_bytes = Number.isFinite(quotaGib) && quotaGib > 0 ? Math.round(quotaGib * 1073741824) : 0;
             } else if (type === 'qbittorrent') {

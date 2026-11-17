@@ -19,8 +19,12 @@ from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
-from services.media_service import MediaService
-from services.watch_time_service import evaluate_watch_time_renewal
+from services.media_service import (
+    MediaService,
+    compute_external_disabled_state,
+    sync_external_disabled_state,
+)
+from services.watch_time_service import evaluate_watch_time_renewal, get_account_lock
 
 settings = get_settings()
 
@@ -118,7 +122,25 @@ class UserService:
         username: str | Literal[False] | None,
         is_consecutive: bool,
     ) -> Result:
-        """幸运签到逻辑"""
+        """执行幸运签到抽奖并发放随机注册码/续期码、账户续期或双倍积分奖励
+
+        抽中直接续期奖励时按账号锁串行延长关联媒体账号有效期，并在解除过期封禁前
+        遵循组合状态（过期封禁 OR 超流停用）判定是否真正解封外部媒体账号；
+        若奖励无法兑现则回退为固定签到积分。
+
+        Args:
+            user: 当前签到的 Telegram 用户 ORM 对象。
+            username: 用于展示的用户名或显示名；无用户名时为 ``None``/``False``。
+            is_consecutive: 本次签到是否计入连续签到周期。
+
+        Returns:
+            包含签到群消息文案及可选中奖私聊文案的 ``Result`` 对象。
+        """
+        # 提前提取纯标量 ID 与关联账号主键，避免后续循环内提交/回滚事务导致 ORM 属性过期
+        user_id = int(user.id)
+        target_pairs = [
+            (int(mu.id), int(mu.server_id)) for mu in (user.media_users or [])
+        ]
         options = ["fullcode", "halfcode", "weekcode", "daycode", "double"]
         probability = [0.01, 0.02, 0.12, 0.15, 0.7]
         result = choices(options, probability)[0]
@@ -140,24 +162,24 @@ class UserService:
 
             if not candidate_servers:
                 await self.telegram_repo.update_checkin(
-                    user.id, 5, is_consecutive=is_consecutive
+                    user_id, 5, is_consecutive=is_consecutive
                 )
                 return Result(
                     success=True,
                     message=TelegramMessage.render_markdown(
-                        t"签到成功！[{username}](tg://user?id={user.id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
+                        t"签到成功！[{username}](tg://user?id={user_id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
                     ),
                 )
 
             target_server = choice(candidate_servers)
             if not target_server.id:
                 await self.telegram_repo.update_checkin(
-                    user.id, 5, is_consecutive=is_consecutive
+                    user_id, 5, is_consecutive=is_consecutive
                 )
                 return Result(
                     success=True,
                     message=TelegramMessage.render_markdown(
-                        t"签到成功！[{username}](tg://user?id={user.id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
+                        t"签到成功！[{username}](tg://user?id={user_id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
                     ),
                 )
 
@@ -168,13 +190,13 @@ class UserService:
                 code_type, target_server.code_expiry_days, target_server.id
             )
             await self.telegram_repo.update_checkin(
-                user.id, 0, is_consecutive=is_consecutive
+                user_id, 0, is_consecutive=is_consecutive
             )
 
             return Result(
                 success=True,
                 message=TelegramMessage.render_markdown(
-                    t"🎉 **恭喜[{username}](tg://user?id={user.id})抽中大奖！** {target_server.name} 的 {code_name}已通过私信发送给您。"
+                    t"🎉 **恭喜[{username}](tg://user?id={user_id})抽中大奖！** {target_server.name} 的 {code_name}已通过私信发送给您。"
                 ),
                 private_message=TelegramMessage.render_markdown(t"""\
                     🎁 签到大奖！
@@ -187,47 +209,58 @@ class UserService:
         if result in ["halfcode", "weekcode", "daycode"]:
             days = {"halfcode": 15, "weekcode": 7, "daycode": 1}[result]
 
-            if user.media_users:
+            if target_pairs:
                 extended_servers = []
-                for mu in user.media_users:
-                    client = self.media_clients.get(mu.server_id)
-                    if client and (mu.is_banned or mu.delete_at is not None):
-                        try:
-                            await client.ban_or_unban(mu.media_id, is_ban=False)
-                        except (HTTPError, ValueError) as e:
-                            logger.error(
-                                "签到续期恢复媒体账户失败: user_id={}, server_id={}, err={}",
-                                user.id,
-                                mu.server_id,
-                                e,
+                for uid, sid in target_pairs:
+                    async with get_account_lock(uid, sid):
+                        await self.media_repo.end_clean_read_tx()
+                        fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                        if fresh_mu is None:
+                            continue
+                        client = self.media_clients.get(sid)
+                        # 仅当清除过期封禁且账号不同时处于超流停用时才解封外部账户（遵循 ADR-0002）
+                        keep_disabled = compute_external_disabled_state(
+                            is_banned=False,
+                            is_traffic_suspended=bool(fresh_mu.is_traffic_suspended),
+                        )
+                        if (
+                            client is not None
+                            and (fresh_mu.is_banned or fresh_mu.delete_at is not None)
+                            and not keep_disabled
+                        ):
+                            await sync_external_disabled_state(
+                                client,
+                                media_id=fresh_mu.media_id,
+                                target_disabled=False,
+                                log_context="签到续期恢复媒体账户",
+                                user_id=user_id,
+                                server_id=sid,
                             )
 
-                    await self.media_repo.extend_expiry(mu, days)
+                        await self.media_repo.extend_expiry(fresh_mu, days)
 
-                    server = await self.server_repo.get_by_id(mu.server_id)
-                    extended_servers.append(
-                        server.name if server else str(mu.server_id)
-                    )
+                    server = await self.server_repo.get_by_id(sid)
+                    extended_servers.append(server.name if server else str(sid))
 
                 await self.telegram_repo.update_checkin(
-                    user.id, 0, is_consecutive=is_consecutive
+                    user_id, 0, is_consecutive=is_consecutive
                 )
                 server_str = ", ".join(extended_servers)
                 return Result(
                     success=True,
                     message=TelegramMessage.render_markdown(
-                        t"🎉 **恭喜[{username}](tg://user?id={user.id})中奖！** 您的媒体账户 ({server_str}) 已自动延长 **{days}** 天有效期！"
+                        t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 您的媒体账户 ({server_str}) 已自动延长 **{days}** 天有效期！"
                     ),
                 )
 
             score = int(current_renew_score / 30 * days)
             await self.telegram_repo.update_checkin(
-                user.id, score, is_consecutive=is_consecutive
+                user_id, score, is_consecutive=is_consecutive
             )
             return Result(
                 success=True,
                 message=TelegramMessage.render_markdown(
-                    t"🎉 **恭喜[{username}](tg://user?id={user.id})中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！"
+                    t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！"
                 ),
             )
 
@@ -238,10 +271,10 @@ class UserService:
             base = abs(randint(2, 4)) * 2
             total = base + bonus
             await self.telegram_repo.update_checkin(
-                user.id, total, is_consecutive=is_consecutive
+                user_id, total, is_consecutive=is_consecutive
             )
             msg = TelegramMessage.render_markdown(
-                t"🎉 **恭喜！** [{username}](tg://user?id={user.id})签到积分翻倍，您获得了 **{total}** 积分。"
+                t"🎉 **恭喜！** [{username}](tg://user?id={user_id})签到积分翻倍，您获得了 **{total}** 积分。"
             )
             if is_consecutive:
                 msg += f"\n(基础 {base} + 连签 {bonus})"
@@ -250,10 +283,10 @@ class UserService:
         # 保底逻辑
         total = 1 + bonus
         await self.telegram_repo.update_checkin(
-            user.id, total, is_consecutive=is_consecutive
+            user_id, total, is_consecutive=is_consecutive
         )
         msg = TelegramMessage.render_markdown(
-            t"签到成功！[{username}](tg://user?id={user.id})获得了保底 **{total}** 积分。"
+            t"签到成功！[{username}](tg://user?id={user_id})获得了保底 **{total}** 积分。"
         )
         if is_consecutive:
             msg += f"\n(基础 1 + 连签 {bonus})"
@@ -274,6 +307,10 @@ class UserService:
         user = await self.telegram_repo.get_or_create(user_id)
         renew_score = int(await self.telegram_repo.get_renew_score())
         global_traffic_enabled = await self.config_repo.is_traffic_enabled()
+        enable_points_traffic_pack = await self.config_repo.is_points_feature_enabled(
+            ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
+        )
+        traffic_cfg = await self.config_repo.get_traffic_config()
 
         media_accounts = []
         registered_server_ids: set[int] = set()
@@ -309,6 +346,7 @@ class UserService:
                     else False
                 )
                 cycle_traffic = max(0, int(mu.cycle_traffic_bytes or 0))
+                pack_bytes = max(0, int(mu.traffic_pack_bytes or 0))
                 total_traffic = max(0, int(mu.total_traffic_bytes or 0))
                 quota_bytes = (
                     max(0, int(server.traffic_quota_bytes or 0)) if server else 0
@@ -317,6 +355,20 @@ class UserService:
                 remaining_bytes = (
                     max(0, quota_bytes - cycle_traffic) if quota_bytes > 0 else None
                 )
+                total_remaining_bytes = (
+                    (remaining_bytes + pack_bytes)
+                    if remaining_bytes is not None
+                    else None
+                )
+                is_traffic_suspended = bool(mu.is_traffic_suspended)
+                if mu.is_banned and is_traffic_suspended:
+                    status_text = "🚫 封禁 · 超流停用"
+                elif mu.is_banned:
+                    status_text = "🚫 封禁"
+                elif is_traffic_suspended:
+                    status_text = "⛔ 超流停用"
+                else:
+                    status_text = "✅ 正常"
 
                 media_accounts.append(
                     {
@@ -331,7 +383,7 @@ class UserService:
                         "server_type": (
                             server.server_type.capitalize() if server else "Undefined"
                         ),
-                        "status_text": "🚫 封禁" if mu.is_banned else "✅ 正常",
+                        "status_text": status_text,
                         "is_banned": mu.is_banned,
                         "media_name": mu.media_name,
                         "expires_at": mu.expires_at,
@@ -354,9 +406,17 @@ class UserService:
                         "watch_time_renewal_status_text": wt_status.status_text,
                         "enable_traffic": enable_traffic,
                         "cycle_traffic_bytes": cycle_traffic,
+                        "traffic_pack_bytes": pack_bytes,
                         "total_traffic_bytes": total_traffic,
                         "traffic_quota_bytes": quota_bytes,
                         "traffic_remaining_bytes": remaining_bytes,
+                        "traffic_total_remaining_bytes": total_remaining_bytes,
+                        "is_traffic_suspended": is_traffic_suspended,
+                        "enable_traffic_auto_suspend": (
+                            bool(server.enable_traffic_auto_suspend)
+                            if server
+                            else False
+                        ),
                     }
                 )
 
@@ -434,6 +494,10 @@ class UserService:
             "available_servers": available_servers,
             "cycle_watch_time_seconds": cycle_watch_time_seconds,
             "total_watch_time_seconds": total_watch_time_seconds,
+            "enable_points_traffic_pack": enable_points_traffic_pack,
+            "traffic_pack_cost_score": int(traffic_cfg["traffic_pack_cost_score"]),
+            "traffic_pack_size_gib": float(traffic_cfg["traffic_pack_size_gib"]),
+            "traffic_pack_unit_bytes": int(traffic_cfg["traffic_pack_unit_bytes"]),
         }
 
     async def get_user_info(self, user_id: int) -> Result:

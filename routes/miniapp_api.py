@@ -39,7 +39,14 @@ from models.schemas import (
     RequestLibraryDto,
     RequestSubmitDto,
     ToggleResponse,
+    TrafficPackRedeemDto,
+    TrafficPackRedeemResponse,
     UserInfoDto,
+)
+from repositories.config_repo import (
+    DEFAULT_TRAFFIC_PACK_COST_SCORE,
+    DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+    DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
 )
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -118,6 +125,53 @@ async def _deliver_sensitive_result(
     }
 
 
+async def _run_idempotent_action(
+    request: Request,
+    *,
+    user_id: int,
+    action: str,
+    lock_target: str,
+    cache_target: str,
+    idempotency_key: str | None,
+    executor: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    """执行带用户维度互斥锁与短期结果缓存的幂等操作，防止网络重传导致重复扣分或重复下发
+
+    Args:
+        request: FastAPI 请求对象，用于在 ``app.state`` 上存储并发锁与幂等结果缓存。
+        user_id: 当前操作的 Telegram 用户 ID。
+        action: 操作标识名称。
+        lock_target: 并发互斥锁粒度标识（例如服务器 ID 或操作目标）。
+        cache_target: 幂等缓存键粒度标识（可附带数量等请求参数）。
+        idempotency_key: 客户端传入的 ``X-Idempotency-Key``；为空时不读写缓存仅做串行互斥。
+        executor: 实际业务执行协程，返回接口响应字典（仅 ``success`` 为真时写入缓存）。
+
+    Returns:
+        命中短期幂等缓存时返回缓存副本，否则返回本次 ``executor()`` 的执行结果。
+    """
+    cache, locks = _get_idempotency_state(request.app)
+    lock_key = (user_id, action, lock_target)
+    lock = locks.setdefault(lock_key, asyncio.Lock())
+    clean_key = idempotency_key.strip() if idempotency_key else ""
+
+    async with lock:
+        now = time.monotonic()
+        # 清理过期的幂等缓存条目
+        expired_keys = [k for k, (exp, _) in cache.items() if exp <= now]
+        for k in expired_keys:
+            cache.pop(k, None)
+
+        cache_key = (user_id, action, cache_target, clean_key)
+        if clean_key and cache_key in cache:
+            _, cached_resp = cache[cache_key]
+            return dict(cached_resp)
+
+        response = await executor()
+        if clean_key and response.get("success"):
+            cache[cache_key] = (now + _IDEMPOTENCY_TTL_SECONDS, dict(response))
+        return response
+
+
 async def _execute_idempotent_sensitive_action(
     request: Request,
     user_id: int,
@@ -130,28 +184,12 @@ async def _execute_idempotent_sensitive_action(
     dm_failed_prefix: str,
 ) -> dict[str, Any]:
     """执行带并发互斥与网络重试幂等保护的敏感操作。"""
-    cache, locks = _get_idempotency_state(request.app)
-    lock_key = (user_id, action, target_key)
-    lock = locks.setdefault(lock_key, asyncio.Lock())
-    clean_key = idempotency_key.strip() if idempotency_key else ""
 
-    async with lock:
-        now = time.monotonic()
-        # 清理过期的幂等缓存条目
-        expired_keys = [k for k, (exp, _) in cache.items() if exp <= now]
-        for k in expired_keys:
-            cache.pop(k, None)
-
-        cache_key = (user_id, action, target_key, clean_key)
-        if clean_key and cache_key in cache:
-            _, cached_resp = cache[cache_key]
-            return dict(cached_resp)
-
+    async def _run() -> dict[str, Any]:
         result = await operation()
         if not result.success:
             return {"success": False, "message": result.message}
-
-        response = await _deliver_sensitive_result(
+        return await _deliver_sensitive_result(
             client=client,
             user_id=user_id,
             action=action,
@@ -159,9 +197,16 @@ async def _execute_idempotent_sensitive_action(
             dm_success_notice=dm_success_notice,
             dm_failed_prefix=dm_failed_prefix,
         )
-        if clean_key:
-            cache[cache_key] = (now + _IDEMPOTENCY_TTL_SECONDS, dict(response))
-        return response
+
+    return await _run_idempotent_action(
+        request,
+        user_id=user_id,
+        action=action,
+        lock_target=target_key,
+        cache_target=target_key,
+        idempotency_key=idempotency_key,
+        executor=_run,
+    )
 
 
 def _build_user_info_dto(
@@ -206,6 +251,16 @@ def _build_user_info_dto(
         has_username=has_username,
         cycle_watch_time_seconds=int(data.get("cycle_watch_time_seconds", 0)),
         total_watch_time_seconds=int(data.get("total_watch_time_seconds", 0)),
+        enable_points_traffic_pack=bool(data.get("enable_points_traffic_pack", True)),
+        traffic_pack_cost_score=int(
+            data.get("traffic_pack_cost_score", DEFAULT_TRAFFIC_PACK_COST_SCORE)
+        ),
+        traffic_pack_size_gib=float(
+            data.get("traffic_pack_size_gib", DEFAULT_TRAFFIC_PACK_SIZE_GIB)
+        ),
+        traffic_pack_unit_bytes=int(
+            data.get("traffic_pack_unit_bytes", DEFAULT_TRAFFIC_PACK_UNIT_BYTES)
+        ),
         media_accounts=[
             MediaAccountDto(
                 server_id=item["media_user"].server_id,
@@ -242,9 +297,15 @@ def _build_user_info_dto(
                 ),
                 enable_traffic=bool(item.get("enable_traffic", False)),
                 cycle_traffic_bytes=int(item.get("cycle_traffic_bytes", 0)),
+                traffic_pack_bytes=int(item.get("traffic_pack_bytes", 0)),
                 total_traffic_bytes=int(item.get("total_traffic_bytes", 0)),
                 traffic_quota_bytes=int(item.get("traffic_quota_bytes", 0)),
                 traffic_remaining_bytes=item.get("traffic_remaining_bytes"),
+                traffic_total_remaining_bytes=item.get("traffic_total_remaining_bytes"),
+                is_traffic_suspended=bool(item.get("is_traffic_suspended", False)),
+                enable_traffic_auto_suspend=bool(
+                    item.get("enable_traffic_auto_suspend", False)
+                ),
             )
             for item in media_accounts_data
         ],
@@ -608,6 +669,61 @@ async def renew_account(
     if not result.success:
         return {"success": False, "message": result.message}
     return {"success": True, "message": result.message}
+
+
+@router.post(
+    "/accounts/{server_id}/redeem_traffic_pack",
+    response_model=TrafficPackRedeemResponse,
+)
+async def redeem_account_traffic_pack(
+    request: Request,
+    server_id: int,
+    payload: TrafficPackRedeemDto | None = Body(default=None),
+    x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
+    user_id: int = Depends(require_owned_media_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """使用全局积分兑换指定媒体账号的持久化流量包，并在满足组合状态条件时自动解除超流停用
+
+    Args:
+        request: FastAPI 请求对象。
+        server_id: 目标媒体服务器 ID。
+        payload: 兑换份数负载（缺省兑换 1 包）。
+        x_idempotency_key: 可选幂等请求键，防止网络重传导致重复扣分。
+        user_id: 已校验归属权的当前 Telegram 用户 ID。
+        session: 异步数据库会话。
+
+    Returns:
+        符合 ``TrafficPackRedeemResponse`` 契约的兑换结果字典。
+    """
+    quantity = payload.quantity if payload is not None else 1
+
+    async def _run() -> dict[str, Any]:
+        service = AccountService(request.app, session)
+        result = await service.redeem_traffic_pack(
+            user_id, server_id, quantity=quantity
+        )
+        extra = result.extra_data if isinstance(result.extra_data, dict) else {}
+        return {
+            "success": bool(result.success),
+            "message": result.message,
+            "added_bytes": int(extra.get("added_bytes", 0)),
+            "cost_score": int(extra.get("cost_score", 0)),
+            "remaining_score": extra.get("remaining_score"),
+            "traffic_pack_bytes": int(extra.get("traffic_pack_bytes", 0)),
+            "is_traffic_suspended": bool(extra.get("is_traffic_suspended", False)),
+            "unsuspended": bool(extra.get("unsuspended", False)),
+        }
+
+    return await _run_idempotent_action(
+        request,
+        user_id=user_id,
+        action="redeem_traffic_pack",
+        lock_target=str(server_id),
+        cache_target=f"{server_id}:{quantity}",
+        idempotency_key=x_idempotency_key,
+        executor=_run,
+    )
 
 
 @router.post("/accounts/{server_id}/toggle_auto_renew", response_model=ToggleResponse)

@@ -240,6 +240,23 @@ class MediaRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def find_traffic_suspended(
+        self, server_id: int | None = None
+    ) -> Sequence[MediaUser]:
+        """查询处于超流停用状态的媒体账号列表（可选按服务器过滤）
+
+        Args:
+            server_id: 目标服务器实例 ID；为 ``None`` 时查询全部服务器。
+
+        Returns:
+            满足 ``is_traffic_suspended == True`` 的 ``MediaUser`` 序列。
+        """
+        stmt = select(MediaUser).where(MediaUser.is_traffic_suspended.is_(True))
+        if server_id is not None:
+            stmt = stmt.where(MediaUser.server_id == server_id)
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def backfill_missing_billing_anchors(
         self, *, now: datetime | None = None
     ) -> int:
@@ -318,8 +335,8 @@ class MediaRepository:
         # 仅重置本期保活计数与亚秒余数，绝不清除历史累计总时长 total_watch_time_seconds
         media_user.cycle_watch_time_seconds = 0
         media_user.watch_time_remainder_ms = 0
-        if cycle.is_reset:
-            # 过期后补续重锚到新周期时清零本期流量计数与预警标记，提前续期则留待 next_reset_at 重置
+        if cycle.is_reset and not media_user.is_traffic_suspended:
+            # 过期后补续重锚到新周期时清零本期流量计数与预警标记；若仍处于超流停用则保持流量状态隔离，提前续期留待 next_reset_at 重置
             media_user.cycle_traffic_bytes = 0
             media_user.traffic_alert_80_sent = False
             media_user.traffic_alert_100_sent = False

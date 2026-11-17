@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
+from httpx2 import HTTPError, HTTPStatusError
+from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from models.emby import MediaFolder
@@ -133,3 +136,107 @@ class MediaService[
     def get_all_items(self) -> AsyncIterator[BaseItemT_co]:
         """获取所有媒体项的异步生成器"""
         raise NotImplementedError
+
+
+def compute_external_disabled_state(
+    *, is_banned: bool, is_traffic_suspended: bool
+) -> bool:
+    """计算外部媒体服务器账号组合禁用状态：过期封禁 OR 超流停用（遵循 ADR-0002）
+
+    Args:
+        is_banned: 账号是否处于过期封禁状态。
+        is_traffic_suspended: 账号是否处于超流停用状态。
+
+    Returns:
+        外部服务器 ``IsDisabled`` 应保持的目标布尔状态。
+    """
+    return bool(is_banned or is_traffic_suspended)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalDisableSyncResult:
+    """外部媒体服务器禁用态同步结果
+
+    Attributes:
+        ok: 是否已完成目标禁用态同步（含外部 404 按策略视为已同步的情况）。
+        error: 同步失败时捕获的异常对象；客户端缺失或同步成功时为 ``None``。
+        missing_client: 是否因媒体服务器客户端未连接而未执行外部请求。
+        not_found: 外部媒体服务器是否返回 HTTP 404（账号已不存在）。
+    """
+
+    ok: bool
+    error: Exception | None = None
+    missing_client: bool = False
+    not_found: bool = False
+
+
+async def sync_external_disabled_state(
+    client: MediaService[Any, Any, Any, Any, Any] | None,
+    *,
+    media_id: str,
+    target_disabled: bool,
+    treat_404_as_synced: bool = False,
+    log_context: str = "同步媒体账号禁用态",
+    user_id: int | None = None,
+    server_id: int | None = None,
+) -> ExternalDisableSyncResult:
+    """统一执行外部媒体服务器禁用/解封调用及客户端缺失、404 与传输异常处理
+
+    Args:
+        client: 目标服务器的 ``MediaService`` 客户端实例（可为 ``None``）。
+        media_id: 外部媒体账号 ID。
+        target_disabled: 期望写入外部服务器的 ``IsDisabled`` 状态。
+        treat_404_as_synced: 外部返回 HTTP 404 时是否视作目标状态已同步。
+        log_context: 日志场景描述，用于区分续期、兑换、停用或批量释放调用方。
+        user_id: 关联 Telegram 用户 ID（可选，仅用于日志）。
+        server_id: 关联媒体服务器 ID（可选，仅用于日志）。
+
+    Returns:
+        包含成功标志、异常对象与客户端缺失/404 状态的 ``ExternalDisableSyncResult``。
+    """
+    if client is None:
+        logger.warning(
+            "{}跳过，服务器客户端未连接: server_id={}, user_id={}, media_id={}",
+            log_context,
+            server_id,
+            user_id,
+            media_id,
+        )
+        return ExternalDisableSyncResult(ok=False, missing_client=True)
+
+    try:
+        await client.ban_or_unban(media_id, is_ban=target_disabled)
+        return ExternalDisableSyncResult(ok=True)
+    except HTTPStatusError as exc:
+        if exc.response.status_code == 404 and treat_404_as_synced:
+            logger.info(
+                "{}时外部账号已不存在(404)，按已同步继续处理: server_id={}, user_id={}, media_id={}",
+                log_context,
+                server_id,
+                user_id,
+                media_id,
+            )
+            return ExternalDisableSyncResult(ok=True, not_found=True)
+        logger.error(
+            "{}失败: server_id={}, user_id={}, media_id={}, status={}",
+            log_context,
+            server_id,
+            user_id,
+            media_id,
+            exc.response.status_code,
+        )
+        return ExternalDisableSyncResult(
+            ok=False,
+            error=exc,
+            not_found=exc.response.status_code == 404,
+        )
+    except (HTTPError, ValueError, RuntimeError) as exc:
+        logger.error(
+            "{}异常: server_id={}, user_id={}, media_id={}, err={}",
+            log_context,
+            server_id,
+            user_id,
+            media_id,
+            exc,
+        )
+        return ExternalDisableSyncResult(ok=False, error=exc)

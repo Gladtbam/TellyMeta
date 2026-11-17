@@ -41,6 +41,7 @@ from repositories.binding_repo import BindingRepository
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
+from services.account_service import AccountService, format_traffic_release_summary
 from services.media_service import MediaService
 from services.traffic_service import (
     invalidate_traffic_server_cache,
@@ -487,6 +488,18 @@ class SettingsServices:
                         success=False,
                         message=f"流量 UDP 监听切换失败: {exc!s}",
                     )
+                if new_state_str == "false":
+                    (
+                        released_count,
+                        failed_count,
+                    ) = await AccountService(
+                        self.app, self.session
+                    ).release_traffic_suspensions(None)
+                    summary = format_traffic_release_summary(
+                        released_count, failed_count
+                    )
+                    if summary:
+                        return Result(success=True, message=summary)
 
             status_text = "开启" if new_state_str == "true" else "关闭"
             label = ConfigRepository.get_points_sub_switch_label(key)
@@ -597,6 +610,12 @@ class SettingsServices:
         if payload.points_message_daily_cap < 0 or payload.points_spam_threshold < 0:
             return Result(success=False, message="发言积分上限与刷屏阈值不能为负数")
 
+        pack_err = self._validate_traffic_pack_price(
+            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
+        )
+        if pack_err is not None:
+            return pack_err
+
         items = {
             ConfigRepository.KEY_POINTS_RENEW_MODE: payload.points_renew_mode,
             ConfigRepository.KEY_POINTS_RENEW_FIXED: str(payload.points_renew_fixed),
@@ -627,7 +646,48 @@ class SettingsServices:
         for key, value in items.items():
             await self.config_repo.set_settings(key, value)
 
+        await self._save_traffic_pack_price(
+            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
+        )
+
         return Result(success=True, message="积分、签到与定价规则已保存并生效")
+
+    @staticmethod
+    def _validate_traffic_pack_price(
+        cost_score: int | None, size_gib: float | None
+    ) -> Result | None:
+        """校验可选的流量包积分单价与单包容量参数合法性
+
+        Args:
+            cost_score: 单包消耗积分；为 ``None`` 时跳过校验。
+            size_gib: 单包流量容量（GiB）；为 ``None`` 时跳过校验。
+
+        Returns:
+            校验不通过时返回失败 ``Result``，合法时返回 ``None``。
+        """
+        if cost_score is not None and cost_score < 1:
+            return Result(success=False, message="流量包每包消耗积分必须大于 0")
+        if size_gib is not None and (size_gib <= 0 or round(size_gib * (1024**3)) < 1):
+            return Result(success=False, message="流量包单包容量（GiB）必须大于 0")
+        return None
+
+    async def _save_traffic_pack_price(
+        self, cost_score: int | None, size_gib: float | None
+    ) -> None:
+        """按需持久化流量包积分单价与单包容量配置（未传入项保持原值不变）
+
+        Args:
+            cost_score: 单包消耗积分；为 ``None`` 时不覆写现有配置。
+            size_gib: 单包流量容量（GiB）；为 ``None`` 时不覆写现有配置。
+        """
+        if cost_score is not None:
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TRAFFIC_PACK_COST_SCORE, str(int(cost_score))
+            )
+        if size_gib is not None:
+            await self.config_repo.set_settings(
+                ConfigRepository.KEY_TRAFFIC_PACK_SIZE_GIB, str(float(size_gib))
+            )
 
     async def update_policy_config(self, payload: PolicyConfigUpdateDto) -> Result:
         """校验并保存入群验证超时与账号/求片宽限期配置。
@@ -738,6 +798,12 @@ class SettingsServices:
         if payload.flush_interval_seconds < 1:
             return Result(success=False, message="内存聚合刷盘间隔至少为 1 秒")
 
+        pack_err = self._validate_traffic_pack_price(
+            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
+        )
+        if pack_err is not None:
+            return pack_err
+
         prev_cfg = await self.config_repo.get_traffic_config()
         items = {
             ConfigRepository.KEY_TRAFFIC_UDP_HOST: udp_host,
@@ -766,6 +832,10 @@ class SettingsServices:
             with contextlib.suppress(OSError):
                 await sync_traffic_listener(self.app)
             return Result(success=False, message=f"UDP 监听绑定失败: {exc!s}")
+
+        await self._save_traffic_pack_price(
+            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
+        )
 
         return Result(success=True, message="流量 UDP 监听与刷盘配置已保存并生效")
 
@@ -975,6 +1045,7 @@ class SettingsServices:
         api_key: str,
         enable_traffic: bool = False,
         enable_traffic_alert: bool = True,
+        enable_traffic_auto_suspend: bool = False,
         traffic_quota_bytes: int = 0,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
@@ -996,6 +1067,7 @@ class SettingsServices:
                 priority=0,
                 enable_traffic=enable_traffic,
                 enable_traffic_alert=enable_traffic_alert,
+                enable_traffic_auto_suspend=enable_traffic_auto_suspend,
                 traffic_quota_bytes=traffic_quota_bytes,
                 qb_username=qb_username,
                 qb_torrent_limit=qb_torrent_limit,

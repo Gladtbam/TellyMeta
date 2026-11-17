@@ -104,19 +104,91 @@ function formatTrafficBytes(bytes) {
 function formatTrafficQuotaSummary(acc) {
     if (!acc) return '暂无数据';
     const usedText = formatTrafficBytes(acc.cycle_traffic_bytes);
+    const packBytes = Math.max(0, Number(acc.traffic_pack_bytes || 0));
+    const packSuffix = packBytes > 0 ? ` · 流量包 ${formatTrafficBytes(packBytes)}` : '';
+    const suspendSuffix = acc.is_traffic_suspended ? '（已超流停用）' : '';
     if (!acc.enable_traffic) {
-        return acc.cycle_traffic_bytes > 0
-            ? `已用 ${usedText}（当前未开启采集）`
+        return acc.cycle_traffic_bytes > 0 || packBytes > 0
+            ? `已用 ${usedText}${packSuffix}（当前未开启采集）${suspendSuffix}`
             : '当前服务器未开启流量采集';
     }
     const quota = Number(acc.traffic_quota_bytes || 0);
     if (quota <= 0) {
-        return `已用 ${usedText} / 不限`;
+        return `已用 ${usedText} / 不限${packSuffix}`;
     }
     const remaining = acc.traffic_remaining_bytes !== null && acc.traffic_remaining_bytes !== undefined
         ? Number(acc.traffic_remaining_bytes)
         : Math.max(0, quota - Number(acc.cycle_traffic_bytes || 0));
-    return `已用 ${usedText} / 配额 ${formatTrafficBytes(quota)}（剩余 ${formatTrafficBytes(remaining)}）`;
+    return `已用 ${usedText} / 配额 ${formatTrafficBytes(quota)}（基础剩余 ${formatTrafficBytes(remaining)}）${packSuffix}${suspendSuffix}`;
+}
+
+/**
+ * 根据媒体账号组合禁用状态（过期封禁 OR 超流停用）解析状态标签颜色。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @returns {string} CSS 状态颜色值。
+ */
+function resolveAccountStatusColor(acc) {
+    return acc && (acc.is_banned || acc.is_traffic_suspended)
+        ? 'var(--destructive-text-color)'
+        : '#34c759';
+}
+
+/**
+ * 统一处理 Mini App 积分兑换流量包确认、幂等键投递与兑换后刷新。
+ * @param {number|string} serverId 服务器 ID。
+ * @param {object} tg Telegram WebApp 对象。
+ * @param {object} acc 当前媒体账号 DTO 对象。
+ * @param {object} packConfig 全局流量包配置（enabled、costScore、sizeGib）。
+ * @param {Function|null} onSuccess 可选成功回调。
+ */
+async function handleRedeemTrafficPack(serverId, tg, acc, packConfig, onSuccess = null) {
+    if (packConfig && packConfig.enabled === false) {
+        tg.showAlert('当前未开放积分兑换流量包功能。');
+        return;
+    }
+    const costScore = packConfig && packConfig.costScore ? packConfig.costScore : 50;
+    const sizeGib = packConfig && packConfig.sizeGib ? packConfig.sizeGib : 10;
+    let unsuspendHint = '';
+    if (acc && acc.is_traffic_suspended) {
+        unsuspendHint = acc.is_banned
+            ? '\n兑换成功后将解除超流停用；由于账号同时处于过期封禁，需续期后才能恢复播放权限。'
+            : '\n兑换成功后将立即为您解除超流停用并恢复播放权限。';
+    }
+    if (!confirm(`确认消耗 ${costScore} 积分兑换 ${sizeGib} GiB 流量包吗？${unsuspendHint}`)) {
+        return;
+    }
+
+    try {
+        tg.MainButton.text = '正在兑换流量包...';
+        tg.MainButton.show();
+        tg.MainButton.showProgress();
+
+        const idempotencyKey = (window.crypto && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const res = await fetch(`/api/miniapp/accounts/${serverId}/redeem_traffic_pack`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Telegram-Init-Data': tg.initData,
+                'X-Idempotency-Key': idempotencyKey
+            },
+            body: JSON.stringify({ quantity: 1 })
+        });
+        const data = await res.json();
+        tg.MainButton.hideProgress();
+        tg.MainButton.hide();
+
+        if (!res.ok || !data.success) {
+            throw new Error(data.detail || data.message || '兑换流量包失败');
+        }
+        tg.showAlert(data.message || '流量包兑换成功');
+        if (onSuccess) onSuccess(data);
+    } catch (e) {
+        tg.MainButton.hideProgress();
+        tg.MainButton.hide();
+        tg.showAlert(e.message || '兑换流量包失败');
+    }
 }
 
 /**
