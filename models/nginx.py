@@ -30,6 +30,9 @@ _MEDIA_SEGMENT_EXTENSIONS = frozenset(
     }
 )
 
+_MANIFEST_EXTENSIONS = frozenset({"m3u8", "mpd"})
+_SUBTITLE_EXTENSIONS = frozenset({"srt", "ass", "ssa", "vtt", "sub", "idx", "sup"})
+
 _EXCLUDED_PATH_KEYWORDS = (
     "/images/",
     "/subtitles/",
@@ -293,14 +296,13 @@ class Nginx(BaseModel):
         """自动将 body_bytes_sent 转换为最合适的 1024 进制单位（B, KiB, MiB, GiB, TiB）"""
         return format_traffic_bytes(self.body_bytes_sent)
 
-    def _match_media_item_id(self, path: str) -> str | None:
-        """判断请求路径是否为音视频直连流或 HLS/DASH 媒体分片，并提取媒体项 ID
-
-        Args:
-            path: URL 路径部分（不含 query）。
+    def _parse_media_path(
+        self, path: str
+    ) -> tuple[str, str, list[str], str, str] | None:
+        """拆解音视频/下载路径结构并过滤静态、封面、字幕等非媒体关键词路径
 
         Returns:
-            属于有效音视频直连流、下载流或媒体分片时返回媒体项 ID，否则返回 ``None``。
+            ``(resource, item_id, tail_segments, filename, ext)``，不符合媒体资源形态则返回 ``None``。
         """
         lowered_path = path.lower()
         if any(keyword in lowered_path for keyword in _EXCLUDED_PATH_KEYWORDS):
@@ -323,6 +325,21 @@ class Nginx(BaseModel):
         tail = parts[offset + 2 :]
         filename = tail[-1].lower()
         ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        return resource, item_id, tail, filename, ext
+
+    def _match_media_item_id(self, path: str) -> str | None:
+        """判断请求路径是否为音视频直连流或 HLS/DASH 媒体分片，并提取媒体项 ID
+
+        Args:
+            path: URL 路径部分（不含 query）。
+
+        Returns:
+            属于有效音视频直连流、下载流或媒体分片时返回媒体项 ID，否则返回 ``None``。
+        """
+        parsed = self._parse_media_path(path)
+        if parsed is None:
+            return None
+        resource, item_id, tail, filename, ext = parsed
 
         if resource == "items":
             if len(tail) == 1 and filename in _ITEM_DOWNLOAD_SEGMENTS:
@@ -333,7 +350,7 @@ class Nginx(BaseModel):
             return None
 
         # 明确排除播放列表索引（.m3u8/.mpd）与外挂/分段字幕文件，仅统计真实媒体流载体
-        if ext in ("m3u8", "mpd", "srt", "ass", "ssa", "vtt", "sub", "idx", "sup"):
+        if ext in _MANIFEST_EXTENSIONS or ext in _SUBTITLE_EXTENSIONS:
             return None
 
         if len(tail) == 1 and _DIRECT_STREAM_NAME_RE.match(filename):
@@ -344,6 +361,10 @@ class Nginx(BaseModel):
 
         return None
 
+    def _is_valid_media_get(self) -> bool:
+        """校验日志条目是否为成功的 HTTP GET 响应（200 或 206）"""
+        return self.method.upper() == "GET" and self.status in (200, 206)
+
     @property
     def is_media_stream(self) -> bool:
         """判断当前日志是否属于可计费的音视频直连流或 HLS/DASH 媒体分片响应
@@ -351,14 +372,25 @@ class Nginx(BaseModel):
         仅统计 HTTP ``GET`` 且状态码为 ``200``/``206``、响应字节大于 ``0`` 的媒体流请求，
         排除封面图片、字幕、播放列表清单、静态网页及普通 API 请求。
         """
-        if self.method.upper() != "GET":
-            return False
-        if self.status not in (200, 206):
-            return False
-        if self.body_bytes_sent <= 0:
+        if not self._is_valid_media_get() or self.body_bytes_sent <= 0:
             return False
         path = urlparse(self.url).path
         return self._match_media_item_id(path) is not None
+
+    @property
+    def is_playback_manifest(self) -> bool:
+        """判断当前日志是否为音视频播放列表清单（``.m3u8`` / ``.mpd``）响应
+
+        用于在不计入流量字节的前提下提前预热 ``PlaySessionId`` 归因映射，
+        保障后续仅携带 ``PlaySessionId`` 的 HLS/DASH 媒体分片可零回查精确归因。
+        """
+        if not self._is_valid_media_get():
+            return False
+        parsed = self._parse_media_path(urlparse(self.url).path)
+        if parsed is None:
+            return False
+        resource, _item_id, _tail, _filename, ext = parsed
+        return resource in ("videos", "audio") and ext in _MANIFEST_EXTENSIONS
 
     @property
     def url_info(self) -> UrlInfo:

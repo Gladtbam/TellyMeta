@@ -350,22 +350,25 @@ def _warm_traffic_attribution_cache(
     *,
     media_user_id: str | None,
     device_id: str | None,
+    play_session_id: str | None = None,
 ) -> None:
-    """将 Emby/Jellyfin 认证与播放 Webhook 携带的用户设备映射预热到流量归因缓存
+    """将 Emby/Jellyfin 认证与播放 Webhook 携带的设备/会话映射预热到流量归因缓存
 
     Args:
         request: FastAPI 请求对象，用于定位 ``app.state.traffic_service``。
         server_id: 当前触发 Webhook 的服务器实例 ID。
         media_user_id: 媒体平台侧用户 ID。
         device_id: 客户端设备标识（可为空）。
+        play_session_id: 播放会话标识（可为空）。
     """
-    if not media_user_id or not device_id:
+    if not media_user_id or (not device_id and not play_session_id):
         return
     record_traffic_webhook_session(
         request.app,
         server_id,
         media_user_id=media_user_id,
         device_id=device_id,
+        play_session_id=play_session_id,
     )
 
 
@@ -419,12 +422,14 @@ async def emby_webhook(
     else:
         playback_event = normalize_emby_playback_event(payload)
         if playback_event is not None:
-            # 播放事件同步刷新设备归因缓存，确保同一设备切换账号后实时覆盖旧映射
+            # 播放事件同步刷新设备与 PlaySessionId 归因缓存，确保同设备换号及纯 PlaySessionId 分片准确命中
+            playback_info = getattr(payload, "playback_info", None)
             _warm_traffic_attribution_cache(
                 request,
                 server_instance.id,
                 media_user_id=playback_event.media_user_id,
                 device_id=_extract_emby_device_id(payload),
+                play_session_id=getattr(playback_info, "play_session_id", None),
             )
         await _process_playback_webhook(
             request, session, server_instance, playback_event
@@ -481,12 +486,16 @@ async def jellyfin(
     else:
         playback_event = normalize_jellyfin_playback_event(payload)
         if playback_event is not None:
-            # 播放事件同步刷新设备归因缓存，确保同一设备切换账号后实时覆盖旧映射
+            # 播放事件同步刷新设备与 PlaySessionId 归因缓存，确保同设备换号及纯 PlaySessionId 分片准确命中
             _warm_traffic_attribution_cache(
                 request,
                 server_instance.id,
                 media_user_id=playback_event.media_user_id,
                 device_id=getattr(payload, "device_id", None),
+                play_session_id=(
+                    getattr(payload, "play_session_id", None)
+                    or getattr(payload, "PlaySessionId", None)
+                ),
             )
         await _process_playback_webhook(
             request, session, server_instance, playback_event
