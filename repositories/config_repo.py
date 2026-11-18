@@ -109,9 +109,7 @@ class ConfigRepository:
     # 播放时长统计与 Emby 心跳配置键
     KEY_ENABLE_WATCH_TIME = "watch_time:enable"
     KEY_WATCH_TIME_DAILY_CAP_SECONDS = "watch_time:daily_cap_seconds"
-    KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS = (
-        "watch_time:heartbeat_interval_seconds"
-    )
+    KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS = "watch_time:heartbeat_interval_seconds"
     KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS = "watch_time:disconnect_grace_seconds"
 
     # 流量统计、UDP 接收、刷盘与流量包兑换单价配置键

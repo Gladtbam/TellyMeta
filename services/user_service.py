@@ -251,7 +251,9 @@ class UserService:
 
                         updated_mu = await self.media_repo.extend_expiry(fresh_mu, days)
                         schedule_account_lifecycle_jobs(
-                            getattr(getattr(self.app, "state", None), "scheduler", None),
+                            getattr(
+                                getattr(self.app, "state", None), "scheduler", None
+                            ),
                             updated_mu,
                         )
 

@@ -225,9 +225,9 @@ class SettingsServices:
             try:
                 await self._init_and_add_client(server)
                 invalidate_traffic_server_cache(self.app)
-                await AccountService(self.app, self.session).calibrate_account_lifecycles(
-                    server_id=server_id
-                )
+                await AccountService(
+                    self.app, self.session
+                ).calibrate_account_lifecycles(server_id=server_id)
                 return Result(
                     True,
                     TelegramMessage.render_markdown(

@@ -1772,7 +1772,9 @@ class AccountService:
             getattr(self.app, "state", None), "traffic_service", None
         )
         if traffic_service is not None and hasattr(traffic_service, "flush"):
-            with contextlib.suppress(SQLAlchemyError, OSError, RuntimeError, ValueError):
+            with contextlib.suppress(
+                SQLAlchemyError, OSError, RuntimeError, ValueError
+            ):
                 await traffic_service.flush()
 
     async def _clear_or_sync_traffic_suspension_locked(
@@ -1927,7 +1929,9 @@ class AccountService:
             and fresh_srv.enable_traffic_auto_suspend
         )
         quota = max(0, int(fresh_srv.traffic_quota_bytes or 0)) if fresh_srv else 0
-        base_rem = max(0, quota - int(fresh_mu.cycle_traffic_bytes or 0)) if quota > 0 else 1
+        base_rem = (
+            max(0, quota - int(fresh_mu.cycle_traffic_bytes or 0)) if quota > 0 else 1
+        )
         pack_rem = max(0, int(fresh_mu.traffic_pack_bytes or 0))
         should_release = (
             (not global_traffic_on)
@@ -2008,7 +2012,10 @@ class AccountService:
                     remove_account_lifecycle_jobs(scheduler, uid, sid)
                     continue
                 fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
-                reset_done, unsuspended = await self._reconcile_account_traffic_step_locked(
+                (
+                    reset_done,
+                    unsuspended,
+                ) = await self._reconcile_account_traffic_step_locked(
                     fresh_mu, fresh_srv, now, scheduler
                 )
                 if reset_done or unsuspended:
@@ -2080,7 +2087,10 @@ class AccountService:
                     remove_account_lifecycle_jobs(scheduler, uid, sid)
                     continue
                 fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
-                reset_done, unsuspended = await self._reconcile_account_traffic_step_locked(
+                (
+                    reset_done,
+                    unsuspended,
+                ) = await self._reconcile_account_traffic_step_locked(
                     fresh_mu, fresh_srv, now, scheduler
                 )
                 if reset_done:
@@ -2157,9 +2167,7 @@ class AccountService:
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if fresh_mu is None:
-                remove_account_lifecycle_jobs(
-                    self._get_scheduler(), user_id, server_id
-                )
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
                 return "skipped"
             fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
             res = await self._reset_single_account_traffic_locked(
@@ -2299,9 +2307,7 @@ class AccountService:
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if fresh_mu is None:
-                remove_account_lifecycle_jobs(
-                    self._get_scheduler(), user_id, server_id
-                )
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
                 return "missing"
             if fresh_mu.is_banned:
                 schedule_account_lifecycle_jobs(
@@ -2362,9 +2368,7 @@ class AccountService:
             pre_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             pre_now = self._now()
             if pre_mu is None:
-                remove_account_lifecycle_jobs(
-                    self._get_scheduler(), user_id, server_id
-                )
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
                 return "skipped"
             if pre_mu.is_banned or pre_mu.expires_at > pre_now:
                 schedule_account_lifecycle_jobs(
@@ -2398,9 +2402,7 @@ class AccountService:
             fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             now = self._now()
             if fresh_user is None:
-                remove_account_lifecycle_jobs(
-                    self._get_scheduler(), user_id, server_id
-                )
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
                 return "skipped"
             if fresh_user.is_banned or fresh_user.expires_at > now:
                 logger.info(
@@ -2458,9 +2460,7 @@ class AccountService:
                 return "retryable_error"
 
             fresh_user = await self.media_repo.mark_banned(fresh_user)
-            schedule_account_lifecycle_jobs(
-                self._get_scheduler(), fresh_user, now=now
-            )
+            schedule_account_lifecycle_jobs(self._get_scheduler(), fresh_user, now=now)
             return "banned"
 
     async def delete_expired_banned_account(
@@ -2483,9 +2483,7 @@ class AccountService:
             fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             now = self._now()
             if fresh_user is None:
-                remove_account_lifecycle_jobs(
-                    self._get_scheduler(), user_id, server_id
-                )
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
                 return "skipped"
             if not fresh_user.is_banned or fresh_user.delete_at is None:
                 schedule_account_lifecycle_jobs(
