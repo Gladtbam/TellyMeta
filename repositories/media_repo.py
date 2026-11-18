@@ -362,8 +362,9 @@ class MediaRepository:
         副作用：
         - 延长 ``expires_at``、解除 ``is_banned`` 并清空 ``delete_at``；
         - 清零本周期有效播放时长及亚秒余数（保留 ``total_watch_time_seconds``）；
-        - 若发生过期重锚（``cycle.is_reset`` 为 ``True``），同步清零本周期基础流量与 80%/100% 告警标志
-          （保留 ``total_traffic_bytes``），未过期提前续期则保留当前进行中的流量账期不变。
+        - 若发生过期重锚（``cycle.is_reset``）或本次跨过已到点重置边界，在非超流停用状态下同步清零
+          本周期基础流量与 80%/100% 告警标志（保留 ``total_traffic_bytes``）；若仍处于未到点的
+          超流停用状态，则保留既有待重置周期节点，避免把即将到来的自动重置推迟一整个自然月。
 
         Args:
             media_user: 需要续期的媒体账号对象
@@ -373,25 +374,48 @@ class MediaRepository:
         Returns:
             MediaUser: 更新后的媒体账号对象
         """
+        effective_now = now or datetime.now()
+        old_cycle_started_at = media_user.cycle_started_at
+        old_next_reset_at = media_user.next_reset_at
         cycle = calculate_renewal_cycle(
             current_expires_at=media_user.expires_at,
             anchor_day=media_user.anchor_day,
-            current_cycle_started_at=media_user.cycle_started_at,
-            current_next_reset_at=media_user.next_reset_at,
+            current_cycle_started_at=old_cycle_started_at,
+            current_next_reset_at=old_next_reset_at,
             months=months,
-            now=now,
+            now=effective_now,
+        )
+        crossed_due_reset = (
+            old_next_reset_at is not None
+            and old_next_reset_at <= effective_now
+            and cycle.next_reset_at > old_next_reset_at
+        )
+        preserve_pending_suspended_cycle = (
+            bool(media_user.is_traffic_suspended)
+            and old_next_reset_at is not None
+            and old_next_reset_at > effective_now
         )
         media_user.anchor_day = cycle.anchor_day
-        media_user.cycle_started_at = cycle.cycle_started_at
-        media_user.next_reset_at = cycle.next_reset_at
+        if preserve_pending_suspended_cycle:
+            media_user.cycle_started_at = (
+                old_cycle_started_at
+                if old_cycle_started_at is not None
+                else cycle.cycle_started_at
+            )
+            media_user.next_reset_at = old_next_reset_at
+        else:
+            media_user.cycle_started_at = cycle.cycle_started_at
+            media_user.next_reset_at = cycle.next_reset_at
         media_user.expires_at = cycle.expires_at
         media_user.is_banned = False  # 续期时自动解封
         media_user.delete_at = None  # 清除删除时间
         # 仅重置本期保活计数与亚秒余数，绝不清除历史累计总时长 total_watch_time_seconds
         media_user.cycle_watch_time_seconds = 0
         media_user.watch_time_remainder_ms = 0
-        if cycle.is_reset and not media_user.is_traffic_suspended:
-            # 过期后补续重锚到新周期时清零本期流量计数与预警标记；若仍处于超流停用则保持流量状态隔离，提前续期留待 next_reset_at 重置
+        if (
+            cycle.is_reset or crossed_due_reset
+        ) and not media_user.is_traffic_suspended:
+            # 过期重锚或跨过已到点重置边界时清零本期流量与预警标记；未到点的超流停用保持双状态隔离
             media_user.cycle_traffic_bytes = 0
             media_user.traffic_alert_80_sent = False
             media_user.traffic_alert_100_sent = False

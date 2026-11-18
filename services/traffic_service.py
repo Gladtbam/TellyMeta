@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database import async_session
+from core.media_utils import expand_media_id_candidates, get_account_lock
 from core.telegram_message import TelegramMessage
 from models.nginx import Nginx, UrlInfo, format_traffic_bytes
 from models.orm import MediaUser, ServerInstance, ServerType
@@ -30,7 +31,6 @@ from services.media_service import (
     sync_external_disabled_state,
 )
 from services.notification_service import NotificationService
-from services.watch_time_service import expand_media_id_candidates, get_account_lock
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -180,7 +180,7 @@ class TrafficService(asyncio.DatagramProtocol):
         self._bound_host: str | None = None
         self._bound_port: int | None = None
 
-        # (server_id, api_key/device_id) -> (media_user_id, expire_monotonic)
+        # 归因缓存映射：(server_id, api_key/play_session_id/device_id) -> (媒体平台用户 ID, 单调时钟过期时间)
         self._token_cache: dict[tuple[int, str], tuple[str, float]] = {}
         self._play_session_cache: dict[tuple[int, str], tuple[str, float]] = {}
         self._device_cache: dict[tuple[int, str], tuple[str, float]] = {}
@@ -252,7 +252,7 @@ class TrafficService(asyncio.DatagramProtocol):
         play_session_id: str | None = None,
         device_id: str | None = None,
     ) -> None:
-        """将单个媒体用户的令牌、播放会话与设备标识统一写入对应 TTL 归因缓存
+        """将单个媒体账号的令牌、播放会话与设备标识统一写入对应 TTL 归因缓存
 
         Args:
             server_id: 媒体服务器实例 ID。
@@ -509,7 +509,7 @@ class TrafficService(asyncio.DatagramProtocol):
         play_session_id: str | None = None,
         device_id: str | None,
     ) -> tuple[str | None, str | None]:
-        """从带 TTL 的内存归因缓存检索媒体用户 ID 及命中的标识类型
+        """从带 TTL 的内存归因缓存检索媒体账号平台 ID 及命中的标识类型
 
         Args:
             server_id: 目标服务器 ID。
@@ -533,23 +533,6 @@ class TrafficService(asyncio.DatagramProtocol):
                 return uid, source_name
 
         return None, None
-
-    def _lookup_cached_attribution(
-        self,
-        server_id: int,
-        *,
-        api_key: str | None,
-        play_session_id: str | None = None,
-        device_id: str | None,
-    ) -> str | None:
-        """从带 TTL 的内存归因缓存检索媒体平台用户 ID（Token > PlaySessionId > DeviceId）"""
-        uid, _ = self._lookup_cached_attribution_with_source(
-            server_id,
-            api_key=api_key,
-            play_session_id=play_session_id,
-            device_id=device_id,
-        )
-        return uid
 
     async def _refresh_active_sessions_throttled(self, server_id: int) -> None:
         """带短期节流保护回查目标媒体服务器 ``/Sessions`` 接口并刷新归因缓存
@@ -637,15 +620,6 @@ class TrafficService(asyncio.DatagramProtocol):
             )
 
         return None, None
-
-    async def _resolve_media_user_id(
-        self,
-        server_id: int,
-        url_info: UrlInfo,
-    ) -> str | None:
-        """按 Token -> PlaySessionId -> DeviceId 优先级检索缓存，未命中时节流回查 ``/Sessions``"""
-        uid, _ = await self._resolve_media_user_with_source(server_id, url_info)
-        return uid
 
     async def _drain_inflight_tasks(self) -> None:
         """等待所有已入队的 UDP 解析/归因异步任务完成"""

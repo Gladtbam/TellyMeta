@@ -734,7 +734,7 @@ async def toggle_account_auto_renew(
     user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """切换或设置指定媒体账户的自动保活开关
+    """切换或设置指定媒体账号的自动保活开关
 
     Args:
         request: FastAPI 请求对象

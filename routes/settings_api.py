@@ -216,7 +216,18 @@ async def update_watch_time_config_endpoint(
     payload: WatchTimeConfigUpdateDto,
     session: AsyncSession = Depends(get_db),
 ):
-    """更新播放时长日上限、Emby 心跳间隔与断线宽限配置"""
+    """更新播放时长日上限、Emby 心跳间隔与断线宽限配置
+
+    副作用：持久化配置并刷新缓存，同时热更新运行中 Emby 心跳任务触发周期。
+
+    Args:
+        request: FastAPI 请求对象，用于访问运行期应用状态与调度器。
+        payload: 播放时长策略配置更新载荷。
+        session: 异步数据库会话。
+
+    Returns:
+        包含成功状态、配置键 ``watch_time_config`` 与提示文案的字典。
+    """
     service = SettingsServices(request.app, session)
     result = await service.update_watch_time_config(payload)
     if not result.success:
@@ -238,7 +249,18 @@ async def update_traffic_config_endpoint(
     payload: TrafficConfigUpdateDto,
     session: AsyncSession = Depends(get_db),
 ):
-    """更新 Nginx 流量 UDP 监听地址、端口与内存聚合刷盘间隔配置"""
+    """更新 Nginx 流量 UDP 监听地址、端口与内存聚合刷盘间隔配置
+
+    副作用：保存配置后按新参数热重载或绑定 ``TrafficService`` UDP 监听套接字。
+
+    Args:
+        request: FastAPI 请求对象，用于访问应用状态中的流量采集服务。
+        payload: 流量监听及流量包单价配置更新载荷。
+        session: 异步数据库会话。
+
+    Returns:
+        包含成功状态、配置键 ``traffic_config`` 与提示文案的字典。
+    """
     service = SettingsServices(request.app, session)
     result = await service.update_traffic_config(payload)
     if not result.success:
@@ -462,13 +484,28 @@ async def get_server_detail(server_id: int, session: AsyncSession = Depends(get_
 async def create_server(
     request: Request, data: ServerCreate, session: AsyncSession = Depends(get_db)
 ):
-    """创建服务器"""
+    """创建服务器实例并持久化有效期、播放时长保活与流量配额初始配置
+
+    副作用：写入新服务器记录、初始化对应媒体/下载器客户端并刷新流量路由缓存。
+
+    Args:
+        request: FastAPI 请求对象。
+        data: 创建服务器请求载荷。
+        session: 异步数据库会话。
+
+    Returns:
+        包含成功状态与提示文案的字典。
+    """
     service = SettingsServices(request.app, session)
     result = await service.add_server(
         data.name,
         data.server_type,
         data.url,
         data.api_key,
+        registration_expiry_months=data.registration_expiry_months,
+        enable_watch_time=data.enable_watch_time,
+        enable_watch_time_renewal=data.enable_watch_time_renewal,
+        watch_time_renewal_threshold_seconds=data.watch_time_renewal_threshold_seconds,
         enable_traffic=data.enable_traffic,
         enable_traffic_alert=data.enable_traffic_alert,
         enable_traffic_auto_suspend=data.enable_traffic_auto_suspend,

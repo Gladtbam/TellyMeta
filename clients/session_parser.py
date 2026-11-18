@@ -1,6 +1,5 @@
 """Emby 与 Jellyfin `/Sessions` 结构化活跃会话解析辅助模块"""
 
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, cast
 from urllib.parse import parse_qs, urlsplit
@@ -8,6 +7,8 @@ from uuid import UUID
 
 from pydantic import TypeAdapter
 
+from core.media_utils import AUTH_TOKEN_RE
+from core.media_utils import clean_str as _clean_str
 from services.media_service import ActiveSession
 
 _SESSION_TOKEN_KEYS: tuple[str, ...] = (
@@ -22,11 +23,6 @@ _PLAY_SESSION_ID_KEYS: tuple[str, ...] = ("PlaySessionId", "playSessionId")
 _URL_TOKEN_PARAM_NAMES: tuple[str, ...] = ("api_key", "apikey", "token")
 _PLAY_SESSION_PARAM_NAMES: tuple[str, ...] = ("playsessionid",)
 _MEDIA_SOURCE_URL_FIELDS: tuple[str, ...] = ("DirectStreamUrl", "TranscodingUrl")
-# 匹配 Emby/Jellyfin Authorization 请求头中的 Token 字段（group(1) 为双引号包裹值，group(2) 为未加引号值）
-_AUTH_TOKEN_RE = re.compile(
-    r'(?:^|[,\s])Token\s*=\s*(?:"([^"]*)"|([^,\s]+))',
-    re.IGNORECASE,
-)
 
 
 class _PlayStateLike(Protocol):
@@ -60,21 +56,6 @@ class _SessionLike(Protocol):
 
     @property
     def PlayState(self) -> _PlayStateLike | None: ...
-
-
-def _clean_str(value: Any) -> str | None:
-    """将字符串或 UUID 值归一化为非空字符串，空白字符串转为 ``None``
-
-    Args:
-        value: 待归一化的字段值。
-
-    Returns:
-        去除首尾空白后的非空字符串；为 ``None`` 或全空白时返回 ``None``。
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _get_field(source: Any, name: str) -> Any:
@@ -211,7 +192,7 @@ def _extract_token_from_auth_header(header_value: str) -> str | None:
     Returns:
         提取并归一化后的令牌字符串；未匹配有效 ``Token`` 字段时返回 ``None``。
     """
-    match = _AUTH_TOKEN_RE.search(header_value)
+    match = AUTH_TOKEN_RE.search(header_value)
     if match is None:
         return None
     # 兼容双引号包裹 Token="..." 与未加引号 Token=... 两种写法

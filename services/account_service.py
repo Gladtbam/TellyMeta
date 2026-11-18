@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.billing_anchor import backfill_billing_cycle, resolve_anchored_cycle_window
 from core.config import get_settings
+from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
     clear_traffic_unsuspend_job,
     parse_lifecycle_job_account,
@@ -43,7 +44,7 @@ from services.media_service import (
 )
 from services.notification_service import NotificationService
 from services.user_service import Result
-from services.watch_time_service import evaluate_watch_time_renewal, get_account_lock
+from services.watch_time_service import evaluate_watch_time_renewal
 
 settings = get_settings()
 
@@ -620,6 +621,7 @@ class AccountService:
         Returns:
             续期操作结果 ``Result``，携带成功状态与通知文案
         """
+        await self._flush_pending_traffic()
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -674,15 +676,36 @@ class AccountService:
                         False, f"续期失败，您的积分不足，续期需要 {renew_score} 积分。"
                     )
 
-            # 宽限期内续期时，先在媒体服务器上恢复账户，再扣减积分并更新本地周期与清零本期保活时长
-            restore_err = await self._restore_external_if_disabled(
-                client=client,
-                media_info=media_info,
-                media_user=media_user,
-                action_label="续期",
+            # 若续期时当前周期重置节点已到点或已逾期，先结清上期流量账期与超流解封，避免新周期吞掉重置
+            was_traffic_suspended = bool(media_user.is_traffic_suspended)
+            was_banned = bool(media_user.is_banned)
+            (
+                media_user,
+                retry_unsuspend,
+            ) = await self._settle_due_traffic_reset_before_renewal_locked(
+                media_user,
+                server,
+                now=now,
+                effective_cycle_now=now,
             )
-            if restore_err is not None:
-                return Result(False, "续期失败，恢复媒体账号状态时出错，请联系管理员。")
+            just_unsuspended_externally = (
+                was_traffic_suspended
+                and not was_banned
+                and not media_user.is_traffic_suspended
+            )
+
+            # 宽限期内续期时，先在媒体服务器上恢复账户，再扣减积分并更新本地周期与清零本期保活时长
+            if not just_unsuspended_externally:
+                restore_err = await self._restore_external_if_disabled(
+                    client=client,
+                    media_info=media_info,
+                    media_user=media_user,
+                    action_label="续期",
+                )
+                if restore_err is not None:
+                    return Result(
+                        False, "续期失败，恢复媒体账号状态时出错，请联系管理员。"
+                    )
 
             if renew_channel == _RenewChannel.SCORE and renew_score > 0:
                 await self.telegram_repo.update_score(user_id, -renew_score)
@@ -692,11 +715,19 @@ class AccountService:
                 self._get_server_expiry_months(server),
                 now=now,
             )
+            scheduler = self._get_scheduler()
             schedule_account_lifecycle_jobs(
-                self._get_scheduler(),
+                scheduler,
                 media_user,
                 now=now,
             )
+            if retry_unsuspend and server.is_enabled:
+                schedule_traffic_unsuspend_retry(
+                    scheduler,
+                    user_id,
+                    server_id,
+                    run_date=now + timedelta(minutes=15),
+                )
 
             expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
             suspension_note = (
@@ -838,6 +869,41 @@ class AccountService:
             )
             return False
 
+    async def _settle_due_traffic_reset_before_renewal_locked(
+        self,
+        media_user: MediaUser,
+        server: ServerInstance,
+        *,
+        now: datetime,
+        effective_cycle_now: datetime,
+    ) -> tuple[MediaUser, bool]:
+        """在续期或自动保活推进周期前，先结清已到点的月度流量重置
+
+        当 ``expires_at == next_reset_at`` 同刻触发续期，或过期补续时原账期重置点已过，
+        先执行该期流量重置与安全解封，避免 ``extend_anchored_cycle`` 将重置时间推进到下月
+        而吞掉当期清零与超流解封。
+
+        Args:
+            media_user: 账号互斥锁内最新媒体账号 ORM 对象。
+            server: 所属服务器实例配置。
+            now: 当前实际时间。
+            effective_cycle_now: 续期周期基准时间（抖动抢救时可能回齐至 ``expires_at``）。
+
+        Returns:
+            ``(媒体账号 ORM 对象, 是否需要调度超流解封延迟重试)`` 二元组。
+        """
+        if media_user.next_reset_at is None or media_user.next_reset_at > now:
+            return media_user, False
+        reset_now = (
+            effective_cycle_now
+            if media_user.next_reset_at <= effective_cycle_now
+            else now
+        )
+        reset_res = await self._reset_single_account_traffic_locked(
+            media_user, server, reset_now
+        )
+        return media_user, reset_res == "reset_retry_unsuspend"
+
     async def try_auto_renew_account(
         self,
         user_id: int,
@@ -862,6 +928,7 @@ class AccountService:
         Returns:
             结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
         """
+        await self._flush_pending_traffic()
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -890,6 +957,28 @@ class AccountService:
                     False, f"客户端未运行: {server.name}", retryable_error=True
                 )
 
+            effective_cycle_now = now
+            if (
+                anchor_rescue_grace > timedelta(0)
+                and media_user.expires_at
+                <= now
+                <= media_user.expires_at + anchor_rescue_grace
+            ):
+                # 调度器准点触发可能晚于 expires_at 数毫秒至数秒；在容差窗内仍视同到期边界未越界，
+                # 保留原 anchor_day（例如 31 日）并避免误清空尚在进行中的流量周期
+                effective_cycle_now = media_user.expires_at
+
+            # 若 expires_at == next_reset_at 同刻抢救保活，先结清当期流量重置并按需解除超流停用
+            (
+                media_user,
+                retry_unsuspend,
+            ) = await self._settle_due_traffic_reset_before_renewal_locked(
+                media_user,
+                server,
+                now=now,
+                effective_cycle_now=effective_cycle_now,
+            )
+
             media_info, is_retryable = await self._fetch_external_user(
                 client, media_user.media_id
             )
@@ -911,27 +1000,24 @@ class AccountService:
                     False, "自动保活恢复外部媒体账号状态失败", retryable_error=True
                 )
 
-            effective_cycle_now = now
-            if (
-                anchor_rescue_grace > timedelta(0)
-                and media_user.expires_at
-                <= now
-                <= media_user.expires_at + anchor_rescue_grace
-            ):
-                # 调度器准点触发可能晚于 expires_at 数毫秒至数秒；在容差窗内仍视同到期边界未越界，
-                # 保留原 anchor_day（例如 31 日）并避免误清空尚在进行中的流量周期
-                effective_cycle_now = media_user.expires_at
-
             media_user = await self.media_repo.extend_anchored_cycle(
                 media_user,
                 self._get_server_expiry_months(server),
                 now=effective_cycle_now,
             )
+            scheduler = self._get_scheduler()
             schedule_account_lifecycle_jobs(
-                self._get_scheduler(),
+                scheduler,
                 media_user,
                 now=now,
             )
+            if retry_unsuspend:
+                schedule_traffic_unsuspend_retry(
+                    scheduler,
+                    user_id,
+                    server_id,
+                    run_date=now + timedelta(minutes=15),
+                )
 
             await self._send_auto_renew_dm(
                 user_id=user_id,

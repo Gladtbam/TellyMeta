@@ -1193,6 +1193,18 @@
             }
         }
 
+        /**
+         * 从指定输入框解析十进制整数，非法或空值时回退到默认值。
+         * @param {string} id 输入框元素 ID。
+         * @param {number} def 默认回退整数值。
+         * @returns {number} 解析后的整数或默认值。
+         */
+        function parseIntOr(id, def) {
+            const raw = document.getElementById(id).value.trim();
+            const val = parseInt(raw, 10);
+            return Number.isNaN(val) ? def : val;
+        }
+
         async function api(endpoint, method = 'GET', body = null) {
             const options = { method, headers: { 'X-Telegram-Init-Data': tg.initData, 'Content-Type': 'application/json' } };
             if (body) options.body = JSON.stringify(body);
@@ -1405,11 +1417,6 @@
         }
 
         async function savePointsConfig() {
-            const parseIntOr = (id, def) => {
-                const raw = document.getElementById(id).value.trim();
-                const val = parseInt(raw, 10);
-                return Number.isNaN(val) ? def : val;
-            };
             const parseFloatOr = (id, def) => {
                 const raw = document.getElementById(id).value.trim();
                 const val = parseFloat(raw);
@@ -1558,6 +1565,10 @@
             summary.innerText = `删号 ${dg}天 · 续期 ${ra}天 · 求片 ${re}天`;
         }
 
+        /**
+         * 根据全局播放时长开关状态同步设置按钮显隐与策略摘要文案。
+         * @param {boolean} enabled 当前全局播放时长总开关布尔状态。
+         */
         function updateWatchTimeVisibility(enabled) {
             const btn = document.getElementById('watch-time-config-btn');
             if (btn) btn.style.display = enabled ? 'inline' : 'none';
@@ -1574,12 +1585,10 @@
             summary.innerText = `${capText} · 心跳 ${hb}s · 宽限 ${grace}s`;
         }
 
+        /**
+         * 保存全局播放时长单日上限、Emby 心跳间隔与断线判定宽限配置。
+         */
         async function saveWatchTimeConfig() {
-            const parseIntOr = (id, def) => {
-                const raw = document.getElementById(id).value.trim();
-                const val = parseInt(raw, 10);
-                return Number.isNaN(val) ? def : val;
-            };
             const payload = {
                 daily_cap_seconds: parseIntOr('wt-daily-cap', 43200),
                 heartbeat_interval_seconds: parseIntOr('wt-heartbeat-interval', 30),
@@ -1629,11 +1638,6 @@
         }
 
         async function savePolicyConfig(modalId = 'policy-modal') {
-            const parseIntOr = (id, def) => {
-                const raw = document.getElementById(id).value.trim();
-                const val = parseInt(raw, 10);
-                return Number.isNaN(val) ? def : val;
-            };
             const payload = {
                 verification_timeout_minutes: parseIntOr('policy-verification-timeout', 5),
                 account_delete_grace_days: parseIntOr('policy-delete-grace', 7),
@@ -1658,11 +1662,6 @@
         }
 
         async function saveOpsConfig() {
-            const parseIntOr = (id, def) => {
-                const raw = document.getElementById(id).value.trim();
-                const val = parseInt(raw, 10);
-                return Number.isNaN(val) ? def : val;
-            };
             const payload = {
                 schedule_ban_expired_day: document.getElementById('ops-ban-expired-day').value.trim() || '*',
                 schedule_ban_expired_time: document.getElementById('ops-ban-expired-time').value || '00:15',

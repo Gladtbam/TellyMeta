@@ -136,6 +136,10 @@ class ServerCreate(BaseModel):
     server_type: str
     url: str
     api_key: str
+    registration_expiry_months: int = Field(default=1, ge=1)
+    enable_watch_time: bool = True
+    enable_watch_time_renewal: bool = False
+    watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
     enable_traffic: bool = False
     enable_traffic_alert: bool = True
     enable_traffic_auto_suspend: bool = False

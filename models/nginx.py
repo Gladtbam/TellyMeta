@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlparse
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
+from core.media_utils import AUTH_TOKEN_RE, clean_str
+
 _MEDIA_SEGMENT_EXTENSIONS = frozenset(
     {
         "mp4",
@@ -46,10 +48,6 @@ _DIRECT_STREAM_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _ITEM_DOWNLOAD_SEGMENTS = frozenset({"download", "file"})
-_AUTH_TOKEN_RE = re.compile(
-    r'(?:^|[,\s])Token\s*=\s*(?:"([^"]*)"|([^,\s]+))',
-    re.IGNORECASE,
-)
 _AUTH_DEVICE_ID_RE = re.compile(
     r'(?:^|[,\s])DeviceId\s*=\s*(?:"([^"]*)"|([^,\s]+))',
     re.IGNORECASE,
@@ -79,12 +77,7 @@ def format_traffic_bytes(num_bytes: int | None) -> str:
 
 def _clean_str(value: str | int | None) -> str | None:
     """将输入值归一化为去首尾空白的非空字符串，空白串与 Nginx 占位符 ``-`` 返回 ``None``"""
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text == "-":
-        return None
-    return text
+    return clean_str(value, empty_markers=("-",))
 
 
 def _extract_auth_header_param(
@@ -423,7 +416,7 @@ class Nginx(BaseModel):
                 "api_key", "apikey", "token", "x-emby-token", "x-mediabrowser-token"
             ),
             query_auth,
-            _AUTH_TOKEN_RE,
+            AUTH_TOKEN_RE,
             (
                 self.api_key,
                 self.http_x_emby_token,

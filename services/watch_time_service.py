@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
@@ -17,6 +16,14 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
+from core.media_utils import (
+    clean_str as _clean_str,
+)
+from core.media_utils import (
+    expand_media_id_candidates,
+    get_account_lock,
+    media_ids_match,
+)
 from models.emby_webhook import (
     EmbyPayload,
     PlaybackPauseEvent,
@@ -53,8 +60,7 @@ _STALLED_ZERO_PROGRESS_SECONDS = 3.0
 _STALLED_SAME_POS_SECONDS = 15.0
 _INTERVAL_RETENTION_DAYS = 2
 
-# 进程内互斥锁表：加锁顺序必须严格遵守 _ACCOUNT_LOCKS -> _SERVER_HEARTBEAT_LOCKS，严禁逆序嵌套
-_ACCOUNT_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+# 进程内服务器心跳互斥锁表：加锁顺序必须严格遵守 get_account_lock -> _SERVER_HEARTBEAT_LOCKS，严禁逆序嵌套
 _SERVER_HEARTBEAT_LOCKS: dict[int, asyncio.Lock] = {}
 
 
@@ -195,24 +201,6 @@ def emby_heartbeat_job_id(server_id: int) -> str:
     return f"{EMBY_HEARTBEAT_JOB_PREFIX}{server_id}"
 
 
-def get_account_lock(user_id: int, server_id: int) -> asyncio.Lock:
-    """获取同一媒体账号的串行化异步锁（供跨服务并发更新账号状态时共用）
-
-    Args:
-        user_id: Telegram 用户 ID。
-        server_id: 媒体服务器实例 ID。
-
-    Returns:
-        对应账号维度 ``(user_id, server_id)`` 的进程内 ``asyncio.Lock``。
-    """
-    key = (user_id, server_id)
-    lock = _ACCOUNT_LOCKS.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _ACCOUNT_LOCKS[key] = lock
-    return lock
-
-
 def _get_server_heartbeat_lock(server_id: int) -> asyncio.Lock:
     """获取指定服务器心跳任务启停同步锁
 
@@ -248,27 +236,6 @@ def _normalize_dt(dt: datetime | None) -> datetime:
     if dt.tzinfo is not None:
         return dt.astimezone(tz).replace(tzinfo=None)
     return dt
-
-
-def _clean_str(value: str | None) -> str | None:
-    """归一化非空字符串，空白串返回 ``None``"""
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None
-
-
-def expand_media_id_candidates(raw_media_id: str) -> list[str]:
-    """扩展媒体用户 ID 匹配候选集，兼容 Jellyfin 带连字符与无连字符 UUID 写法"""
-    cleaned = raw_media_id.strip()
-    candidates = [cleaned]
-    compact = cleaned.replace("-", "").lower()
-    if len(compact) == 32:
-        with contextlib.suppress(ValueError):
-            parsed = uuid.UUID(hex=compact)
-            candidates.extend([parsed.hex, str(parsed), parsed.hex.upper()])
-    # 去重同时保留查找优先级顺序
-    return list(dict.fromkeys(candidates))
 
 
 def normalize_emby_playback_event(
@@ -736,7 +703,7 @@ class WatchTimeService:
     async def _reload_media_user(
         self, user_id: int, server_id: int
     ) -> MediaUser | None:
-        """按复合主键从数据库强制刷新媒体用户记录
+        """按复合主键从数据库强制刷新媒体账号记录
 
         Args:
             user_id: Telegram 用户 ID。
@@ -1162,7 +1129,7 @@ class WatchTimeService:
         """按断线宽限上限结算异常失联或超时的活跃会话并关闭快照
 
         Args:
-            media_user: 对应的媒体用户实例；若为空则仅关闭快照不入账。
+            media_user: 对应的媒体账号实例；若为空则仅关闭快照不入账。
             sess: 待清理关闭的播放会话快照。
             grace_seconds: 允许从最后有效锚点往后补记的最大宽限秒数。
             daily_cap_seconds: 单日有效时长上限秒数。
@@ -1189,6 +1156,88 @@ class WatchTimeService:
         sess.last_event_at = now
         sess.last_effective_at = now
         return added
+
+    async def _settle_and_close_session_candidates(
+        self,
+        *,
+        server_id: int,
+        candidates: Sequence[tuple[int, int]],
+        cutoff: datetime,
+        policy: WatchTimePolicy,
+        now: datetime,
+        commit: bool,
+        exclude_session_key: str | None = None,
+        skip_paused: bool = False,
+        live_by_key: dict[str, ActiveSession] | None = None,
+    ) -> int:
+        """逐账号加锁刷新候选活跃会话，跳过未超时或同账号在线会话并按宽限封顶结算关闭
+
+        Args:
+            server_id: 媒体服务器实例 ID。
+            candidates: 预查询的 ``(session_row_id, user_id)`` 候选列表。
+            cutoff: 陈旧会话判定截止时间戳。
+            policy: 当前播放时长策略配置。
+            now: 归一化后的当前时间。
+            commit: 是否按账号提交数据库事务。
+            exclude_session_key: 可选排除的当前会话键，防止误杀正在处理事件的会话。
+            skip_paused: 为 ``True`` 时跳过暂停态会话。
+            live_by_key: 可选远端 ``/Sessions`` 活跃会话索引；命中同账号仍在播会话时保留活跃。
+
+        Returns:
+            本次实际截断并关闭的会话快照数量。
+        """
+        closed_count = 0
+        for sess_id, user_id in candidates:
+            lock = get_account_lock(user_id, server_id)
+            async with lock:
+                db_sess = (
+                    await self.session.execute(
+                        select(MediaPlaybackSession)
+                        .where(MediaPlaybackSession.id == sess_id)
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
+                if (
+                    db_sess is None
+                    or not db_sess.is_active
+                    or db_sess.last_event_at >= cutoff
+                    or (skip_paused and db_sess.is_paused)
+                    or (
+                        exclude_session_key is not None
+                        and db_sess.session_key == exclude_session_key
+                    )
+                ):
+                    if commit and self.session.in_transaction():
+                        await self.session.commit()
+                    continue
+
+                mu = await self._reload_media_user(db_sess.user_id, server_id)
+                if live_by_key is not None:
+                    live = self._match_live_session(db_sess, live_by_key)
+                    if (
+                        live is not None
+                        and mu is not None
+                        and (
+                            not live.user_id
+                            or media_ids_match(mu.media_id, live.user_id)
+                        )
+                    ):
+                        if commit and self.session.in_transaction():
+                            await self.session.commit()
+                        continue
+
+                await self._close_and_settle_grace_capped(
+                    media_user=mu,
+                    sess=db_sess,
+                    grace_seconds=policy.grace_seconds,
+                    daily_cap_seconds=policy.daily_cap_seconds,
+                    now=now,
+                )
+                closed_count += 1
+                await self.session.flush()
+                if commit:
+                    await self.session.commit()
+        return closed_count
 
     async def _cleanup_stale_jellyfin_sessions(
         self,
@@ -1228,42 +1277,23 @@ class WatchTimeService:
                 MediaPlaybackSession.id.asc(),
             )
         )
-        candidates = (await self.session.execute(stmt)).all()
+        candidates = [
+            (int(row_id), int(row_uid))
+            for row_id, row_uid in (await self.session.execute(stmt)).all()
+        ]
         if commit and self.session.in_transaction():
             await self.session.commit()
 
-        for row_id, row_user_id in candidates:
-            lock = get_account_lock(row_user_id, server_id)
-            async with lock:
-                row = (
-                    await self.session.execute(
-                        select(MediaPlaybackSession)
-                        .where(MediaPlaybackSession.id == row_id)
-                        .execution_options(populate_existing=True)
-                    )
-                ).scalar_one_or_none()
-                if (
-                    row is None
-                    or not row.is_active
-                    or row.is_paused
-                    or row.session_key == exclude_session_key
-                    or row.last_event_at >= cutoff
-                ):
-                    if commit and self.session.in_transaction():
-                        await self.session.commit()
-                    continue
-
-                mu = await self._reload_media_user(row.user_id, row.server_id)
-                await self._close_and_settle_grace_capped(
-                    media_user=mu,
-                    sess=row,
-                    grace_seconds=policy.grace_seconds,
-                    daily_cap_seconds=policy.daily_cap_seconds,
-                    now=now,
-                )
-                await self.session.flush()
-                if commit:
-                    await self.session.commit()
+        await self._settle_and_close_session_candidates(
+            server_id=server_id,
+            candidates=candidates,
+            cutoff=cutoff,
+            policy=policy,
+            now=now,
+            commit=commit,
+            exclude_session_key=exclude_session_key,
+            skip_paused=True,
+        )
 
     async def process_playback_event(
         self,
@@ -1437,7 +1467,12 @@ class WatchTimeService:
         now: datetime,
     ) -> int:
         """处理 ``PAUSE`` 事件，结算暂停前有效片段并将快照切换为暂停态"""
-        if sess is None or not sess.is_active or sess.item_id != event.item_id:
+        if (
+            sess is None
+            or not sess.is_active
+            or sess.user_id != media_user.id
+            or sess.item_id != event.item_id
+        ):
             return 0
         added = 0
         if not sess.is_paused:
@@ -1469,8 +1504,8 @@ class WatchTimeService:
         now: datetime,
     ) -> int:
         """处理 ``UNPAUSE`` 事件，支持重启/漏收 Start 场景重建、切集结算与抖动过滤"""
-        if sess is None or not sess.is_active:
-            # 若服务重启或漏收 Start 后首次收到 Unpause，仍应重建活跃快照以便注册 Emby 心跳
+        if sess is None or not sess.is_active or sess.user_id != media_user.id:
+            # 若服务重启、漏收 Start 或同设备切换账号后首次收到 Unpause，重建当前账号活跃快照避免跨账号串账
             self._init_or_reactivate_session(
                 server_id=server_id,
                 user_id=media_user.id,
@@ -1535,7 +1570,8 @@ class WatchTimeService:
         now: datetime,
     ) -> int:
         """处理 ``PROGRESS`` 事件，兼顾漏 Start 重建、同会话切集结算与卡顿等待"""
-        if sess is None or not sess.is_active:
+        if sess is None or not sess.is_active or sess.user_id != media_user.id:
+            # 若共享设备切换为其他账号直接上报 Progress，必须重新绑定为新账号起点，禁止继承旧账号锚点
             self._init_or_reactivate_session(
                 server_id=server_id,
                 user_id=media_user.id,
@@ -1597,7 +1633,12 @@ class WatchTimeService:
         now: datetime,
     ) -> int:
         """处理 ``STOP`` 事件，结算最终有效步长并幂等关闭当前匹配条目会话"""
-        if sess is None or not sess.is_active or sess.item_id != event.item_id:
+        if (
+            sess is None
+            or not sess.is_active
+            or sess.user_id != media_user.id
+            or sess.item_id != event.item_id
+        ):
             return 0
         added = 0
         if not sess.is_paused:
@@ -1709,6 +1750,13 @@ class WatchTimeService:
             )
 
         live = self._match_live_session(db_sess, live_by_key)
+        if (
+            live is not None
+            and live.user_id
+            and not media_ids_match(mu.media_id, live.user_id)
+        ):
+            # 共享设备切换为其他账号登录时，不得用新用户的远端会话继续推进或续命旧账号快照
+            live = None
         if live is None:
             # 未发 Stop 异常掉线：若先前处于播放中，按 last_effective_at + grace 封顶截断
             return await self._close_and_settle_grace_capped(
@@ -2022,50 +2070,25 @@ class WatchTimeService:
         try:
             live_sessions = await media_client.get_active_sessions()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("孤立播放会话巡检拉取服务器 {} /Sessions 失败: {}", server_id, exc)
+            logger.warning(
+                "孤立播放会话巡检拉取服务器 {} /Sessions 失败: {}", server_id, exc
+            )
             return 0
 
         live_by_key = self._index_live_sessions(live_sessions)
         if commit and self.session.in_transaction():
             await self.session.commit()
 
-        closed_count = 0
-        for sess_id, user_id in candidates:
-            lock = get_account_lock(user_id, server_id)
-            async with lock:
-                db_sess = (
-                    await self.session.execute(
-                        select(MediaPlaybackSession)
-                        .where(MediaPlaybackSession.id == sess_id)
-                        .execution_options(populate_existing=True)
-                    )
-                ).scalar_one_or_none()
-                if (
-                    db_sess is None
-                    or not db_sess.is_active
-                    or db_sess.last_event_at >= cutoff
-                ):
-                    if commit and self.session.in_transaction():
-                        await self.session.commit()
-                    continue
-
-                if self._match_live_session(db_sess, live_by_key) is not None:
-                    if commit and self.session.in_transaction():
-                        await self.session.commit()
-                    continue
-
-                mu = await self._reload_media_user(db_sess.user_id, server_id)
-                await self._close_and_settle_grace_capped(
-                    media_user=mu,
-                    sess=db_sess,
-                    grace_seconds=policy.grace_seconds,
-                    daily_cap_seconds=policy.daily_cap_seconds,
-                    now=now,
-                )
-                closed_count += 1
-                await self.session.flush()
-                if commit:
-                    await self.session.commit()
+        candidate_pairs = [(int(sess_id), int(uid)) for sess_id, uid in candidates]
+        closed_count = await self._settle_and_close_session_candidates(
+            server_id=server_id,
+            candidates=candidate_pairs,
+            cutoff=cutoff,
+            policy=policy,
+            now=now,
+            commit=commit,
+            live_by_key=live_by_key,
+        )
 
         if server.server_type == ServerType.EMBY:
             async with _get_server_heartbeat_lock(server_id):

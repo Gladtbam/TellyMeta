@@ -1060,6 +1060,10 @@ class SettingsServices:
         server_type: str,
         url: str,
         api_key: str,
+        registration_expiry_months: int = 1,
+        enable_watch_time: bool = True,
+        enable_watch_time_renewal: bool = False,
+        watch_time_renewal_threshold_seconds: int = 0,
         enable_traffic: bool = False,
         enable_traffic_alert: bool = True,
         enable_traffic_auto_suspend: bool = False,
@@ -1068,7 +1072,31 @@ class SettingsServices:
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
     ) -> Result:
-        """添加新服务器并初始化客户端"""
+        """添加新服务器并初始化运行期客户端连接。
+
+        副作用：向数据库写入服务器记录并按类型初始化客户端映射，同时刷新流量服务器路由缓存；
+        若客户端初始化失败则自动回滚删除已创建的服务器记录。
+
+        Args:
+            name: 服务器显示名称。
+            server_type: 服务器类型标识（``emby`` / ``jellyfin`` / ``sonarr`` / ``radarr`` / ``qbittorrent``）。
+            url: 服务器访问基础 URL。
+            api_key: 鉴权密钥或登录密码。
+            registration_expiry_months: 注册及续期有效自然月数（最小 1）。
+            enable_watch_time: 是否开启有效播放时长采集。
+            enable_watch_time_renewal: 是否开启时长保活续期。
+            watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
+            enable_traffic: 是否开启流量采集。
+            enable_traffic_alert: 是否开启超流通知。
+            enable_traffic_auto_suspend: 是否开启超流自动停用。
+            traffic_quota_bytes: 月基础流量配额字节数。
+            qb_username: qBittorrent 用户名（可选）。
+            qb_torrent_limit: qBittorrent 活跃种子限制数。
+            qb_server_id: 关联的 qBittorrent 服务器 ID（可选）。
+
+        Returns:
+            包含添加结果状态与提示文案的 ``Result`` 对象。
+        """
         if qb_server_id is not None:
             qb_target = await self.server_repo.get_by_id(qb_server_id)
             if not qb_target or qb_target.server_type != ServerType.QBITTORRENT:
@@ -1082,6 +1110,10 @@ class SettingsServices:
                 url,
                 api_key,
                 priority=0,
+                registration_expiry_months=registration_expiry_months,
+                enable_watch_time=enable_watch_time,
+                enable_watch_time_renewal=enable_watch_time_renewal,
+                watch_time_renewal_threshold_seconds=watch_time_renewal_threshold_seconds,
                 enable_traffic=enable_traffic,
                 enable_traffic_alert=enable_traffic_alert,
                 enable_traffic_auto_suspend=enable_traffic_auto_suspend,
@@ -1143,7 +1175,17 @@ class SettingsServices:
             )
 
     async def delete_server(self, server_id: int) -> Result:
-        """删除服务器并清理其关联的心跳任务与全部媒体账号生命周期单次调度任务"""
+        """删除服务器并清理其关联的心跳任务与全部媒体账号生命周期单次调度任务
+
+        副作用：移除该服务器的 Emby 心跳及全部媒体账号生命周期调度任务，关闭并移除运行期客户端连接，
+        从数据库删除服务器记录并使流量服务器路由缓存失效。
+
+        Args:
+            server_id: 待删除的服务器实例 ID。
+
+        Returns:
+            表示删除完成的 ``Result`` 对象。
+        """
         scheduler = getattr(self.app.state, "scheduler", None)
         remove_emby_heartbeat_job(scheduler, server_id)
         remove_server_lifecycle_jobs(scheduler, server_id)

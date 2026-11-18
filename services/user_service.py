@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.billing_anchor import backfill_billing_cycle
 from core.config import get_settings
+from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
     remove_account_lifecycle_jobs,
     schedule_account_lifecycle_jobs,
@@ -28,7 +29,7 @@ from services.media_service import (
     compute_external_disabled_state,
     sync_external_disabled_state,
 )
-from services.watch_time_service import evaluate_watch_time_renewal, get_account_lock
+from services.watch_time_service import evaluate_watch_time_renewal
 
 settings = get_settings()
 
@@ -243,7 +244,7 @@ class UserService:
                                 client,
                                 media_id=fresh_mu.media_id,
                                 target_disabled=False,
-                                log_context="签到续期恢复媒体账户",
+                                log_context="签到续期恢复媒体账号",
                                 user_id=user_id,
                                 server_id=sid,
                             )
@@ -264,7 +265,7 @@ class UserService:
                 return Result(
                     success=True,
                     message=TelegramMessage.render_markdown(
-                        t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 您的媒体账户 ({server_str}) 已自动延长 **{days}** 天有效期！"
+                        t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 您的媒体账号 ({server_str}) 已自动延长 **{days}** 天有效期！"
                     ),
                 )
 

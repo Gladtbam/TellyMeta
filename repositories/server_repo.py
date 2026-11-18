@@ -22,6 +22,10 @@ class ServerRepository:
         url: str,
         api_key: str,
         priority: int = 0,
+        registration_expiry_months: int = 1,
+        enable_watch_time: bool = True,
+        enable_watch_time_renewal: bool = False,
+        watch_time_renewal_threshold_seconds: int = 0,
         enable_traffic: bool = False,
         enable_traffic_alert: bool = True,
         enable_traffic_auto_suspend: bool = False,
@@ -30,7 +34,29 @@ class ServerRepository:
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
     ) -> ServerInstance:
-        """添加服务器并持久化基础与流量配额及超流停用配置"""
+        """添加服务器并持久化有效期自然月数、播放时长保活与流量配额配置
+
+        Args:
+            name: 服务器显示名称。
+            server_type: 服务器类型标识（如 ``emby``、``jellyfin``）。
+            url: 服务器访问基础 URL。
+            api_key: 接口鉴权密钥或密码。
+            priority: 列表排序优先级。
+            registration_expiry_months: 注册及续期有效自然月数（最小 1）。
+            enable_watch_time: 是否开启有效播放时长采集。
+            enable_watch_time_renewal: 是否开启时长保活续期。
+            watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
+            enable_traffic: 是否开启流量采集。
+            enable_traffic_alert: 是否开启超流通知。
+            enable_traffic_auto_suspend: 是否开启超流自动停用。
+            traffic_quota_bytes: 月基础流量配额字节数。
+            qb_username: qBittorrent 登录用户名。
+            qb_torrent_limit: qBittorrent 活跃种子限制数。
+            qb_server_id: 关联的 qBittorrent 服务器 ID。
+
+        Returns:
+            持久化并刷新后的 ``ServerInstance`` 实例。
+        """
         token = secrets.token_urlsafe(32)
         instance = ServerInstance(
             name=name,
@@ -39,6 +65,12 @@ class ServerRepository:
             api_key=api_key,
             priority=priority,
             webhook_token=token,
+            registration_expiry_months=max(1, int(registration_expiry_months)),
+            enable_watch_time=enable_watch_time,
+            enable_watch_time_renewal=enable_watch_time_renewal,
+            watch_time_renewal_threshold_seconds=max(
+                0, int(watch_time_renewal_threshold_seconds)
+            ),
             enable_traffic=enable_traffic,
             enable_traffic_alert=enable_traffic_alert,
             enable_traffic_auto_suspend=enable_traffic_auto_suspend,
