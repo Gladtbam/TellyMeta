@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.billing_anchor import backfill_billing_cycle
 from core.config import get_settings
+from core.scheduler_jobs import (
+    remove_account_lifecycle_jobs,
+    schedule_account_lifecycle_jobs,
+)
 from core.telegram_message import TelegramMessage
 from models.orm import RegistrationMode, ServerType, TelegramUser
 from repositories.code_repo import CodeRepository
@@ -42,6 +46,13 @@ class Result:
 
 class UserService:
     def __init__(self, app: FastAPI, session: AsyncSession) -> None:
+        """初始化用户服务及关联的数据仓储、媒体服务器客户端映射。
+
+        Args:
+            app: FastAPI 应用实例，用于读取运行期媒体客户端与调度器引用。
+            session: 当前异步数据库会话。
+        """
+        self.app = app
         self.session = session
         self.telegram_repo = TelegramRepository(session)
         self.config_repo = ConfigRepository(session)
@@ -237,7 +248,11 @@ class UserService:
                                 server_id=sid,
                             )
 
-                        await self.media_repo.extend_expiry(fresh_mu, days)
+                        updated_mu = await self.media_repo.extend_expiry(fresh_mu, days)
+                        schedule_account_lifecycle_jobs(
+                            getattr(getattr(self.app, "state", None), "scheduler", None),
+                            updated_mu,
+                        )
 
                     server = await self.server_repo.get_by_id(sid)
                     extended_servers.append(server.name if server else str(sid))
@@ -581,7 +596,14 @@ class UserService:
                         )
                         continue
 
+                    mu_uid = int(mu.id)
+                    mu_sid = int(mu.server_id)
                     await self.media_repo.delete(mu)
+                    remove_account_lifecycle_jobs(
+                        getattr(getattr(self.app, "state", None), "scheduler", None),
+                        mu_uid,
+                        mu_sid,
+                    )
 
             if account_type in ["tg", "both"]:
                 if has_media_failure:

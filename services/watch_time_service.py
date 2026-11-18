@@ -1963,6 +1963,182 @@ class WatchTimeService:
                     await self.session.commit()
         return closed_count
 
+    async def _cleanup_server_orphan_sessions(
+        self,
+        *,
+        server_id: int,
+        media_clients: dict[int, MediaService],
+        scheduler: AsyncIOScheduler | None,
+        policy: WatchTimePolicy,
+        cutoff: datetime,
+        now: datetime,
+        commit: bool,
+    ) -> int:
+        """巡检单台服务器的陈旧活跃会话，确认 ``/Sessions`` 已消失后按宽限截断关闭。
+
+        副作用：若服务器已停用或关闭时长统计，则关闭其所有遗留活跃会话并摘除 Emby 心跳任务；
+        否则向媒体服务器拉取活跃会话，在单账号锁内封顶结算并关闭已失联会话，再按需回收空闲心跳任务。
+
+        Args:
+            server_id: 目标媒体服务器实例 ID。
+            media_clients: 运行期 ``MediaService`` 客户端映射。
+            scheduler: 可选 APScheduler 实例，用于在无活跃会话时移除 Emby 心跳任务。
+            policy: 当前生效的观看时长采集策略配置。
+            cutoff: 陈旧会话判定截止时间戳（早于此时间无事件的活跃会话触发查核）。
+            now: 当前统一基准时间。
+            commit: 是否按账号/阶段提交数据库事务。
+
+        Returns:
+            本台服务器本次巡检截断关闭的活跃会话数量。
+        """
+        server = await self._reload_server(server_id)
+        if server is None or not server.is_enabled or not server.enable_watch_time:
+            closed = await self.deactivate_server_sessions(server_id, commit=commit)
+            async with _get_server_heartbeat_lock(server_id):
+                remove_emby_heartbeat_job(scheduler, server_id)
+            return closed
+
+        stmt = (
+            select(MediaPlaybackSession.id, MediaPlaybackSession.user_id)
+            .where(
+                MediaPlaybackSession.server_id == server_id,
+                MediaPlaybackSession.is_active.is_(True),
+                MediaPlaybackSession.last_event_at < cutoff,
+            )
+            .order_by(
+                MediaPlaybackSession.user_id.asc(),
+                MediaPlaybackSession.id.asc(),
+            )
+        )
+        candidates = (await self.session.execute(stmt)).all()
+        if not candidates:
+            return 0
+
+        media_client = media_clients.get(server_id)
+        if media_client is None:
+            logger.warning("孤立播放会话巡检跳过，服务器 {} 客户端未连接", server_id)
+            return 0
+
+        try:
+            live_sessions = await media_client.get_active_sessions()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("孤立播放会话巡检拉取服务器 {} /Sessions 失败: {}", server_id, exc)
+            return 0
+
+        live_by_key = self._index_live_sessions(live_sessions)
+        if commit and self.session.in_transaction():
+            await self.session.commit()
+
+        closed_count = 0
+        for sess_id, user_id in candidates:
+            lock = get_account_lock(user_id, server_id)
+            async with lock:
+                db_sess = (
+                    await self.session.execute(
+                        select(MediaPlaybackSession)
+                        .where(MediaPlaybackSession.id == sess_id)
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
+                if (
+                    db_sess is None
+                    or not db_sess.is_active
+                    or db_sess.last_event_at >= cutoff
+                ):
+                    if commit and self.session.in_transaction():
+                        await self.session.commit()
+                    continue
+
+                if self._match_live_session(db_sess, live_by_key) is not None:
+                    if commit and self.session.in_transaction():
+                        await self.session.commit()
+                    continue
+
+                mu = await self._reload_media_user(db_sess.user_id, server_id)
+                await self._close_and_settle_grace_capped(
+                    media_user=mu,
+                    sess=db_sess,
+                    grace_seconds=policy.grace_seconds,
+                    daily_cap_seconds=policy.daily_cap_seconds,
+                    now=now,
+                )
+                closed_count += 1
+                await self.session.flush()
+                if commit:
+                    await self.session.commit()
+
+        if server.server_type == ServerType.EMBY:
+            async with _get_server_heartbeat_lock(server_id):
+                await self._sync_emby_heartbeat(
+                    server_id,
+                    app=None,
+                    scheduler=scheduler,
+                    heartbeat_interval=policy.heartbeat_interval_seconds,
+                    allow_add=False,
+                )
+        return closed_count
+
+    async def cleanup_orphan_active_sessions(
+        self,
+        *,
+        media_clients: dict[int, MediaService],
+        scheduler: AsyncIOScheduler | None = None,
+        commit: bool = False,
+    ) -> int:
+        """兜底巡检并截断异常长期挂起且 ``/Sessions`` 已消失的孤立活跃播放状态
+
+        针对 Jellyfin 末尾观众掉线或 Emby 心跳意外缺失导致的长期挂起会话，
+        基于策略自动计算安全陈旧阈值 ``max(grace*2, heartbeat*2, 300)``，
+        向媒体服务器核对 ``/Sessions`` 后确认已不存在时按断线宽限封顶结算并关闭快照。
+
+        Args:
+            media_clients: 运行期媒体客户端映射。
+            scheduler: 可选 APScheduler 实例，用于清理空转的 Emby 心跳任务。
+            commit: 是否按账号提交数据库事务。
+
+        Returns:
+            本次巡检截断关闭的孤立活跃会话数量。
+        """
+        if not await self.config_repo.is_watch_time_enabled():
+            closed = await self.deactivate_server_sessions(None, commit=commit)
+            clear_all_emby_heartbeat_jobs(scheduler)
+            return closed
+
+        now = self._now()
+        policy = await self._load_policy()
+        effective_stale = max(
+            policy.grace_seconds * 2, policy.heartbeat_interval_seconds * 2, 300
+        )
+        cutoff = now - timedelta(seconds=effective_stale)
+
+        server_ids = (
+            (
+                await self.session.execute(
+                    select(MediaPlaybackSession.server_id)
+                    .where(MediaPlaybackSession.is_active.is_(True))
+                    .distinct()
+                    .order_by(MediaPlaybackSession.server_id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if commit and self.session.in_transaction():
+            await self.session.commit()
+
+        total_closed = 0
+        for sid in server_ids:
+            total_closed += await self._cleanup_server_orphan_sessions(
+                server_id=int(sid),
+                media_clients=media_clients,
+                scheduler=scheduler,
+                policy=policy,
+                cutoff=cutoff,
+                now=now,
+                commit=commit,
+            )
+        return total_closed
+
     @staticmethod
     def _index_live_sessions(
         sessions: list[ActiveSession],

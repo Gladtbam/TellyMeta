@@ -33,7 +33,11 @@ from core.initialization import (
     check_sqlite_version,
     initialize_admin,
 )
-from core.scheduler_jobs import SCHEDULER_JOBS_REGISTRY, get_ops_schedule_overrides
+from core.scheduler_jobs import (
+    SCHEDULER_JOBS_REGISTRY,
+    get_ops_schedule_overrides,
+    recover_and_calibrate_account_lifecycles,
+)
 from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
@@ -203,6 +207,8 @@ async def lifespan(app: FastAPI):
     app.state.scheduler.start()
     # 若重启前存在未收尾的 Emby 活跃播放会话，恢复其内存心跳并由对账逻辑兜底结算
     await recover_active_emby_heartbeats(app)
+    # 启动恢复校准全部媒体账号的生命周期单次调度节点与停机遗漏状态
+    await recover_and_calibrate_account_lifecycles(app)
 
     # 根据全局流量总开关按需绑定 Nginx UDP 日志监听并启动周期刷盘协程
     try:

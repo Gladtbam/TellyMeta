@@ -201,17 +201,26 @@ class MediaRepository:
         await self.session.refresh(media_user)
         return media_user
 
-    async def backfill_missing_delete_at(self) -> int:
+    async def backfill_missing_delete_at(
+        self, *, now: datetime | None = None, server_id: int | None = None
+    ) -> int:
         """为已封禁但缺少待删除时间的历史记录补全 delete_at。
+
+        Args:
+            now: 可注入的当前时间（默认使用系统当前时间）。
+            server_id: 可选仅筛选指定服务器实例 ID。
 
         Returns:
             int: 本次补全的记录数量
         """
+        current_now = now or datetime.now()
         stmt = select(MediaUser).where(
             MediaUser.is_banned.is_(True),
             MediaUser.delete_at.is_(None),
-            MediaUser.expires_at < datetime.now(),
+            MediaUser.expires_at < current_now,
         )
+        if server_id is not None:
+            stmt = stmt.where(MediaUser.server_id == server_id)
         result = await self.session.execute(stmt)
         users = result.scalars().all()
         if not users:
@@ -223,6 +232,49 @@ class MediaRepository:
             user.delete_at = user.expires_at + timedelta(days=grace_days)
         await self.session.commit()
         return len(users)
+
+    async def find_banned_with_delete_at(
+        self, *, enabled_servers_only: bool = True
+    ) -> Sequence[MediaUser]:
+        """查询已封禁且已设置待删除时间的媒体账号列表。
+
+        Args:
+            enabled_servers_only: 是否仅返回所属服务器处于启用状态的账号（默认 ``True``，
+                避免为已停用服务器重新挂载 ``grace_delete`` 任务）。
+
+        Returns:
+            满足条件的 ``MediaUser`` 序列。
+        """
+        stmt = select(MediaUser).where(
+            MediaUser.is_banned.is_(True),
+            MediaUser.delete_at.is_not(None),
+        )
+        if enabled_servers_only:
+            stmt = stmt.join(
+                ServerInstance, MediaUser.server_id == ServerInstance.id
+            ).where(ServerInstance.is_enabled.is_(True))
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
+    async def list_account_pairs(
+        self, *, server_id: int | None = None
+    ) -> list[tuple[int, int]]:
+        """按 ``(server_id, user_id)`` 稳定顺序返回媒体账号主键对列表。
+
+        Args:
+            server_id: 可选仅筛选指定服务器 ID。
+
+        Returns:
+            ``(user_id, server_id)`` 整数元组列表。
+        """
+        stmt = select(MediaUser.id, MediaUser.server_id).order_by(
+            MediaUser.server_id.asc(),
+            MediaUser.id.asc(),
+        )
+        if server_id is not None:
+            stmt = stmt.where(MediaUser.server_id == server_id)
+        rows = (await self.session.execute(stmt)).all()
+        return [(int(uid), int(sid)) for uid, sid in rows]
 
     async def find_ban(self) -> Sequence[MediaUser]:
         """查找所有已封禁且已到达待删除时间的 Media 用户。
@@ -258,12 +310,13 @@ class MediaRepository:
         return result.scalars().all()
 
     async def backfill_missing_billing_anchors(
-        self, *, now: datetime | None = None
+        self, *, now: datetime | None = None, server_id: int | None = None
     ) -> int:
         """批量为缺少锚定基准或周期边界的存量媒体账号按现有到期日平滑回填
 
         Args:
             now: 可注入的当前时间
+            server_id: 可选仅筛选指定服务器实例 ID
 
         Returns:
             int: 本次补全的媒体账号记录数量
@@ -275,6 +328,8 @@ class MediaRepository:
                 MediaUser.next_reset_at.is_(None),
             )
         )
+        if server_id is not None:
+            stmt = stmt.where(MediaUser.server_id == server_id)
         result = await self.session.execute(stmt)
         users = result.scalars().all()
         if not users:

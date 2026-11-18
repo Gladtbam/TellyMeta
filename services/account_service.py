@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import ipaddress
 import json
 import re
@@ -17,7 +18,15 @@ from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
+from core.billing_anchor import backfill_billing_cycle, resolve_anchored_cycle_window
 from core.config import get_settings
+from core.scheduler_jobs import (
+    clear_traffic_unsuspend_job,
+    parse_lifecycle_job_account,
+    remove_account_lifecycle_jobs,
+    schedule_account_lifecycle_jobs,
+    schedule_traffic_unsuspend_retry,
+)
 from core.telegram_message import TelegramMessage
 from models.nginx import format_traffic_bytes
 from models.orm import MediaUser, RegistrationMode, ServerInstance, ServerType
@@ -84,6 +93,24 @@ class AutoRenewOutcome:
     expires_at: datetime | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class _PreExpiryReminderContext:
+    """临近到期提醒私聊通知上下文"""
+
+    user_id: int
+    server_name: str
+    media_name: str
+    expires_at: datetime
+    auto_renew: bool
+    watch_open: bool
+    watch_eligible: bool
+    watch_status_text: str
+
+
+# 到期准点复核允许的调度器短时唤醒漂移容差（防止毫秒级唤醒晚于 expires_at 误触发重锚与清空当期流量）
+EXPIRY_RESCUE_JITTER_GRACE = timedelta(minutes=5)
+
+
 class AccountService:
     def __init__(
         self,
@@ -112,6 +139,10 @@ class AccountService:
     def _get_server_expiry_months(server: ServerInstance) -> int:
         """获取服务器配置的有效自然月数，非正整数时回退至默认 1 个月"""
         return max(1, server.registration_expiry_months)
+
+    def _get_scheduler(self) -> Any:
+        """安全获取挂载在 ``app.state`` 上的 APScheduler 调度器实例（未配置时返回 ``None``）"""
+        return getattr(getattr(self.app, "state", None), "scheduler", None)
 
     @staticmethod
     def _is_safe_url(url: str) -> bool:
@@ -362,13 +393,19 @@ class AccountService:
                     media_user_id, {"EnableAllFolders": True}, is_none=True
                 )
 
+            reg_now = self._now()
             media_user = await self.media_repo.create(
                 user_id=user_id,
                 server_id=server_id,
                 media_id=media_user_id,
                 media_name=username,
                 expiry_months=self._get_server_expiry_months(server),
-                now=self._now(),
+                now=reg_now,
+            )
+            schedule_account_lifecycle_jobs(
+                self._get_scheduler(),
+                media_user,
+                now=reg_now,
             )
 
             return Result(
@@ -655,6 +692,11 @@ class AccountService:
                 self._get_server_expiry_months(server),
                 now=now,
             )
+            schedule_account_lifecycle_jobs(
+                self._get_scheduler(),
+                media_user,
+                now=now,
+            )
 
             expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
             suspension_note = (
@@ -802,6 +844,7 @@ class AccountService:
         server_id: int,
         *,
         pre_expiry_window: timedelta = timedelta(hours=24),
+        anchor_rescue_grace: timedelta = timedelta(0),
     ) -> AutoRenewOutcome:
         """尝试对单个媒体账号执行临近到期窗口下的时长自动保活
 
@@ -812,6 +855,9 @@ class AccountService:
             user_id: Telegram 用户 ID
             server_id: 目标媒体服务器 ID
             pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）
+            anchor_rescue_grace: 到期边界自动保活抢救允许的调度唤醒容差；在
+                ``expires_at <= now <= expires_at + anchor_rescue_grace`` 范围内仍按
+                ``expires_at`` 顺推自然月，避免极短唤醒延迟误重锚 ``anchor_day``。
 
         Returns:
             结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
@@ -865,9 +911,25 @@ class AccountService:
                     False, "自动保活恢复外部媒体账号状态失败", retryable_error=True
                 )
 
+            effective_cycle_now = now
+            if (
+                anchor_rescue_grace > timedelta(0)
+                and media_user.expires_at
+                <= now
+                <= media_user.expires_at + anchor_rescue_grace
+            ):
+                # 调度器准点触发可能晚于 expires_at 数毫秒至数秒；在容差窗内仍视同到期边界未越界，
+                # 保留原 anchor_day（例如 31 日）并避免误清空尚在进行中的流量周期
+                effective_cycle_now = media_user.expires_at
+
             media_user = await self.media_repo.extend_anchored_cycle(
                 media_user,
                 self._get_server_expiry_months(server),
+                now=effective_cycle_now,
+            )
+            schedule_account_lifecycle_jobs(
+                self._get_scheduler(),
+                media_user,
                 now=now,
             )
 
@@ -1547,6 +1609,7 @@ class AccountService:
             return Result(False, "账户删除失败，请联系管理员。")
 
         await self.media_repo.delete(media_user)
+        remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
         return Result(True, "账户已成功删除。")
 
     async def release_traffic_suspensions(
@@ -1616,3 +1679,775 @@ class AccountService:
                 released_count += 1
 
         return released_count, failed_count
+
+    async def _flush_pending_traffic(self) -> None:
+        """在执行账期重置前尽力将内存中的在途流量增量刷盘，避免旧周期流量跨期混入"""
+        traffic_service = getattr(
+            getattr(self.app, "state", None), "traffic_service", None
+        )
+        if traffic_service is not None and hasattr(traffic_service, "flush"):
+            with contextlib.suppress(SQLAlchemyError, OSError, RuntimeError, ValueError):
+                await traffic_service.flush()
+
+    async def _clear_or_sync_traffic_suspension_locked(
+        self,
+        fresh_mu: MediaUser,
+        fresh_srv: ServerInstance | None,
+        *,
+        log_context: str,
+    ) -> Literal["cleared", "not_suspended", "server_disabled", "retryable_error"]:
+        """在单账号串行锁内统一判定并清除超流停用标记，遵循 ADR-0002 双状态隔离原则。
+
+        若账号同时处于过期封禁（``is_banned=True``），仅清除 ``is_traffic_suspended`` 而不唤醒
+        外部账户；若账号未封禁，则仅在所属服务器启用且外部媒体服务器成功恢复后才清除标记。
+
+        Args:
+            fresh_mu: 锁内强制刷新的媒体账号对象。
+            fresh_srv: 锁内强制刷新的服务器实例对象。
+            log_context: 同步外部状态时的中文日志上下文说明。
+
+        Returns:
+            ``"cleared"``、``"not_suspended"``、``"server_disabled"`` 或 ``"retryable_error"``。
+        """
+        uid = int(fresh_mu.id)
+        sid = int(fresh_mu.server_id)
+        scheduler = self._get_scheduler()
+
+        if not fresh_mu.is_traffic_suspended:
+            clear_traffic_unsuspend_job(scheduler, uid, sid)
+            return "not_suspended"
+
+        keep_disabled = compute_external_disabled_state(
+            is_banned=bool(fresh_mu.is_banned),
+            is_traffic_suspended=False,
+        )
+        if keep_disabled:
+            # 仍处于过期封禁时仅安全清除超流标记，绝不在外部媒体服解封（遵循 ADR-0002）
+            fresh_mu.is_traffic_suspended = False
+            clear_traffic_unsuspend_job(scheduler, uid, sid)
+            return "cleared"
+
+        if fresh_srv is None or not fresh_srv.is_enabled:
+            # 已停用或已下线服务器不再保留运行期客户端，跳过外部通信以避免产生无效告警
+            return "server_disabled"
+
+        outcome = await sync_external_disabled_state(
+            self.media_clients.get(sid),
+            media_id=fresh_mu.media_id,
+            target_disabled=False,
+            treat_404_as_synced=True,
+            log_context=log_context,
+            user_id=uid,
+            server_id=sid,
+        )
+        if outcome.ok:
+            fresh_mu.is_traffic_suspended = False
+            clear_traffic_unsuspend_job(scheduler, uid, sid)
+            return "cleared"
+        return "retryable_error"
+
+    async def _reset_single_account_traffic_locked(
+        self,
+        fresh_mu: MediaUser,
+        fresh_srv: ServerInstance | None,
+        now: datetime,
+    ) -> Literal["reset", "reset_retry_unsuspend", "skipped"]:
+        """在已持有账号串行锁的前提下执行单账号锚定月度流量清零与安全解封
+
+        Args:
+            fresh_mu: 锁内强制刷新的媒体账号对象。
+            fresh_srv: 锁内强制刷新的服务器实例对象。
+            now: 当前基准时间。
+
+        Returns:
+            ``"reset"`` 表示完成重置并无需解封重试；``"reset_retry_unsuspend"`` 表示已推进账期但
+            外部解除超流停用暂失败需短期重试；``"skipped"`` 表示未到点或仅回填锚定基准。
+        """
+        scheduler = self._get_scheduler()
+        srv_enabled = fresh_srv is not None and fresh_srv.is_enabled
+
+        # 缺失锚定或周期边界的老账号先平滑补全后再按新边界调度，避免误清零
+        if (
+            fresh_mu.anchor_day is None
+            or fresh_mu.cycle_started_at is None
+            or fresh_mu.next_reset_at is None
+        ):
+            anchor_day, cycle_started_at, next_reset_at = backfill_billing_cycle(
+                current_expires_at=fresh_mu.expires_at,
+                anchor_day=fresh_mu.anchor_day,
+                current_cycle_started_at=fresh_mu.cycle_started_at,
+                current_next_reset_at=fresh_mu.next_reset_at,
+                now=now,
+            )
+            fresh_mu.anchor_day = anchor_day
+            fresh_mu.cycle_started_at = cycle_started_at
+            fresh_mu.next_reset_at = next_reset_at
+            await self.media_repo.session.commit()
+            await self.media_repo.session.refresh(fresh_mu)
+            if srv_enabled:
+                schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+            return "skipped"
+
+        if fresh_mu.next_reset_at > now:
+            if srv_enabled:
+                schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+            return "skipped"
+
+        new_started_at, new_next_reset_at = resolve_anchored_cycle_window(
+            now, fresh_mu.anchor_day, fresh_mu.next_reset_at
+        )
+        # 仅清零当期基础流量与 80%/100% 预警标记；永久保留流量包余额、历史总流量与观影时长
+        fresh_mu.cycle_traffic_bytes = 0
+        fresh_mu.traffic_alert_80_sent = False
+        fresh_mu.traffic_alert_100_sent = False
+        fresh_mu.cycle_started_at = new_started_at
+        fresh_mu.next_reset_at = new_next_reset_at
+
+        unsuspend_status = await self._clear_or_sync_traffic_suspension_locked(
+            fresh_mu,
+            fresh_srv,
+            log_context="账期重置解除超流停用",
+        )
+
+        await self.media_repo.session.commit()
+        await self.media_repo.session.refresh(fresh_mu)
+        if srv_enabled:
+            schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+        if unsuspend_status == "retryable_error" and srv_enabled:
+            return "reset_retry_unsuspend"
+        return "reset"
+
+    async def _release_orphan_traffic_suspension_locked(
+        self,
+        fresh_mu: MediaUser,
+        fresh_srv: ServerInstance | None,
+    ) -> bool:
+        """在锁内检查仍标记为超流停用的账号是否已拥有可用流量或已关停限流开关并安全释放
+
+        Returns:
+            成功清除了超流停用标记返回 ``True``，否则返回 ``False``。
+        """
+        if not fresh_mu.is_traffic_suspended:
+            clear_traffic_unsuspend_job(
+                self._get_scheduler(), int(fresh_mu.id), int(fresh_mu.server_id)
+            )
+            return False
+
+        global_traffic_on = ConfigRepository.is_traffic_enabled_from_cache()
+        srv_auto_suspend = bool(
+            fresh_srv is not None
+            and fresh_srv.is_enabled
+            and fresh_srv.enable_traffic
+            and fresh_srv.enable_traffic_auto_suspend
+        )
+        quota = max(0, int(fresh_srv.traffic_quota_bytes or 0)) if fresh_srv else 0
+        base_rem = max(0, quota - int(fresh_mu.cycle_traffic_bytes or 0)) if quota > 0 else 1
+        pack_rem = max(0, int(fresh_mu.traffic_pack_bytes or 0))
+        should_release = (
+            (not global_traffic_on)
+            or (not srv_auto_suspend)
+            or (quota <= 0)
+            or ((base_rem + pack_rem) > 0)
+        )
+        if not should_release:
+            return False
+
+        status = await self._clear_or_sync_traffic_suspension_locked(
+            fresh_mu,
+            fresh_srv,
+            log_context="兜底巡检解除残余超流停用",
+        )
+        if status != "cleared":
+            return False
+
+        await self.media_repo.session.commit()
+        return True
+
+    async def _reconcile_account_traffic_step_locked(
+        self,
+        fresh_mu: MediaUser,
+        fresh_srv: ServerInstance | None,
+        now: datetime,
+        scheduler: Any,
+    ) -> tuple[bool, bool]:
+        """在已持有单账号锁时执行遗漏账期重置与残余超流释放对账，并在需要时登记解封重试。
+
+        Returns:
+            ``(reset_done, unsuspended_done)`` 二元组。
+        """
+        reset_done = False
+        retry_unsuspend = False
+        if fresh_mu.next_reset_at is None or fresh_mu.next_reset_at <= now:
+            reset_status = await self._reset_single_account_traffic_locked(
+                fresh_mu, fresh_srv, now
+            )
+            reset_done = reset_status in ("reset", "reset_retry_unsuspend")
+            retry_unsuspend = reset_status == "reset_retry_unsuspend"
+
+        unsuspended = False
+        if fresh_mu.is_traffic_suspended:
+            unsuspended = await self._release_orphan_traffic_suspension_locked(
+                fresh_mu, fresh_srv
+            )
+
+        if retry_unsuspend and fresh_srv is not None and fresh_srv.is_enabled:
+            schedule_traffic_unsuspend_retry(
+                scheduler,
+                int(fresh_mu.id),
+                int(fresh_mu.server_id),
+                run_date=now + timedelta(minutes=15),
+            )
+        return reset_done, unsuspended
+
+    async def reconcile_missed_traffic_resets(self) -> int:
+        """兜底巡检遗漏的月度流量重置、残余超流停用释放及缺失生命周期任务补全
+
+        Returns:
+            本次成功重置账期或释放残余超流停用的账号数量。
+        """
+        await self._flush_pending_traffic()
+        now = self._now()
+        await self.media_repo.backfill_missing_billing_anchors(now=now)
+
+        target_pairs = await self.media_repo.list_account_pairs()
+        await self.media_repo.end_clean_read_tx()
+
+        healed_count = 0
+        scheduler = self._get_scheduler()
+        for uid, sid in target_pairs:
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                if fresh_mu is None:
+                    remove_account_lifecycle_jobs(scheduler, uid, sid)
+                    continue
+                fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                reset_done, unsuspended = await self._reconcile_account_traffic_step_locked(
+                    fresh_mu, fresh_srv, now, scheduler
+                )
+                if reset_done or unsuspended:
+                    healed_count += 1
+
+                if fresh_srv is not None and fresh_srv.is_enabled:
+                    schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+                else:
+                    remove_account_lifecycle_jobs(scheduler, uid, sid)
+
+        return healed_count
+
+    async def calibrate_account_lifecycles(
+        self, *, server_id: int | None = None
+    ) -> dict[str, int]:
+        """校准存量与恢复期媒体账号的锚定周期、遗漏状态与精准调度节点
+
+        副作用：
+        - 为缺少锚定基准或 ``delete_at`` 的老账号平滑补全（支持按 ``server_id`` 过滤以适配单服启用）；
+        - 清理调度器中已无对应数据库记录或已所属停用服务器的孤立单次任务；
+        - 按单账号锁逐个补齐停机期间错过的账期重置、到期封禁、宽限删号及临近窗口自动保活，
+          并为启用服务器下的存活账号重新注册/同步未来的单次调度节点；停用服务器跳过外部通信并清除调度节点。
+
+        Args:
+            server_id: 可选仅校准指定服务器 ID；为 ``None`` 时全平台全量校准。
+
+        Returns:
+            统计各项恢复与校准数量的字典。
+        """
+        await self._flush_pending_traffic()
+        now = self._now()
+        scheduler = self._get_scheduler()
+        summary = {
+            "backfilled_anchors": await self.media_repo.backfill_missing_billing_anchors(
+                now=now, server_id=server_id
+            ),
+            "backfilled_delete_at": await self.media_repo.backfill_missing_delete_at(
+                now=now, server_id=server_id
+            ),
+            "resets": 0,
+            "unsuspended": 0,
+            "auto_renewed": 0,
+            "banned": 0,
+            "deleted": 0,
+            "calibrated": 0,
+            "orphan_jobs_removed": 0,
+        }
+
+        target_pairs = await self.media_repo.list_account_pairs(server_id=server_id)
+        await self.media_repo.end_clean_read_tx()
+
+        if server_id is None and scheduler is not None:
+            # 全局全量校准时同步剔除库中已不存在对应 MediaUser 记录的残留孤立任务
+            valid_pairs = set(target_pairs)
+            for job in list(scheduler.get_jobs()):
+                job_id = getattr(job, "id", "")
+                if not isinstance(job_id, str):
+                    continue
+                parsed = parse_lifecycle_job_account(job_id)
+                if parsed is not None and parsed not in valid_pairs:
+                    remove_account_lifecycle_jobs(scheduler, parsed[0], parsed[1])
+                    summary["orphan_jobs_removed"] += 1
+
+        for uid, sid in target_pairs:
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                if fresh_mu is None:
+                    remove_account_lifecycle_jobs(scheduler, uid, sid)
+                    continue
+                fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                reset_done, unsuspended = await self._reconcile_account_traffic_step_locked(
+                    fresh_mu, fresh_srv, now, scheduler
+                )
+                if reset_done:
+                    summary["resets"] += 1
+                if unsuspended:
+                    summary["unsuspended"] += 1
+
+                is_banned = bool(fresh_mu.is_banned)
+                expires_at = fresh_mu.expires_at
+                delete_at = fresh_mu.delete_at
+                auto_renew = bool(fresh_mu.auto_renew)
+                srv_enabled = bool(fresh_srv is not None and fresh_srv.is_enabled)
+
+            # 停用服务器已断开外部客户端连接，禁止发外部删号/封禁/保活请求，仅保留数据并在末段移除其调度节点
+            if not srv_enabled:
+                remove_account_lifecycle_jobs(scheduler, uid, sid)
+                continue
+
+            # get_account_lock 为非重入 asyncio.Lock，释放锁后再调用同样内部加锁的生命周期入口以防自死锁
+            if is_banned and delete_at is not None and delete_at <= now:
+                if await self.delete_expired_banned_account(uid, sid) == "deleted":
+                    summary["deleted"] += 1
+                    continue
+            elif not is_banned and expires_at <= now:
+                ban_res = await self.ban_expired_account(uid, sid)
+                if ban_res == "renewed":
+                    summary["auto_renewed"] += 1
+                elif ban_res == "banned":
+                    summary["banned"] += 1
+            elif (
+                not is_banned
+                and auto_renew
+                and (expires_at - timedelta(hours=24)) <= now
+            ):
+                # 临近窗口内仅主动补救可自动保活账号；未开启或未达标者仅补齐 expiry_ban 而不重复推送提醒
+                auto_res = await self.try_auto_renew_account(uid, sid)
+                if auto_res.renewed:
+                    summary["auto_renewed"] += 1
+
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                final_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                if final_mu is None:
+                    remove_account_lifecycle_jobs(scheduler, uid, sid)
+                    continue
+                final_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                if final_srv is not None and final_srv.is_enabled:
+                    schedule_account_lifecycle_jobs(scheduler, final_mu, now=now)
+                    summary["calibrated"] += 1
+                else:
+                    remove_account_lifecycle_jobs(scheduler, uid, sid)
+
+        return summary
+
+    async def reset_account_traffic_cycle(
+        self, user_id: int, server_id: int
+    ) -> Literal["reset", "retry_unsuspend", "skipped"]:
+        """执行单个媒体账号的准点月度账期重置并自注册下一次重置任务
+
+        副作用：重置前先刷新 ``TrafficService`` 内存缓冲，随后按锚定自然月推进
+        ``next_reset_at``、清零当期基础流量与预警标记（流量包余额不变），并在未处于
+        过期封禁时恢复外部媒体服务器权限。若外部解除超流停用因临时故障失败，返回
+        ``"retry_unsuspend"`` 以触发短期延迟解封重试。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+
+        Returns:
+            ``"reset"``、``"retry_unsuspend"`` 或 ``"skipped"``。
+        """
+        await self._flush_pending_traffic()
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            if fresh_mu is None:
+                remove_account_lifecycle_jobs(
+                    self._get_scheduler(), user_id, server_id
+                )
+                return "skipped"
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            res = await self._reset_single_account_traffic_locked(
+                fresh_mu, fresh_srv, self._now()
+            )
+            if res == "reset_retry_unsuspend":
+                return "retry_unsuspend"
+            return res
+
+    async def release_account_traffic_suspension(
+        self, user_id: int, server_id: int
+    ) -> Literal["released", "skipped", "retryable_error"]:
+        """短期延迟重试解除账期重置时遗留的超流停用状态并同步恢复外部媒体权限
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+
+        Returns:
+            ``"released"``、``"skipped"`` 或 ``"retryable_error"``。
+        """
+        scheduler = self._get_scheduler()
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            if fresh_mu is None:
+                remove_account_lifecycle_jobs(scheduler, user_id, server_id)
+                return "skipped"
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            if fresh_srv is None or not fresh_srv.is_enabled:
+                remove_account_lifecycle_jobs(scheduler, user_id, server_id)
+                return "skipped"
+
+            now = self._now()
+            # 仅当当前周期尚未再度超流耗尽或账期已推入新周期后允许释放
+            status = await self._clear_or_sync_traffic_suspension_locked(
+                fresh_mu,
+                fresh_srv,
+                log_context="账期重置后延迟重试解除超流停用",
+            )
+            if status == "cleared":
+                await self.media_repo.session.commit()
+                await self.media_repo.session.refresh(fresh_mu)
+                schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+                return "released"
+            if status == "retryable_error":
+                return "retryable_error"
+            return "skipped"
+
+    async def _send_pre_expiry_reminder_dm(
+        self, ctx: _PreExpiryReminderContext
+    ) -> bool:
+        """向即将到期的媒体账号所属用户发送临近到期续期提醒私聊通知
+
+        Args:
+            ctx: 结构化的 ``_PreExpiryReminderContext`` 通知上下文。
+
+        Returns:
+            私聊发送成功返回 ``True``，未配置客户端或送达失败返回 ``False``。
+        """
+        if getattr(getattr(self.app, "state", None), "telethon_client", None) is None:
+            return False
+
+        exp_str = ctx.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+        if ctx.watch_open and ctx.watch_eligible:
+            hint_line = (
+                "当前观影时长已达标，可前往 Mini App 免费续期"
+                if not ctx.auto_renew
+                else "当前观影时长已达标，请确认账号状态。"
+            )
+        elif ctx.watch_open:
+            hint_line = (
+                f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用积分/激活码续期。"
+                if ctx.auto_renew
+                else f"保活进度: {ctx.watch_status_text}，可使用积分、激活码或在达标后免费续期。"
+            )
+        else:
+            hint_line = "请前往 Mini App 使用积分或激活码及时续期，以免过期封禁。"
+
+        msg = TelegramMessage.render_html(t"""\
+            ⏰ <b>媒体账号临近到期提醒</b>
+
+            服务器: <code>{ctx.server_name}</code>
+            媒体账号: <code>{ctx.media_name}</code>
+            到期时间: <code>{exp_str}</code>
+            {hint_line}
+        """)
+        try:
+            return await NotificationService(self.app).send_text_to_user(
+                ctx.user_id, msg
+            )
+        except (HTTPError, ValueError, TypeError, OSError) as exc:
+            logger.warning(
+                "发送临近到期提醒私聊失败: user_id={}, server={}, err={}",
+                ctx.user_id,
+                ctx.server_name,
+                exc,
+            )
+            return False
+
+    async def process_pre_expiry_check(
+        self,
+        user_id: int,
+        server_id: int,
+        *,
+        pre_expiry_window: timedelta = timedelta(hours=24),
+    ) -> Literal[
+        "auto_renewed",
+        "reminded",
+        "retryable_error",
+        "not_due",
+        "already_expired",
+        "banned",
+        "missing",
+        "server_disabled",
+    ]:
+        """处理单个媒体账号临近到期节点检查：达标且开启自动保活则免分续期，否则发到期提醒
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+            pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）。
+
+        Returns:
+            执行结果状态字面量，便于单次任务调度器与测试观测结果分流。
+        """
+        auto_outcome = await self.try_auto_renew_account(
+            user_id, server_id, pre_expiry_window=pre_expiry_window
+        )
+        if auto_outcome.renewed:
+            return "auto_renewed"
+        if auto_outcome.retryable_error:
+            return "retryable_error"
+
+        reminder_ctx: _PreExpiryReminderContext | None = None
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            if fresh_mu is None:
+                remove_account_lifecycle_jobs(
+                    self._get_scheduler(), user_id, server_id
+                )
+                return "missing"
+            if fresh_mu.is_banned:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_mu, now=self._now()
+                )
+                return "banned"
+
+            now = self._now()
+            if fresh_mu.expires_at > now + pre_expiry_window:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_mu, now=now
+                )
+                return "not_due"
+            if fresh_mu.expires_at <= now:
+                return "already_expired"
+
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            if fresh_srv is None or not fresh_srv.is_enabled:
+                return "server_disabled"
+
+            wt_status = evaluate_watch_time_renewal(fresh_srv, fresh_mu)
+            reminder_ctx = _PreExpiryReminderContext(
+                user_id=user_id,
+                server_name=fresh_srv.name,
+                media_name=fresh_mu.media_name,
+                expires_at=fresh_mu.expires_at,
+                auto_renew=bool(fresh_mu.auto_renew),
+                watch_open=wt_status.is_open,
+                watch_eligible=wt_status.is_eligible,
+                watch_status_text=wt_status.status_text,
+            )
+
+        # 释放非重入账号锁后再发起 Telegram 私聊网络 IO，防止长耗时网络阻塞同账号其他操作
+        await self._send_pre_expiry_reminder_dm(reminder_ctx)
+        return "reminded"
+
+    async def ban_expired_account(
+        self,
+        user_id: int,
+        server_id: int,
+        *,
+        check_auto_renew: bool = True,
+    ) -> Literal["renewed", "banned", "skipped", "retryable_error"]:
+        """对单个到期媒体账号执行到期前自动保活复核与过期封禁落库及宽限删号调度
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+            check_auto_renew: 是否在封禁前复核一次自动保活资格（默认 ``True``）。
+
+        Returns:
+            ``"renewed"``、``"banned"``、``"skipped"`` 或 ``"retryable_error"``。
+        """
+        # 先在单账号锁内校验是否已失效/并发续期；由于后续可能调用内部同样申请 get_account_lock 的
+        # try_auto_renew_account，而 asyncio.Lock 非重入，这里校验后需立即释放锁以防自死锁
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            pre_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            pre_now = self._now()
+            if pre_mu is None:
+                remove_account_lifecycle_jobs(
+                    self._get_scheduler(), user_id, server_id
+                )
+                return "skipped"
+            if pre_mu.is_banned or pre_mu.expires_at > pre_now:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), pre_mu, now=pre_now
+                )
+                return "skipped"
+
+        if check_auto_renew:
+            auto_outcome = await self.try_auto_renew_account(
+                user_id,
+                server_id,
+                anchor_rescue_grace=EXPIRY_RESCUE_JITTER_GRACE,
+            )
+            if auto_outcome.renewed:
+                logger.info(
+                    "到期封禁前复核触发自动保活成功，跳过封禁媒体账号: {} Server: {}",
+                    user_id,
+                    server_id,
+                )
+                return "renewed"
+            if auto_outcome.retryable_error:
+                logger.warning(
+                    "自动保活媒体账号外部核验临时失败，本次跳过封禁等待重试: {} Server: {}",
+                    user_id,
+                    server_id,
+                )
+                return "retryable_error"
+
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            now = self._now()
+            if fresh_user is None:
+                remove_account_lifecycle_jobs(
+                    self._get_scheduler(), user_id, server_id
+                )
+                return "skipped"
+            if fresh_user.is_banned or fresh_user.expires_at > now:
+                logger.info(
+                    "媒体账号状态已变更或并发完成续期，跳过本次过期封禁: {} (ID: {}) Server: {}",
+                    user_id,
+                    fresh_user.media_id,
+                    server_id,
+                )
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_user, now=now
+                )
+                return "skipped"
+
+            client = self.media_clients.get(fresh_user.server_id)
+            if not client:
+                logger.warning(
+                    "未找到服务器实例(ID: {})，跳过封禁过期媒体账号: {} (ID: {})",
+                    fresh_user.server_id,
+                    fresh_user.id,
+                    fresh_user.media_id,
+                )
+                return "retryable_error"
+
+            try:
+                logger.info(
+                    "封禁过期媒体账号: {} (ID: {}) Server: {}",
+                    fresh_user.id,
+                    fresh_user.media_id,
+                    fresh_user.server_id,
+                )
+                await client.ban_or_unban(user_id=fresh_user.media_id, is_ban=True)
+            except HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # 媒体服务器账户已不存在时，仍标记封禁并按到期时间+宽限天数进入待删除队列
+                    logger.warning(
+                        "封禁过期媒体账号时媒体服务器账户不存在(404)，标记待删除: {} (ID: {})",
+                        fresh_user.id,
+                        fresh_user.media_id,
+                    )
+                else:
+                    logger.error(
+                        "封禁过期媒体账号失败，保留未封禁状态以便重试: {} (ID: {})，状态码: {}",
+                        fresh_user.id,
+                        fresh_user.media_id,
+                        e.response.status_code,
+                    )
+                    return "retryable_error"
+            except (HTTPError, ValueError) as e:
+                logger.error(
+                    "封禁过期媒体账号失败，保留未封禁状态以便重试: {} (ID: {})，错误: {}",
+                    fresh_user.id,
+                    fresh_user.media_id,
+                    e,
+                )
+                return "retryable_error"
+
+            fresh_user = await self.media_repo.mark_banned(fresh_user)
+            schedule_account_lifecycle_jobs(
+                self._get_scheduler(), fresh_user, now=now
+            )
+            return "banned"
+
+    async def delete_expired_banned_account(
+        self, user_id: int, server_id: int
+    ) -> Literal["deleted", "skipped", "retryable_error"]:
+        """对单个宽限期届满的已过期封禁账号执行外部删除与本地清理
+
+        严格检查 ``is_banned == True`` 且 ``delete_at <= now``，绝不误删仅处于
+        超流停用（``is_traffic_suspended == True``）但未过期封禁的账号（遵循 ADR-0002）。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+
+        Returns:
+            ``"deleted"``、``"skipped"`` 或 ``"retryable_error"``。
+        """
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            now = self._now()
+            if fresh_user is None:
+                remove_account_lifecycle_jobs(
+                    self._get_scheduler(), user_id, server_id
+                )
+                return "skipped"
+            if not fresh_user.is_banned or fresh_user.delete_at is None:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_user, now=now
+                )
+                return "skipped"
+            if fresh_user.delete_at > now:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_user, now=now
+                )
+                return "skipped"
+
+            client = self.media_clients.get(fresh_user.server_id)
+            if not client:
+                logger.warning(
+                    "未找到服务器实例(ID: {})，保留过期封禁媒体账号本地记录以便重试: {} (ID: {})",
+                    fresh_user.server_id,
+                    fresh_user.id,
+                    fresh_user.media_id,
+                )
+                return "retryable_error"
+
+            try:
+                await client.delete_user(fresh_user.media_id)
+            except HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.info(
+                        "媒体服务器账户已不存在(404)，清理已过期封禁媒体账号本地记录: {} (ID: {})",
+                        fresh_user.id,
+                        fresh_user.media_id,
+                    )
+                else:
+                    logger.error(
+                        "删除已过期封禁媒体账号失败，保留本地记录以便重试: {} (ID: {})，状态码: {}",
+                        fresh_user.id,
+                        fresh_user.media_id,
+                        e.response.status_code,
+                    )
+                    return "retryable_error"
+            except (HTTPError, Exception) as e:
+                logger.error(
+                    "删除已过期封禁媒体账号失败，保留本地记录以便重试: {} (ID: {})，错误: {}",
+                    fresh_user.id,
+                    fresh_user.media_id,
+                    e,
+                )
+                return "retryable_error"
+
+            await self.media_repo.delete(fresh_user)
+            remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
+            return "deleted"

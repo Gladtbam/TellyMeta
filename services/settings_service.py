@@ -17,7 +17,7 @@ from clients.qb_client import QbittorrentClient
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from core.config import get_settings
-from core.scheduler_jobs import apply_ops_schedules
+from core.scheduler_jobs import apply_ops_schedules, remove_server_lifecycle_jobs
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
 from models.emby import MediaFolder
@@ -205,7 +205,18 @@ class SettingsServices:
             return Result(success=False, message=str(e))
 
     async def toggle_server_status(self, server_id: int) -> Result:
-        """切换服务器启用状态并处理客户端连接"""
+        """切换服务器启用状态并同步外部客户端连接与生命周期调度。
+
+        副作用：
+        - 启用时初始化外部媒体客户端、刷新流量服务器缓存，并对该服存量账号执行生命周期校准与节点补调度；
+        - 停用时断开外部客户端、清理遗留活跃播放会话与 Emby 心跳任务，并移除该服关联的全部生命周期单次调度任务（保留历史库表数据）。
+
+        Args:
+            server_id: 目标服务器实例 ID。
+
+        Returns:
+            包含操作成功状态与 Markdown 提示文本的 ``Result`` 对象。
+        """
         server = await self.server_repo.toggle_enabled(server_id)
         if not server:
             return Result(False, "服务器不存在")
@@ -214,6 +225,9 @@ class SettingsServices:
             try:
                 await self._init_and_add_client(server)
                 invalidate_traffic_server_cache(self.app)
+                await AccountService(self.app, self.session).calibrate_account_lifecycles(
+                    server_id=server_id
+                )
                 return Result(
                     True,
                     TelegramMessage.render_markdown(
@@ -230,8 +244,11 @@ class SettingsServices:
                 )
         else:
             await self._remove_and_close_client(server)
-            # 停用服务器时同步停用遗留活跃会话并清理 Emby 按需播放心跳（保留历史时长统计）
+            # 停用服务器时同步停用遗留活跃会话并清理 Emby 按需播放心跳与账号生命周期调度（保留历史数据）
             await self.handle_watch_time_disabled(server_id)
+            remove_server_lifecycle_jobs(
+                getattr(self.app.state, "scheduler", None), server_id
+            )
             invalidate_traffic_server_cache(self.app)
             return Result(
                 True,
@@ -1126,8 +1143,10 @@ class SettingsServices:
             )
 
     async def delete_server(self, server_id: int) -> Result:
-        """删除服务器"""
-        remove_emby_heartbeat_job(getattr(self.app.state, "scheduler", None), server_id)
+        """删除服务器并清理其关联的心跳任务与全部媒体账号生命周期单次调度任务"""
+        scheduler = getattr(self.app.state, "scheduler", None)
+        remove_emby_heartbeat_job(scheduler, server_id)
+        remove_server_lifecycle_jobs(scheduler, server_id)
         if server_id in self.media_clients:
             del self.media_clients[server_id]
         if server_id in self.sonarr_clients:
