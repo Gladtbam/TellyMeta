@@ -25,6 +25,7 @@ from telethon.tl.types import (
     ChatBannedRights,
     KeyboardInlineButton,
     Message,
+    ReplyInlineMarkup,
     User,
 )
 from telethon.tl.types.messages import ChatFull
@@ -289,18 +290,38 @@ class TelethonClientWarper:
             raise
 
     async def edit_message(
-        self, chat_id: str | int, message_id: int, new_content: str
+        self,
+        chat_id: str | int,
+        message_id: int,
+        new_content: str,
+        *,
+        buttons: MarkupLike | None = None,
+        clear_buttons: bool = False,
+        parse_mode: str | None = "markdown",
     ) -> Message:
-        """编辑指定聊天中的消息内容
+        """编辑指定聊天中的消息内容。
+
         Args:
-            chat_id (str | int): 目标聊天ID
-            message_id (int): 要编辑的消息ID
-            new_content (str): 新的消息内容
+            chat_id: 目标聊天 ID。
+            message_id: 要编辑的消息 ID。
+            new_content: 新的消息文本内容。
+            buttons: 可选的新内联按钮布局；未传入且 ``clear_buttons=False`` 时保留原按钮。
+            clear_buttons: 为 ``True`` 时显式传入空内联标记，清空原消息附带的内联按钮。
+            parse_mode: 文本解析模式，默认启用 ``"markdown"`` 以支持用户提及链接。
         """
         if not self.client.is_connected():
             await self.connect()
+        effective_buttons: MarkupLike | None = (
+            ReplyInlineMarkup(rows=[]) if clear_buttons else buttons
+        )
         try:
-            return await self.client.edit_message(chat_id, message_id, new_content)
+            return await self.client.edit_message(
+                chat_id,
+                message_id,
+                new_content,
+                buttons=cast(MarkupLike | None, effective_buttons),
+                parse_mode=parse_mode,
+            )
         except errors.MessageEditTimeExpiredError as e:
             logger.error("无法编辑消息 {}：{}", message_id, e)
             raise

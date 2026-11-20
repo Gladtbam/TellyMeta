@@ -3,12 +3,16 @@ import contextlib
 import io
 import operator
 from random import choice, randint
+from typing import Any
 
 from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 from telethon import errors, events
 
 from core.task_utils import create_background_task
+
+# 跟踪待自动删除消息任务: (chat_id, message_id) -> Task
+_pending_delete_tasks: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
 async def _delayed_delete(message, delay: int = 10) -> None:
@@ -17,41 +21,88 @@ async def _delayed_delete(message, delay: int = 10) -> None:
     await safe_delete(message)
 
 
-async def safe_respond(event, msg: str, delete_after: int = 10):
+def _schedule_delayed_delete(message: Any, delay: int | None) -> None:
+    """为已发送消息登记延迟删除任务，支持后续按聊天与消息 ID 取消。
+
+    Args:
+        message: Telethon 返回的消息对象。
+        delay: 延迟删除秒数；为 ``None`` 或非正数时不调度自动删除。
+    """
+    if message is None or delay is None or delay <= 0:
+        return
+    task = create_background_task(_delayed_delete(message, delay))
+    chat_id = getattr(message, "chat_id", None)
+    msg_id = getattr(message, "id", None)
+    if isinstance(chat_id, int) and isinstance(msg_id, int):
+        key = (chat_id, msg_id)
+        old_task = _pending_delete_tasks.get(key)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+        _pending_delete_tasks[key] = task
+
+        def _cleanup(finished: asyncio.Task[None]) -> None:
+            if _pending_delete_tasks.get(key) is finished:
+                _pending_delete_tasks.pop(key, None)
+
+        task.add_done_callback(_cleanup)
+
+
+def cancel_delayed_delete(chat_id: int | str | None, message_id: int | None) -> bool:
+    """取消指定消息尚未触发的延迟删除任务（例如验证成功后保留欢迎消息）。
+
+    Args:
+        chat_id: 目标群组或会话 ID。
+        message_id: 目标消息 ID。
+
+    Returns:
+        成功取消运行中的延迟删除任务时返回 ``True``，否则返回 ``False``。
+    """
+    if not isinstance(chat_id, int) or not isinstance(message_id, int):
+        return False
+    task = _pending_delete_tasks.pop((chat_id, message_id), None)
+    if task is not None and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
+async def safe_respond(event, msg: str, delete_after: int | None = 10):
     """安全发送消息并在指定时间后删除"""
     try:
         message = await event.respond(msg, parse_mode="markdown")
-        create_background_task(_delayed_delete(message, delete_after))
+        _schedule_delayed_delete(message, delete_after)
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
 
 
-async def safe_reply(event, msg: str, delete_after: int = 10):
+async def safe_reply(event, msg: str, delete_after: int | None = 10):
     """安全回复消息并在指定时间后删除"""
     try:
         message = await event.reply(msg, parse_mode="markdown")
-        create_background_task(_delayed_delete(message, delete_after))
+        _schedule_delayed_delete(message, delete_after)
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
 
 
-async def safe_respond_keyboard(event, msg: str, keyboard, delete_after: int = 60):
+async def safe_respond_keyboard(
+    event, msg: str, keyboard, delete_after: int | None = 60
+):
     """安全发送带按钮的消息并在指定时间后删除"""
     try:
         message = await event.respond(msg, buttons=keyboard, parse_mode="markdown")
-        create_background_task(_delayed_delete(message, delete_after))
+        _schedule_delayed_delete(message, delete_after)
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)
 
 
-async def safe_reply_keyboard(event, msg: str, keyboard, delete_after: int = 60):
+async def safe_reply_keyboard(event, msg: str, keyboard, delete_after: int | None = 60):
     """安全回复带按钮的消息并在指定时间后删除"""
     try:
         message = await event.reply(msg, buttons=keyboard, parse_mode="markdown")
-        create_background_task(_delayed_delete(message, delete_after))
+        _schedule_delayed_delete(message, delete_after)
         return message
     except (errors.FloodWaitError, errors.RPCError) as e:
         logger.warning("发送消息失败: {}", e)

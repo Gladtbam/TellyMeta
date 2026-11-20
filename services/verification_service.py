@@ -69,7 +69,31 @@ class VerificationService:
         await self.verification_repo.create(user_id=user_id, job_id=job.id)
 
         await self.client.ban_user(user_id, None)  # 先禁言，防止其在验证前发送消息
-        return Result(success=True, message=welcome_message, keyboard=keyboard)
+        return Result(
+            success=True,
+            message=welcome_message,
+            keyboard=keyboard,
+            extra_data={"timeout_seconds": timeout_minutes * 60},
+        )
+
+    async def _build_group_welcome_message(self, user_id: int) -> str:
+        """构造新成员通过入群验证后的群组欢迎文案。
+
+        Args:
+            user_id: 已通过人机验证的用户 Telegram ID。
+
+        Returns:
+            渲染后的 Markdown 欢迎文案（包含成员可点击提及链接）。
+        """
+        user_name: str | bool | None = None
+        with contextlib.suppress(errors.RPCError, ValueError):
+            user_name = await self.client.get_user_name(user_id)
+        display_name = str(user_name) if user_name else str(user_id)
+        return TelegramMessage.render_markdown(t"""\
+            🎉 欢迎新成员 [{display_name}](tg://user?id={user_id}) 加入本群！
+
+            已通过人机验证，可以在群组中发言了。
+        """)
 
     async def create_get_challenge_details(self, user_id: int):
         """生成验证码并返回图片和选项按钮"""
@@ -97,7 +121,7 @@ class VerificationService:
         return image_data, keyboard
 
     async def process_verifocation_attempt(self, user_id: int, answer: str) -> Result:
-        """处理用户的验证码答案"""
+        """处理用户的验证码答案，验证通过后解除禁言并返回群组欢迎消息文案。"""
         challenge = await self.verification_repo.get(user_id)
         if not challenge:
             return Result(
@@ -119,10 +143,16 @@ class VerificationService:
         await self.verification_repo.delete(user_id)
         await self.client.unban_user(user_id)  # 解除用户禁言
 
+        welcome_message = (
+            await self._build_group_welcome_message(user_id)
+            if challenge.message_id is not None
+            else None
+        )
         return Result(
             success=True,
             message="验证成功！您现在可以在群组中发言了。",
             private_message=challenge.message_id,
+            extra_data=welcome_message,
         )  # type: ignore
 
     async def reject_verification(self, user_id: int, is_ban: bool = False) -> Result:

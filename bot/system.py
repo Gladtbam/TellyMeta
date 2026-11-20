@@ -9,7 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import errors, events
 
 from bot.decorators import provide_db_session
-from bot.utils import safe_delete, safe_reply, safe_respond, safe_respond_keyboard
+from bot.utils import (
+    cancel_delayed_delete,
+    safe_delete,
+    safe_reply,
+    safe_respond,
+    safe_respond_keyboard,
+)
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
@@ -209,8 +215,14 @@ async def user_join_handler(
             result = await verification_service.start_verification(user_id)
             if not result.success:
                 continue
+            extra_meta = getattr(result, "extra_data", None)
+            timeout_seconds = (
+                extra_meta.get("timeout_seconds", 300)
+                if isinstance(extra_meta, dict)
+                else 300
+            )
             message = await safe_respond_keyboard(
-                event, result.message, result.keyboard, 300
+                event, result.message, result.keyboard, timeout_seconds
             )
             if message and message.id:
                 await verification_service.verification_repo.update_message_id(
@@ -238,9 +250,7 @@ async def user_join_handler(
 async def verify_handler(
     app: FastAPI, event: events.CallbackQuery.Event, session: AsyncSession
 ) -> None:
-    """验证码处理器
-    处理用户点击验证码按钮的事件
-    """
+    """验证码处理器：校验通过后将群内入群验证提醒编辑为欢迎消息并清除验证/管理按钮。"""
     user_id: Any = event.sender_id
     answer = event.pattern_match.group(1).decode("utf-8")  # type: ignore
 
@@ -254,11 +264,20 @@ async def verify_handler(
         and result.private_message
         and isinstance(result.private_message, int)
     ):
+        # 取消验证超时提醒的自动删帖计时，保留编辑后的群组欢迎消息
+        cancel_delayed_delete(settings.telegram_chat_id, result.private_message)
+        extra_welcome = getattr(result, "extra_data", None)
+        welcome_message = (
+            extra_welcome
+            if isinstance(extra_welcome, str) and extra_welcome.strip()
+            else "🎉 欢迎新成员加入本群！已通过人机验证，可以在群组中发言了。"
+        )
         try:
             await client.edit_message(
                 settings.telegram_chat_id,
                 result.private_message,
-                "您已通过验证，可以在群组中发言了。",
+                welcome_message,
+                clear_buttons=True,
             )
         except (
             errors.MessageIdInvalidError,
