@@ -1,12 +1,23 @@
+import math
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from repositories.config_repo import (
+from core.economy_policy import (
+    BYTES_PER_GIB,
     DEFAULT_TRAFFIC_PACK_COST_SCORE,
     DEFAULT_TRAFFIC_PACK_SIZE_GIB,
-    DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
 )
+from repositories.config_repo import DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+
+
+def _validate_positive_pack_size_gib(value: float | None) -> float | None:
+    """校验单包容量（GiB）大于 0 且换算字节数至少为 1 字节。"""
+    if value is not None and (value <= 0 or round(value * BYTES_PER_GIB) < 1):
+        raise ValueError("流量包单包容量（GiB）换算字节后必须大于 0")
+    return value
+
 
 # --- 子模型 ---
 
@@ -108,7 +119,10 @@ class ServerDto(BaseModel):
     code_expiry_days: int = 30
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool = True
-    allow_request: bool = True
+    allow_request: bool = False
+    request_points_mode: str = "fixed"
+    request_points_fixed: int = Field(default=0, ge=0)
+    request_points_ratio: float = Field(default=0.0, ge=0.0)
     allow_nfo: bool = True
     enable_watch_time: bool = True
     enable_watch_time_renewal: bool = False
@@ -117,6 +131,11 @@ class ServerDto(BaseModel):
     enable_traffic_alert: bool = True
     enable_traffic_auto_suspend: bool = False
     traffic_quota_bytes: int = Field(default=0, ge=0)
+    allow_traffic_pack: bool = False
+    traffic_pack_points_mode: str = "fixed"
+    traffic_pack_points_fixed: int = Field(default=50, ge=1)
+    traffic_pack_points_ratio: float = Field(default=0.5, gt=0.0)
+    traffic_pack_size_gib: float = Field(default=10.0, gt=0.0)
     tos: str | None = None
 
     # 高级配置
@@ -137,6 +156,10 @@ class ServerCreate(BaseModel):
     url: str
     api_key: str
     registration_expiry_months: int = Field(default=1, ge=1)
+    allow_request: bool = False
+    request_points_mode: Literal["fixed", "ratio"] = "fixed"
+    request_points_fixed: int = Field(default=0, ge=0)
+    request_points_ratio: float = Field(default=0.0, ge=0.0)
     enable_watch_time: bool = True
     enable_watch_time_renewal: bool = False
     watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
@@ -144,9 +167,22 @@ class ServerCreate(BaseModel):
     enable_traffic_alert: bool = True
     enable_traffic_auto_suspend: bool = False
     traffic_quota_bytes: int = Field(default=0, ge=0)
+    allow_traffic_pack: bool = False
+    traffic_pack_points_mode: Literal["fixed", "ratio"] = "fixed"
+    traffic_pack_points_fixed: int = Field(default=50, ge=1)
+    traffic_pack_points_ratio: float = Field(default=0.5, gt=0.0)
+    traffic_pack_size_gib: float = Field(default=10.0, gt=0.0)
     qb_username: str | None = None
     qb_torrent_limit: int = 43200
     qb_server_id: int | None = None
+
+    @field_validator("traffic_pack_size_gib")
+    @classmethod
+    def _check_pack_size_gib(cls, value: float) -> float:
+        """校验单包容量 GiB 在换算字节后至少为 1 字节。"""
+        checked = _validate_positive_pack_size_gib(value)
+        assert checked is not None
+        return checked
 
 
 class ServerUpdate(BaseModel):
@@ -174,6 +210,9 @@ class ServerUpdate(BaseModel):
     nsfw_enabled: bool | None = None
     allow_subtitle_upload: bool | None = None
     allow_request: bool | None = None
+    request_points_mode: Literal["fixed", "ratio"] | None = None
+    request_points_fixed: int | None = Field(default=None, ge=0)
+    request_points_ratio: float | None = Field(default=None, ge=0.0)
     allow_nfo: bool | None = None
     enable_watch_time: bool | None = None
     enable_watch_time_renewal: bool | None = None
@@ -182,7 +221,18 @@ class ServerUpdate(BaseModel):
     enable_traffic_alert: bool | None = None
     enable_traffic_auto_suspend: bool | None = None
     traffic_quota_bytes: int | None = Field(default=None, ge=0)
+    allow_traffic_pack: bool | None = None
+    traffic_pack_points_mode: Literal["fixed", "ratio"] | None = None
+    traffic_pack_points_fixed: int | None = Field(default=None, ge=1)
+    traffic_pack_points_ratio: float | None = Field(default=None, gt=0.0)
+    traffic_pack_size_gib: float | None = Field(default=None, gt=0.0)
     tos: str | None = None
+
+    @field_validator("traffic_pack_size_gib")
+    @classmethod
+    def _check_pack_size_gib(cls, value: float | None) -> float | None:
+        """校验单包容量 GiB 在换算字节后至少为 1 字节。"""
+        return _validate_positive_pack_size_gib(value)
 
     # 高级配置
     path_mappings: list[PathMapping] = []
@@ -216,18 +266,18 @@ class SystemConfigResponse(BaseModel):
     tvdb_api_key_masked: str = ""
     enable_points_checkin: bool = True
     enable_points_chat: bool = True
+    enable_points_register: bool = True
     enable_points_renew: bool = True
     enable_points_request: bool = True
     enable_points_generate_code: bool = True
     enable_points_traffic_pack: bool = True
+    enable_points_spam: bool = True
+    enable_points_warn: bool = True
     effective_points_switches: dict[str, bool] = Field(default_factory=dict)
     points_renew_mode: str = "median"
     points_renew_fixed: int = 100
     points_renew_min: int = 100
     points_renew_max: int = 1000
-    points_request_mode: str = "ratio"
-    points_request_ratio: float = 0.1
-    points_request_fixed: int = 10
     points_checkin_min: int = 1
     points_checkin_max: int = 3
     points_checkin_consecutive_bonus: int = 2
@@ -261,9 +311,6 @@ class SystemConfigResponse(BaseModel):
     traffic_udp_host: str = "0.0.0.0"
     traffic_udp_port: int = 5140
     traffic_flush_interval_seconds: int = 10
-    traffic_pack_cost_score: int = DEFAULT_TRAFFIC_PACK_COST_SCORE
-    traffic_pack_size_gib: float = DEFAULT_TRAFFIC_PACK_SIZE_GIB
-    traffic_pack_unit_bytes: int = DEFAULT_TRAFFIC_PACK_UNIT_BYTES
 
 
 class OpsConfigUpdateDto(BaseModel):
@@ -287,23 +334,18 @@ class OpsConfigUpdateDto(BaseModel):
 
 
 class PointsConfigUpdateDto(BaseModel):
-    """积分、签到与定价规则配置更新请求"""
+    """积分、签到与续费定价规则配置更新请求"""
 
     points_renew_mode: str = "median"
     points_renew_fixed: int = 100
     points_renew_min: int = 100
     points_renew_max: int = 1000
-    points_request_mode: str = "ratio"
-    points_request_ratio: float = 0.1
-    points_request_fixed: int = 10
     points_checkin_min: int = 1
     points_checkin_max: int = 3
     points_checkin_consecutive_bonus: int = 2
     points_checkin_lucky_interval: int = 7
     points_message_daily_cap: int = 20
     points_spam_threshold: int = 5
-    traffic_pack_cost_score: int | None = None
-    traffic_pack_size_gib: float | None = None
 
 
 class PolicyConfigUpdateDto(BaseModel):
@@ -324,13 +366,11 @@ class WatchTimeConfigUpdateDto(BaseModel):
 
 
 class TrafficConfigUpdateDto(BaseModel):
-    """Nginx 流量 UDP 监听、内存聚合刷盘及流量包单价参数更新请求"""
+    """Nginx 流量 UDP 监听与内存聚合刷盘参数更新请求"""
 
     udp_host: str = "0.0.0.0"
     udp_port: int = 5140
     flush_interval_seconds: int = 10
-    traffic_pack_cost_score: int | None = None
-    traffic_pack_size_gib: float | None = None
 
 
 class MkvConfigUpdateDto(BaseModel):
@@ -447,8 +487,12 @@ class MediaAccountDto(BaseModel):
     is_banned: bool
     allow_subtitle_upload: bool = True
     allow_request: bool = True
-    allow_nfo: bool = True
+    request_open: bool = False
+    request_points_mode: str = "fixed"
+    request_points_cost: int = 0
     tos: str | None = None
+    allow_nfo: bool = True
+    enable_watch_time: bool = True
     cycle_watch_time_seconds: int = 0
     total_watch_time_seconds: int = 0
     anchor_day: int | None = None
@@ -459,15 +503,27 @@ class MediaAccountDto(BaseModel):
     watch_time_renewal_open: bool = False
     watch_time_renewal_eligible: bool = False
     watch_time_renewal_status_text: str = "当前服务器未开放保活续期"
+    watch_time_progress_percent: float | None = None
     enable_traffic: bool = False
+    traffic_limited: bool = False
     cycle_traffic_bytes: int = 0
     traffic_pack_bytes: int = 0
     total_traffic_bytes: int = 0
+    server_traffic_quota_bytes: int = 0
+    cycle_traffic_adjustment_bytes: int = 0
     traffic_quota_bytes: int = 0
     traffic_remaining_bytes: int | None = None
     traffic_total_remaining_bytes: int | None = None
     is_traffic_suspended: bool = False
     enable_traffic_auto_suspend: bool = False
+    allow_traffic_pack: bool = False
+    traffic_pack_open: bool = False
+    traffic_pack_points_mode: str = "fixed"
+    traffic_pack_cost_score: int = DEFAULT_TRAFFIC_PACK_COST_SCORE
+    traffic_pack_size_gib: float = DEFAULT_TRAFFIC_PACK_SIZE_GIB
+    traffic_pack_unit_bytes: int = DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+    can_points_renew: bool = True
+    can_generate_code: bool = True
 
 
 class AvailableServerDto(BaseModel):
@@ -483,6 +539,8 @@ class AvailableServerDto(BaseModel):
     status_label: str = ""
     tos: str | None = None
     has_external_verification: bool = False
+    requires_points: bool = False
+    points_cost: int = 0
 
 
 class UserInfoDto(BaseModel):
@@ -501,10 +559,18 @@ class UserInfoDto(BaseModel):
     has_username: bool = False
     cycle_watch_time_seconds: int = 0
     total_watch_time_seconds: int = 0
+    enable_points: bool = True
+    enable_points_checkin: bool = True
+    enable_points_chat: bool = True
+    enable_points_register: bool = True
+    enable_points_renew: bool = True
+    enable_points_request: bool = True
+    enable_points_generate_code: bool = True
     enable_points_traffic_pack: bool = True
-    traffic_pack_cost_score: int = DEFAULT_TRAFFIC_PACK_COST_SCORE
-    traffic_pack_size_gib: float = DEFAULT_TRAFFIC_PACK_SIZE_GIB
-    traffic_pack_unit_bytes: int = DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+    enable_points_spam: bool = True
+    enable_points_warn: bool = True
+    enable_watch_time: bool = True
+    enable_traffic: bool = False
     media_accounts: list[MediaAccountDto]
     available_servers: list[AvailableServerDto] = []
 
@@ -534,8 +600,37 @@ class ChangeScoreDto(BaseModel):
     score_change: int
 
 
+class AdminTrafficAdjustDto(BaseModel):
+    """管理员单账号当期流量临时调额与当期已用清零请求"""
+
+    delta_gib: float = 0.0
+    reset_cycle_usage: bool = False
+
+    @field_validator("delta_gib")
+    @classmethod
+    def _validate_delta_finite(cls, value: float) -> float:
+        """校验调额增减量必须为有限数值。"""
+        if not math.isfinite(value):
+            raise ValueError("调额 GiB 数值必须为有限实数")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_non_noop(self) -> AdminTrafficAdjustDto:
+        """防止既不清零当期已用流量、折算字节增减又为 0 的空提交。"""
+        if not self.reset_cycle_usage and round(self.delta_gib * BYTES_PER_GIB) == 0:
+            raise ValueError("请指定非零的临时调额 GiB 或勾选清零当期已用流量")
+        return self
+
+
 class AdminActionResponse(BaseModel):
     """管理员操作响应"""
 
     success: bool
     message: str
+    effective_quota_bytes: int | None = None
+    cycle_traffic_bytes: int | None = None
+    cycle_traffic_adjustment_bytes: int | None = None
+    traffic_remaining_bytes: int | None = None
+    traffic_total_remaining_bytes: int | None = None
+    is_traffic_suspended: bool | None = None
+    unsuspended: bool = False

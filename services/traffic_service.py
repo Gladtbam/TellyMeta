@@ -20,6 +20,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database import async_session
+from core.economy_policy import (
+    calculate_traffic_balances,
+    evaluate_traffic_pack_access,
+)
 from core.media_utils import expand_media_id_candidates, get_account_lock
 from core.telegram_message import TelegramMessage
 from models.nginx import Nginx, UrlInfo, format_traffic_bytes
@@ -66,6 +70,7 @@ class _PendingTrafficAlert:
     level_percent: int
     pack_bytes: int = 0
     auto_suspended: bool = False
+    traffic_pack_open: bool = False
 
 
 def _lookup_cache_entry(
@@ -118,9 +123,14 @@ def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
     media_name = alert.media_name
     if alert.auto_suspended:
         header = "⛔ <b>流量已耗尽（100%），账号已超流停用</b>"
+        pack_hint = (
+            "可在 Mini App 使用积分兑换流量包立即恢复，或等待下次重置后自动解除。"
+            if alert.traffic_pack_open
+            else "请联系管理员临时调额恢复，或等待下次重置后自动解除。"
+        )
         footer = (
             "本周期基础配额与流量包均已用尽，播放权限已临时停用（不会触发删号）。"
-            "可在 Mini App 使用积分兑换流量包立即恢复，或等待下次重置后自动解除。"
+            f"{pack_hint}"
         )
     elif alert.level_percent >= 100:
         header = "🚨 <b>基础流量配额已耗尽（100%）</b>"
@@ -768,27 +778,29 @@ class TrafficService(asyncio.DatagramProtocol):
         media_user: MediaUser,
         delta_bytes: int,
     ) -> None:
-        """按「本周期基础配额 -> 跨周期流量包」顺序扣减流量并累计历史总流量
+        """按「当期有效基础配额（含临时调额）-> 当期流量包」顺序扣减流量并累计历史总流量
 
         Args:
             server: 当前服务器实例配置。
             media_user: 待扣减的媒体账号 ORM 对象。
             delta_bytes: 本次增量消费字节数。
         """
-        quota = max(0, int(server.traffic_quota_bytes or 0))
-        prev_cycle = max(0, int(media_user.cycle_traffic_bytes or 0))
-        prev_pack = max(0, int(media_user.traffic_pack_bytes or 0))
-        if quota > 0:
-            base_remaining_before = max(0, quota - prev_cycle)
-            from_base = min(delta_bytes, base_remaining_before)
+        bal = calculate_traffic_balances(
+            server.traffic_quota_bytes,
+            media_user.cycle_traffic_adjustment_bytes,
+            media_user.cycle_traffic_bytes,
+            media_user.traffic_pack_bytes,
+        )
+        if bal.is_limited:
+            from_base = min(delta_bytes, bal.base_remaining_bytes or 0)
             overflow = delta_bytes - from_base
-            from_pack = min(overflow, prev_pack)
+            from_pack = min(overflow, bal.pack_remaining_bytes)
             unmet = overflow - from_pack
-            # 未被流量包吸收的溢出字节记入周期消耗，确保软告警与超额审计保持完整
-            media_user.cycle_traffic_bytes = prev_cycle + from_base + unmet
-            media_user.traffic_pack_bytes = prev_pack - from_pack
+            # 未被当期流量包吸收的溢出字节记入周期消耗，确保软告警与超额审计保持完整
+            media_user.cycle_traffic_bytes = bal.cycle_used_bytes + from_base + unmet
+            media_user.traffic_pack_bytes = bal.pack_remaining_bytes - from_pack
         else:
-            media_user.cycle_traffic_bytes = prev_cycle + delta_bytes
+            media_user.cycle_traffic_bytes = bal.cycle_used_bytes + delta_bytes
         media_user.total_traffic_bytes = (
             max(0, int(media_user.total_traffic_bytes or 0)) + delta_bytes
         )
@@ -801,7 +813,7 @@ class TrafficService(asyncio.DatagramProtocol):
         """判断是否满足触发超流自动停用的全部前提条件
 
         仅当全局流量、服务器启用、单服流量、单服超流自动停用均开启且配置了有限配额、
-        账号当前尚未停用且基础配额与持久化流量包剩余合计归零时返回 ``True``。
+        账号当前尚未停用且有效基础配额（含当期调额）与当期流量包剩余合计归零时返回 ``True``。
 
         Args:
             server: 目标媒体服务器配置实例。
@@ -812,9 +824,14 @@ class TrafficService(asyncio.DatagramProtocol):
         """
         if not ConfigRepository.is_traffic_enabled_from_cache():
             return False
-        quota = max(0, int(server.traffic_quota_bytes or 0))
+        bal = calculate_traffic_balances(
+            server.traffic_quota_bytes,
+            media_user.cycle_traffic_adjustment_bytes,
+            media_user.cycle_traffic_bytes,
+            media_user.traffic_pack_bytes,
+        )
         if (
-            quota <= 0
+            not bal.is_limited
             or not server.is_enabled
             or not server.enable_traffic
             or not server.enable_traffic_auto_suspend
@@ -822,9 +839,7 @@ class TrafficService(asyncio.DatagramProtocol):
             return False
         if media_user.is_traffic_suspended:
             return False
-        base_remaining = max(0, quota - int(media_user.cycle_traffic_bytes or 0))
-        pack_remaining = max(0, int(media_user.traffic_pack_bytes or 0))
-        return (base_remaining + pack_remaining) <= 0
+        return (bal.total_remaining_bytes or 0) <= 0
 
     async def _suspend_media_account(
         self,
@@ -880,15 +895,19 @@ class TrafficService(asyncio.DatagramProtocol):
         Returns:
             达到阈值且尚未发送过该档位告警时返回 ``_PendingTrafficAlert``，否则返回 ``None``。
         """
-        quota = int(server.traffic_quota_bytes or 0)
-        if quota <= 0:
+        bal = calculate_traffic_balances(
+            server.traffic_quota_bytes,
+            media_user.cycle_traffic_adjustment_bytes,
+            media_user.cycle_traffic_bytes,
+            media_user.traffic_pack_bytes,
+        )
+        if not bal.is_limited:
             return None
 
-        used = int(media_user.cycle_traffic_bytes or 0)
-        base_remaining = max(0, quota - used)
-        pack_remaining = max(0, int(media_user.traffic_pack_bytes or 0))
-        total_remaining = base_remaining + pack_remaining
-        total_pool = quota + pack_remaining
+        used = bal.cycle_used_bytes
+        pack_remaining = bal.pack_remaining_bytes
+        total_remaining = bal.total_remaining_bytes or 0
+        total_pool = bal.total_pool_bytes or 0
 
         level: int | None = None
         if total_remaining <= 0:
@@ -901,23 +920,37 @@ class TrafficService(asyncio.DatagramProtocol):
                 media_user.traffic_alert_80_sent = True
                 level = 100
         # 使用整数交叉乘法等价判定 total_remaining / total_pool <= 1 / 5（剩余不足 20% 即已用达 80%）
-        elif total_remaining * 5 <= total_pool and not media_user.traffic_alert_80_sent:
+        elif (
+            total_pool > 0
+            and total_remaining * 5 <= total_pool
+            and not media_user.traffic_alert_80_sent
+        ):
             media_user.traffic_alert_80_sent = True
             level = 80
 
         if level is None or not server.enable_traffic_alert:
             return None
 
+        pack_open, _ = evaluate_traffic_pack_access(
+            server,
+            points_pack_allowed=ConfigRepository.is_points_feature_enabled_from_cache(
+                ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
+            ),
+            points_pack_reason="",
+            global_traffic_enabled=ConfigRepository.is_traffic_enabled_from_cache(),
+        )
+
         return _PendingTrafficAlert(
             user_id=media_user.id,
             server_name=server.name,
             media_name=media_user.media_name,
             used_bytes=used,
-            quota_bytes=quota,
+            quota_bytes=bal.effective_base_quota_bytes,
             next_reset_at=media_user.next_reset_at,
             level_percent=level,
             pack_bytes=pack_remaining,
             auto_suspended=auto_suspended,
+            traffic_pack_open=pack_open,
         )
 
     async def _send_quota_alert_dm(self, alert: _PendingTrafficAlert) -> bool:

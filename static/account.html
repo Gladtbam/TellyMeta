@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="watch_time.css">
-    <script src="watch_time.js"></script>
+    <link rel="stylesheet" href="watch_time.css?v=20261120">
+    <script src="watch_time.js?v=20261120"></script>
     <title>账户管理</title>
     <style>
         :root {
@@ -160,7 +160,7 @@
 
             <div class="section-title">操作</div>
             <div class="card" id="actions">
-                <div class="action-item" onclick="renewAccount()">
+                <div class="action-item" id="btn-renew" onclick="renewAccount()">
                     <span class="action-icon">🔄</span>
                     <span class="action-text">续期</span>
                     <span class="action-arrow">›</span>
@@ -180,7 +180,7 @@
                     <span class="action-text">重置密码</span>
                     <span class="action-arrow">›</span>
                 </div>
-                <div class="action-item" onclick="showGenerateCodePopup()">
+                <div class="action-item" id="btn-generate-code" onclick="showGenerateCodePopup()">
                     <span class="action-icon">🎫</span>
                     <span class="action-text">生成“码”</span>
                     <span class="action-arrow">›</span>
@@ -192,7 +192,7 @@
                 </div>
                 <div class="action-item" id="btn-request" onclick="goToRequest()" style="display:none">
                     <span class="action-icon">🔍</span>
-                    <span class="action-text">求片</span>
+                    <span class="action-text" id="request-action-text">求片</span>
                     <span class="action-arrow">›</span>
                 </div>
                 <div class="action-item destructive" onclick="deleteAccount()">
@@ -257,27 +257,28 @@
 
                 const data = await res.json();
                 userRenewScore = data.renew_score;
-                trafficPackConfig = {
-                    enabled: data.enable_points_traffic_pack !== false,
-                    costScore: data.traffic_pack_cost_score ?? 50,
-                    sizeGib: data.traffic_pack_size_gib ?? 10,
-                    packUnitBytes: data.traffic_pack_unit_bytes ?? (10 * 1024 ** 3)
-                };
-                const account = data.media_accounts.find(acc => acc.server_id == serverId);
+                const acc = data.media_accounts.find(item => item.server_id == serverId);
 
-                if (!account) {
+                if (!acc) {
                     throw new Error("账户不存在");
                 }
 
-                accountData = account;
-                renderAccountInfo(account);
+                trafficPackConfig = {
+                    enabled: Boolean(acc.traffic_pack_open),
+                    costScore: acc.traffic_pack_cost_score ?? 50,
+                    sizeGib: acc.traffic_pack_size_gib ?? 10,
+                    packUnitBytes: acc.traffic_pack_unit_bytes ?? (10 * 1024 ** 3)
+                };
+
+                accountData = acc;
+                renderAccountInfo(acc);
             } catch (e) {
                 document.getElementById('account-info').innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${e.message}</div>`;
             }
         }
 
         /**
-         * 渲染媒体账号详情、有效播放时长进度、流量包余额与自动保活开关区域。
+         * 渲染媒体账号详情、观看度百分比进度条、流量包余额与自动保活开关区域。
          * @param {object} acc 媒体账号 DTO 对象。
          */
         function renderAccountInfo(acc) {
@@ -288,7 +289,6 @@
                 expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
             }
 
-            const progressText = formatWatchTimeRenewalProgress(acc);
             const autoRenewHint = formatAutoRenewHint(acc, true);
             const quotaText = Number(acc.traffic_quota_bytes || 0) > 0
                 ? formatTrafficBytes(acc.traffic_quota_bytes)
@@ -301,6 +301,62 @@
                 : '不限';
             const resetDateText = formatResetDate(acc.next_reset_at);
             const trafficSummaryText = formatTrafficQuotaSummary(acc);
+            const packBytes = Math.max(0, Number(acc.traffic_pack_bytes || 0));
+
+            const watchDegreeRow = renderWatchProgressRow(acc, true);
+
+            const packBalanceRow = (packBytes > 0 || acc.traffic_pack_open)
+                ? `
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-subtitle">当期流量包余额（本周期重置清零）</span>
+                        <span class="item-subtitle" style="font-size:12px;">总可用剩余流量: ${totalRemainingText}</span>
+                    </div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(packBytes)}</span>
+                </div>`
+                : '';
+
+            const trafficRows = (acc.enable_traffic || packBytes > 0 || acc.is_traffic_suspended)
+                ? `
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">本周期已用流量</span></div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.cycle_traffic_bytes)}</span>
+                </div>
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-subtitle">月基础流量配额 / 剩余</span>
+                        <span class="item-subtitle" style="font-size:12px;">${trafficSummaryText}</span>
+                    </div>
+                    <span class="item-value" style="font-size:14px">${quotaText} / ${remainingText}</span>
+                </div>
+                ${packBalanceRow}
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">累计总流量</span></div>
+                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.total_traffic_bytes)}</span>
+                </div>`
+                : '';
+
+            const resetRow = (acc.enable_traffic || acc.enable_watch_time)
+                ? `
+                <div class="item">
+                    <div class="item-content"><span class="item-subtitle">下次周期重置</span></div>
+                    <span class="item-value" style="font-size:15px">${resetDateText}</span>
+                </div>`
+                : '';
+
+            const autoRenewRow = acc.watch_time_renewal_open
+                ? `
+                <div class="item">
+                    <div class="item-content">
+                        <span class="item-title" style="font-size:15px;">自动保活</span>
+                        <span class="item-subtitle" style="font-size:12px;">${autoRenewHint}</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="auto-renew-toggle" ${acc.auto_renew ? 'checked' : ''} onchange="toggleAutoRenew(this)">
+                        <span class="slider"></span>
+                    </label>
+                </div>`
+                : '';
 
             document.getElementById('account-info').innerHTML = `
                 <div class="item">
@@ -318,81 +374,44 @@
                     <div class="item-content"><span class="item-subtitle">有效期至</span></div>
                     <span class="item-value" style="font-size:15px">${expiry}</span>
                 </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-subtitle">本周期观看时长</span></div>
-                    <span class="item-value" style="font-size:15px">${formatWatchDuration(acc.cycle_watch_time_seconds)}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-subtitle">累计观看时长</span></div>
-                    <span class="item-value" style="font-size:15px">${formatWatchDuration(acc.total_watch_time_seconds)}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-subtitle">保活门槛进度</span>
-                        <span class="item-subtitle" style="font-size:12px;">${progressText}</span>
-                    </div>
-                </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-subtitle">本周期已用流量</span></div>
-                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.cycle_traffic_bytes)}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-subtitle">月基础流量配额 / 剩余</span>
-                        <span class="item-subtitle" style="font-size:12px;">${trafficSummaryText}</span>
-                    </div>
-                    <span class="item-value" style="font-size:14px">${quotaText} / ${remainingText}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-subtitle">流量包余额（跨周期保留）</span>
-                        <span class="item-subtitle" style="font-size:12px;">总可用剩余流量: ${totalRemainingText}</span>
-                    </div>
-                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.traffic_pack_bytes)}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-subtitle">累计总流量</span></div>
-                    <span class="item-value" style="font-size:15px">${formatTrafficBytes(acc.total_traffic_bytes)}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content"><span class="item-subtitle">下次周期重置</span></div>
-                    <span class="item-value" style="font-size:15px">${resetDateText}</span>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title" style="font-size:15px;">自动保活</span>
-                        <span class="item-subtitle" style="font-size:12px;">${autoRenewHint}</span>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="auto-renew-toggle" ${acc.auto_renew ? 'checked' : ''} onchange="toggleAutoRenew(this)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
+                ${watchDegreeRow}
+                ${trafficRows}
+                ${resetRow}
+                ${autoRenewRow}
             `;
 
+            const btnRenew = document.getElementById('btn-renew');
+            if (btnRenew) {
+                btnRenew.style.display = (acc.watch_time_renewal_eligible || acc.can_points_renew) ? 'flex' : 'none';
+            }
+
+            const btnRedeemPack = document.getElementById('btn-redeem-traffic-pack');
             const packActionText = document.getElementById('redeem-traffic-pack-text');
-            if (packActionText) {
-                packActionText.textContent = trafficPackConfig.enabled
-                    ? `积分兑换流量包（${trafficPackConfig.costScore} 积分 / ${trafficPackConfig.sizeGib} GiB）`
-                    : '积分兑换流量包（已关闭）';
+            if (btnRedeemPack) {
+                btnRedeemPack.style.display = acc.traffic_pack_open ? 'flex' : 'none';
+            }
+            if (packActionText && acc.traffic_pack_open) {
+                packActionText.textContent = `积分兑换流量包（${trafficPackConfig.costScore} 积分 / ${trafficPackConfig.sizeGib} GiB）`;
+            }
+
+            const btnGenerateCode = document.getElementById('btn-generate-code');
+            if (btnGenerateCode) {
+                btnGenerateCode.style.display = acc.can_generate_code ? 'flex' : 'none';
             }
 
             const btnUpload = document.getElementById('btn-upload-subtitle');
             if (btnUpload) {
-                if (acc.allow_subtitle_upload) {
-                    btnUpload.style.display = 'flex';
-                } else {
-                    btnUpload.style.display = 'none';
-                }
+                btnUpload.style.display = acc.allow_subtitle_upload ? 'flex' : 'none';
             }
 
             const btnRequest = document.getElementById('btn-request');
+            const requestTextEl = document.getElementById('request-action-text');
             if (btnRequest) {
-                if (acc.allow_request) {
-                    btnRequest.style.display = 'flex';
-                } else {
-                    btnRequest.style.display = 'none';
-                }
+                btnRequest.style.display = acc.request_open ? 'flex' : 'none';
+            }
+            if (requestTextEl && acc.request_open) {
+                const reqCost = Number(acc.request_points_cost || 0);
+                requestTextEl.textContent = reqCost > 0 ? `求片（${reqCost} 积分/次）` : '求片';
             }
 
             const tosSection = document.getElementById('tos-section');
@@ -429,13 +448,15 @@
         }
 
         /**
-         * 发起媒体账号手动续期请求；若本周期有效播放时长已达保活门槛，弹窗明确提示本次免扣积分。
+         * 发起媒体账号手动续期请求；若本周期观看度已达 100%，弹窗明确提示本次免扣积分。
          */
         async function renewAccount() {
-            let confirmMsg = "确认要续期当前媒体账号吗？（将消耗积分）";
+            let confirmMsg = "确认要续期当前媒体账号吗？";
             if (accountData && accountData.watch_time_renewal_eligible) {
-                confirmMsg = "当前周期有效播放时长已达标，本次续期将通过时长保活免消耗积分，确认续期吗？";
-            } else if (accountData) {
+                confirmMsg = accountData.can_points_renew
+                    ? "当前周期观看度已达 100%，本次续期将通过保活免消耗积分，确认续期吗？"
+                    : "当前周期观看度已达 100%，本次将通过保活免费续期，确认续期吗？";
+            } else if (accountData && accountData.can_points_renew) {
                 const costHint = userRenewScore !== null ? `将消耗 ${userRenewScore} 积分` : "将按规则消耗积分";
                 confirmMsg = `确认要续期当前媒体账号吗？（${costHint}）`;
             }

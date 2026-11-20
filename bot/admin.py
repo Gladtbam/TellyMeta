@@ -136,7 +136,7 @@ async def warn_handler(
     警告一个用户，需回复一个用户
     """
     user_service = UserService(app, session)
-    user = await user_service.telegram_repo.update_warn_and_score(target_user_id)
+    user = await user_service.warn_user(target_user_id)
 
     await safe_reply(
         event,
@@ -161,14 +161,22 @@ async def change_handler(
     """修改积分处理器
     修改一个用户的积分，需回复一个用户并在命令后添加积分数
     """
+    user_service = UserService(app, session)
+    if not await user_service.config_repo.is_points_enabled():
+        await safe_reply(event, "❌ 全局积分总开关已关闭，无法修改积分。")
+        return
+
     args = event.message.text.split()
     if len(args) != 2:
         await safe_reply(event, "请在命令后添加积分数，例如: /change 10 或 /change -5")
         return
 
     score_change = int(args[1])
-    user_service = UserService(app, session)
-    user = await user_service.telegram_repo.update_score(target_user_id, score_change)
+    res = await user_service.change_user_score(target_user_id, score_change)
+    if not res.success or not res.extra_data:
+        await safe_reply(event, f"❌ {res.message}")
+        return
+    user = res.extra_data["user"]
 
     await safe_reply(
         event,

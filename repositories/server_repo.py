@@ -5,6 +5,7 @@ from typing import cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.economy_policy import normalize_pricing_mode
 from models.orm import ServerInstance
 
 # 定义一个唯一的哨兵对象，用于区分 "未传参" 和 "传了 None"
@@ -23,6 +24,10 @@ class ServerRepository:
         api_key: str,
         priority: int = 0,
         registration_expiry_months: int = 1,
+        allow_request: bool = False,
+        request_points_mode: str = "fixed",
+        request_points_fixed: int = 0,
+        request_points_ratio: float = 0.0,
         enable_watch_time: bool = True,
         enable_watch_time_renewal: bool = False,
         watch_time_renewal_threshold_seconds: int = 0,
@@ -30,11 +35,16 @@ class ServerRepository:
         enable_traffic_alert: bool = True,
         enable_traffic_auto_suspend: bool = False,
         traffic_quota_bytes: int = 0,
+        allow_traffic_pack: bool = False,
+        traffic_pack_points_mode: str = "fixed",
+        traffic_pack_points_fixed: int = 50,
+        traffic_pack_points_ratio: float = 0.5,
+        traffic_pack_size_gib: float = 10.0,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
     ) -> ServerInstance:
-        """添加服务器并持久化有效期自然月数、播放时长保活与流量配额配置
+        """添加服务器并持久化有效期自然月数、独立求片/流量包定价与播放时长/流量配额配置
 
         Args:
             name: 服务器显示名称。
@@ -43,6 +53,10 @@ class ServerRepository:
             api_key: 接口鉴权密钥或密码。
             priority: 列表排序优先级。
             registration_expiry_months: 注册及续期有效自然月数（最小 1）。
+            allow_request: 是否开启求片功能（新服默认关闭）。
+            request_points_mode: 求片定价模式（``fixed`` / ``ratio``）。
+            request_points_fixed: 求片固定消耗积分（最小 0）。
+            request_points_ratio: 求片动态比例系数（最小 0.0）。
             enable_watch_time: 是否开启有效播放时长采集。
             enable_watch_time_renewal: 是否开启时长保活续期。
             watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
@@ -50,6 +64,11 @@ class ServerRepository:
             enable_traffic_alert: 是否开启超流通知。
             enable_traffic_auto_suspend: 是否开启超流自动停用。
             traffic_quota_bytes: 月基础流量配额字节数。
+            allow_traffic_pack: 是否允许在该服兑换流量包（新服默认关闭）。
+            traffic_pack_points_mode: 流量包定价模式（``fixed`` / ``ratio``）。
+            traffic_pack_points_fixed: 流量包固定消耗积分（最小 1）。
+            traffic_pack_points_ratio: 流量包相对续期门槛的比例系数（大于 0）。
+            traffic_pack_size_gib: 单包流量容量（GiB，大于 0）。
             qb_username: qBittorrent 登录用户名。
             qb_torrent_limit: qBittorrent 活跃种子限制数。
             qb_server_id: 关联的 qBittorrent 服务器 ID。
@@ -58,6 +77,8 @@ class ServerRepository:
             持久化并刷新后的 ``ServerInstance`` 实例。
         """
         token = secrets.token_urlsafe(32)
+        normalized_req_mode = normalize_pricing_mode(request_points_mode)
+        normalized_pack_mode = normalize_pricing_mode(traffic_pack_points_mode)
         instance = ServerInstance(
             name=name,
             server_type=server_type,
@@ -66,6 +87,10 @@ class ServerRepository:
             priority=priority,
             webhook_token=token,
             registration_expiry_months=max(1, int(registration_expiry_months)),
+            allow_request=allow_request,
+            request_points_mode=normalized_req_mode,
+            request_points_fixed=max(0, int(request_points_fixed)),
+            request_points_ratio=max(0.0, float(request_points_ratio)),
             enable_watch_time=enable_watch_time,
             enable_watch_time_renewal=enable_watch_time_renewal,
             watch_time_renewal_threshold_seconds=max(
@@ -75,6 +100,11 @@ class ServerRepository:
             enable_traffic_alert=enable_traffic_alert,
             enable_traffic_auto_suspend=enable_traffic_auto_suspend,
             traffic_quota_bytes=max(0, int(traffic_quota_bytes)),
+            allow_traffic_pack=allow_traffic_pack,
+            traffic_pack_points_mode=normalized_pack_mode,
+            traffic_pack_points_fixed=max(1, int(traffic_pack_points_fixed)),
+            traffic_pack_points_ratio=max(1e-6, float(traffic_pack_points_ratio)),
+            traffic_pack_size_gib=max(1e-6, float(traffic_pack_size_gib)),
             qb_username=qb_username,
             qb_torrent_limit=qb_torrent_limit,
             qb_server_id=qb_server_id,

@@ -592,18 +592,16 @@ class SettingsServices:
         return Result(success=True, message="LLM 翻译配置已保存并生效")
 
     async def update_points_config(self, payload: PointsConfigUpdateDto) -> Result:
-        """校验并保存积分、签到与定价规则配置。
+        """校验并保存全局积分、签到与续费定价规则配置。
 
         Args:
-            payload: 积分与定价规则更新请求体。
+            payload: 积分与续费定价规则更新请求体。
 
         Returns:
             操作结果。
         """
         if payload.points_renew_mode not in ("median", "fixed"):
             return Result(success=False, message="续费积分模式必须为 median 或 fixed")
-        if payload.points_request_mode not in ("ratio", "fixed"):
-            return Result(success=False, message="求片定价模式必须为 ratio 或 fixed")
         if (
             payload.points_renew_fixed < 0
             or payload.points_renew_min < 0
@@ -612,10 +610,6 @@ class SettingsServices:
             return Result(success=False, message="续费/注册积分不能为负数")
         if payload.points_renew_max < payload.points_renew_min:
             return Result(success=False, message="动态中位数上限不能小于下限")
-        if payload.points_request_ratio < 0:
-            return Result(success=False, message="求片积分比例不能为负数")
-        if payload.points_request_fixed < 0:
-            return Result(success=False, message="求片固定积分不能为负数")
         if payload.points_checkin_min < 0 or payload.points_checkin_max < 0:
             return Result(success=False, message="签到基础积分不能为负数")
         if payload.points_checkin_max < payload.points_checkin_min:
@@ -627,24 +621,11 @@ class SettingsServices:
         if payload.points_message_daily_cap < 0 or payload.points_spam_threshold < 0:
             return Result(success=False, message="发言积分上限与刷屏阈值不能为负数")
 
-        pack_err = self._validate_traffic_pack_price(
-            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
-        )
-        if pack_err is not None:
-            return pack_err
-
         items = {
             ConfigRepository.KEY_POINTS_RENEW_MODE: payload.points_renew_mode,
             ConfigRepository.KEY_POINTS_RENEW_FIXED: str(payload.points_renew_fixed),
             ConfigRepository.KEY_POINTS_RENEW_MIN: str(payload.points_renew_min),
             ConfigRepository.KEY_POINTS_RENEW_MAX: str(payload.points_renew_max),
-            ConfigRepository.KEY_POINTS_REQUEST_MODE: payload.points_request_mode,
-            ConfigRepository.KEY_POINTS_REQUEST_RATIO: str(
-                payload.points_request_ratio
-            ),
-            ConfigRepository.KEY_POINTS_REQUEST_FIXED: str(
-                payload.points_request_fixed
-            ),
             ConfigRepository.KEY_POINTS_CHECKIN_MIN: str(payload.points_checkin_min),
             ConfigRepository.KEY_POINTS_CHECKIN_MAX: str(payload.points_checkin_max),
             ConfigRepository.KEY_POINTS_CHECKIN_CONSECUTIVE_BONUS: str(
@@ -663,48 +644,46 @@ class SettingsServices:
         for key, value in items.items():
             await self.config_repo.set_settings(key, value)
 
-        await self._save_traffic_pack_price(
-            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
-        )
-
-        return Result(success=True, message="积分、签到与定价规则已保存并生效")
+        return Result(success=True, message="积分、签到与续费规则已保存并生效")
 
     @staticmethod
-    def _validate_traffic_pack_price(
-        cost_score: int | None, size_gib: float | None
+    def validate_server_pricing(
+        *,
+        request_points_mode: str = "fixed",
+        request_points_fixed: int = 0,
+        request_points_ratio: float = 0.0,
+        traffic_pack_points_mode: str = "fixed",
+        traffic_pack_points_fixed: int = 50,
+        traffic_pack_points_ratio: float = 0.5,
+        traffic_pack_size_gib: float = 10.0,
     ) -> Result | None:
-        """校验可选的流量包积分单价与单包容量参数合法性
+        """统一校验服务器级求片与流量包定价及单包容量约束（单包至少 1 积分、容量换算后至少 1 字节）。
 
         Args:
-            cost_score: 单包消耗积分；为 ``None`` 时跳过校验。
-            size_gib: 单包流量容量（GiB）；为 ``None`` 时跳过校验。
+            request_points_mode: 求片定价模式。
+            request_points_fixed: 求片固定积分。
+            request_points_ratio: 求片比例系数。
+            traffic_pack_points_mode: 流量包定价模式。
+            traffic_pack_points_fixed: 流量包固定积分。
+            traffic_pack_points_ratio: 流量包比例系数。
+            traffic_pack_size_gib: 流量包单包容量（GiB）。
 
         Returns:
             校验不通过时返回失败 ``Result``，合法时返回 ``None``。
         """
-        if cost_score is not None and cost_score < 1:
-            return Result(success=False, message="流量包每包消耗积分必须大于 0")
-        if size_gib is not None and (size_gib <= 0 or round(size_gib * (1024**3)) < 1):
+        if request_points_mode not in ("fixed", "ratio"):
+            return Result(success=False, message="求片定价模式必须为 fixed 或 ratio")
+        if request_points_fixed < 0 or request_points_ratio < 0:
+            return Result(success=False, message="求片积分与比例系数不能为负数")
+        if traffic_pack_points_mode not in ("fixed", "ratio"):
+            return Result(success=False, message="流量包定价模式必须为 fixed 或 ratio")
+        if traffic_pack_points_fixed < 1:
+            return Result(success=False, message="流量包固定消耗积分至少为 1")
+        if traffic_pack_points_ratio <= 0:
+            return Result(success=False, message="流量包积分比例系数必须大于 0")
+        if traffic_pack_size_gib <= 0 or round(traffic_pack_size_gib * (1024**3)) < 1:
             return Result(success=False, message="流量包单包容量（GiB）必须大于 0")
         return None
-
-    async def _save_traffic_pack_price(
-        self, cost_score: int | None, size_gib: float | None
-    ) -> None:
-        """按需持久化流量包积分单价与单包容量配置（未传入项保持原值不变）
-
-        Args:
-            cost_score: 单包消耗积分；为 ``None`` 时不覆写现有配置。
-            size_gib: 单包流量容量（GiB）；为 ``None`` 时不覆写现有配置。
-        """
-        if cost_score is not None:
-            await self.config_repo.set_settings(
-                ConfigRepository.KEY_TRAFFIC_PACK_COST_SCORE, str(int(cost_score))
-            )
-        if size_gib is not None:
-            await self.config_repo.set_settings(
-                ConfigRepository.KEY_TRAFFIC_PACK_SIZE_GIB, str(float(size_gib))
-            )
 
     async def update_policy_config(self, payload: PolicyConfigUpdateDto) -> Result:
         """校验并保存入群验证超时与账号/求片宽限期配置。
@@ -815,12 +794,6 @@ class SettingsServices:
         if payload.flush_interval_seconds < 1:
             return Result(success=False, message="内存聚合刷盘间隔至少为 1 秒")
 
-        pack_err = self._validate_traffic_pack_price(
-            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
-        )
-        if pack_err is not None:
-            return pack_err
-
         prev_cfg = await self.config_repo.get_traffic_config()
         items = {
             ConfigRepository.KEY_TRAFFIC_UDP_HOST: udp_host,
@@ -849,10 +822,6 @@ class SettingsServices:
             with contextlib.suppress(OSError):
                 await sync_traffic_listener(self.app)
             return Result(success=False, message=f"UDP 监听绑定失败: {exc!s}")
-
-        await self._save_traffic_pack_price(
-            payload.traffic_pack_cost_score, payload.traffic_pack_size_gib
-        )
 
         return Result(success=True, message="流量 UDP 监听与刷盘配置已保存并生效")
 
@@ -1061,6 +1030,10 @@ class SettingsServices:
         url: str,
         api_key: str,
         registration_expiry_months: int = 1,
+        allow_request: bool = False,
+        request_points_mode: str = "fixed",
+        request_points_fixed: int = 0,
+        request_points_ratio: float = 0.0,
         enable_watch_time: bool = True,
         enable_watch_time_renewal: bool = False,
         watch_time_renewal_threshold_seconds: int = 0,
@@ -1068,13 +1041,18 @@ class SettingsServices:
         enable_traffic_alert: bool = True,
         enable_traffic_auto_suspend: bool = False,
         traffic_quota_bytes: int = 0,
+        allow_traffic_pack: bool = False,
+        traffic_pack_points_mode: str = "fixed",
+        traffic_pack_points_fixed: int = 50,
+        traffic_pack_points_ratio: float = 0.5,
+        traffic_pack_size_gib: float = 10.0,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
     ) -> Result:
         """添加新服务器并初始化运行期客户端连接。
 
-        副作用：向数据库写入服务器记录并按类型初始化客户端映射，同时刷新流量服务器路由缓存；
+        副作用：校验单服定价并向数据库写入服务器记录，按类型初始化客户端映射并刷新流量路由缓存；
         若客户端初始化失败则自动回滚删除已创建的服务器记录。
 
         Args:
@@ -1083,6 +1061,10 @@ class SettingsServices:
             url: 服务器访问基础 URL。
             api_key: 鉴权密钥或登录密码。
             registration_expiry_months: 注册及续期有效自然月数（最小 1）。
+            allow_request: 是否开启求片功能。
+            request_points_mode: 求片定价模式。
+            request_points_fixed: 求片固定积分。
+            request_points_ratio: 求片比例系数。
             enable_watch_time: 是否开启有效播放时长采集。
             enable_watch_time_renewal: 是否开启时长保活续期。
             watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
@@ -1090,6 +1072,11 @@ class SettingsServices:
             enable_traffic_alert: 是否开启超流通知。
             enable_traffic_auto_suspend: 是否开启超流自动停用。
             traffic_quota_bytes: 月基础流量配额字节数。
+            allow_traffic_pack: 是否允许兑换流量包。
+            traffic_pack_points_mode: 流量包定价模式。
+            traffic_pack_points_fixed: 流量包固定积分。
+            traffic_pack_points_ratio: 流量包比例系数。
+            traffic_pack_size_gib: 流量包单包容量（GiB）。
             qb_username: qBittorrent 用户名（可选）。
             qb_torrent_limit: qBittorrent 活跃种子限制数。
             qb_server_id: 关联的 qBittorrent 服务器 ID（可选）。
@@ -1097,6 +1084,18 @@ class SettingsServices:
         Returns:
             包含添加结果状态与提示文案的 ``Result`` 对象。
         """
+        pricing_err = self.validate_server_pricing(
+            request_points_mode=request_points_mode,
+            request_points_fixed=request_points_fixed,
+            request_points_ratio=request_points_ratio,
+            traffic_pack_points_mode=traffic_pack_points_mode,
+            traffic_pack_points_fixed=traffic_pack_points_fixed,
+            traffic_pack_points_ratio=traffic_pack_points_ratio,
+            traffic_pack_size_gib=traffic_pack_size_gib,
+        )
+        if pricing_err is not None:
+            return pricing_err
+
         if qb_server_id is not None:
             qb_target = await self.server_repo.get_by_id(qb_server_id)
             if not qb_target or qb_target.server_type != ServerType.QBITTORRENT:
@@ -1111,6 +1110,10 @@ class SettingsServices:
                 api_key,
                 priority=0,
                 registration_expiry_months=registration_expiry_months,
+                allow_request=allow_request,
+                request_points_mode=request_points_mode,
+                request_points_fixed=request_points_fixed,
+                request_points_ratio=request_points_ratio,
                 enable_watch_time=enable_watch_time,
                 enable_watch_time_renewal=enable_watch_time_renewal,
                 watch_time_renewal_threshold_seconds=watch_time_renewal_threshold_seconds,
@@ -1118,6 +1121,11 @@ class SettingsServices:
                 enable_traffic_alert=enable_traffic_alert,
                 enable_traffic_auto_suspend=enable_traffic_auto_suspend,
                 traffic_quota_bytes=traffic_quota_bytes,
+                allow_traffic_pack=allow_traffic_pack,
+                traffic_pack_points_mode=traffic_pack_points_mode,
+                traffic_pack_points_fixed=traffic_pack_points_fixed,
+                traffic_pack_points_ratio=traffic_pack_points_ratio,
+                traffic_pack_size_gib=traffic_pack_size_gib,
                 qb_username=qb_username,
                 qb_torrent_limit=qb_torrent_limit,
                 qb_server_id=qb_server_id,

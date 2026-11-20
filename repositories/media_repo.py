@@ -152,12 +152,17 @@ class MediaRepository:
     ) -> Sequence[MediaUser]:
         """查找在临近到期截止时间前满足自动保活初步条件的媒体账号列表
 
+        严格受全局 ``watch_time:enable`` 与服务器 ``enable_watch_time`` 逐级一票否决限制，
+        关闭任一时长采集开关时返回空列表。
+
         Args:
             deadline: 临近到期截止时间点（通常为 ``now + pre_expiry_window``）
 
         Returns:
-            开启自动保活、未封禁、所属服务器启用保活且观看时长已达门槛的账号列表
+            开启自动保活、未封禁、所属服务器启用采集与保活且观看时长已达门槛的账号列表
         """
+        if not ConfigRepository.is_watch_time_enabled_from_cache():
+            return []
         stmt = (
             select(MediaUser)
             .join(ServerInstance, MediaUser.server_id == ServerInstance.id)
@@ -166,6 +171,7 @@ class MediaRepository:
                 MediaUser.is_banned.is_(False),
                 MediaUser.expires_at <= deadline,
                 ServerInstance.is_enabled.is_(True),
+                ServerInstance.enable_watch_time.is_(True),
                 ServerInstance.enable_watch_time_renewal.is_(True),
                 ServerInstance.watch_time_renewal_threshold_seconds > 0,
                 MediaUser.cycle_watch_time_seconds
@@ -415,8 +421,10 @@ class MediaRepository:
         if (
             cycle.is_reset or crossed_due_reset
         ) and not media_user.is_traffic_suspended:
-            # 过期重锚或跨过已到点重置边界时清零本期流量与预警标记；未到点的超流停用保持双状态隔离
+            # 过期重锚或跨过已到点重置边界时清零本期流量、临时调额、流量包余额与预警标记（保留历史总流量）
             media_user.cycle_traffic_bytes = 0
+            media_user.cycle_traffic_adjustment_bytes = 0
+            media_user.traffic_pack_bytes = 0
             media_user.traffic_alert_80_sent = False
             media_user.traffic_alert_100_sent = False
         await self.session.commit()

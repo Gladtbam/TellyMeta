@@ -3,23 +3,21 @@ from typing import Any, ClassVar, TypedDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.economy_policy import (
+    BYTES_PER_GIB,
+    DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+)
 from models.orm import BotConfiguration
 
-BYTES_PER_GIB = 1024**3
-DEFAULT_TRAFFIC_PACK_COST_SCORE = 50
-DEFAULT_TRAFFIC_PACK_SIZE_GIB = 10.0
 DEFAULT_TRAFFIC_PACK_UNIT_BYTES = round(DEFAULT_TRAFFIC_PACK_SIZE_GIB * BYTES_PER_GIB)
 
 
 class TrafficConfigDict(TypedDict):
-    """流量 UDP 监听、刷盘参数及流量包单价配置类型字典"""
+    """流量 UDP 监听与内存聚合刷盘参数配置类型字典"""
 
     traffic_udp_host: str
     traffic_udp_port: int
     traffic_flush_interval_seconds: int
-    traffic_pack_cost_score: int
-    traffic_pack_size_gib: float
-    traffic_pack_unit_bytes: int
 
 
 class ConfigRepository:
@@ -29,6 +27,7 @@ class ConfigRepository:
     POINTS_SUB_SWITCHES: ClassVar[dict[str, tuple[str, str]]] = {
         "enable_points_checkin": ("points:enable_checkin", "签到积分"),
         "enable_points_chat": ("points:enable_chat", "群聊发言积分"),
+        "enable_points_register": ("points:enable_register", "积分自注册"),
         "enable_points_renew": ("points:enable_renew", "积分续期"),
         "enable_points_request": ("points:enable_request", "积分求片"),
         "enable_points_generate_code": (
@@ -39,6 +38,8 @@ class ConfigRepository:
             "points:enable_traffic_pack",
             "积分兑换流量包",
         ),
+        "enable_points_spam": ("points:enable_spam", "刷屏扣分"),
+        "enable_points_warn": ("points:enable_warn", "警告扣分"),
     }
     _POINTS_SUB_SWITCH_LABELS: ClassVar[dict[str, str]] = dict(
         POINTS_SUB_SWITCHES.values()
@@ -65,17 +66,17 @@ class ConfigRepository:
     # Points / Check-in / Pricing Keys
     KEY_ENABLE_POINTS_CHECKIN = "points:enable_checkin"
     KEY_ENABLE_POINTS_CHAT = "points:enable_chat"
+    KEY_ENABLE_POINTS_REGISTER = "points:enable_register"
     KEY_ENABLE_POINTS_RENEW = "points:enable_renew"
     KEY_ENABLE_POINTS_REQUEST = "points:enable_request"
     KEY_ENABLE_POINTS_GENERATE_CODE = "points:enable_generate_code"
     KEY_ENABLE_POINTS_TRAFFIC_PACK = "points:enable_traffic_pack"
+    KEY_ENABLE_POINTS_SPAM = "points:enable_spam"
+    KEY_ENABLE_POINTS_WARN = "points:enable_warn"
     KEY_POINTS_RENEW_MODE = "points:renew_mode"
     KEY_POINTS_RENEW_FIXED = "points:renew_fixed"
     KEY_POINTS_RENEW_MIN = "points:renew_min"
     KEY_POINTS_RENEW_MAX = "points:renew_max"
-    KEY_POINTS_REQUEST_MODE = "points:request_mode"
-    KEY_POINTS_REQUEST_RATIO = "points:request_ratio"
-    KEY_POINTS_REQUEST_FIXED = "points:request_fixed"
     KEY_POINTS_CHECKIN_MIN = "points:checkin_min"
     KEY_POINTS_CHECKIN_MAX = "points:checkin_max"
     KEY_POINTS_CHECKIN_CONSECUTIVE_BONUS = "points:checkin_consecutive_bonus"
@@ -112,13 +113,11 @@ class ConfigRepository:
     KEY_WATCH_TIME_HEARTBEAT_INTERVAL_SECONDS = "watch_time:heartbeat_interval_seconds"
     KEY_WATCH_TIME_DISCONNECT_GRACE_SECONDS = "watch_time:disconnect_grace_seconds"
 
-    # 流量统计、UDP 接收、刷盘与流量包兑换单价配置键
+    # 流量统计、UDP 接收与刷盘周期配置键（单服流量包单价已下沉至 ServerInstance）
     KEY_ENABLE_TRAFFIC = "traffic:enable"
     KEY_TRAFFIC_UDP_HOST = "traffic:udp_host"
     KEY_TRAFFIC_UDP_PORT = "traffic:udp_port"
     KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS = "traffic:flush_interval_seconds"
-    KEY_TRAFFIC_PACK_COST_SCORE = "traffic:pack_cost_score"
-    KEY_TRAFFIC_PACK_SIZE_GIB = "traffic:pack_size_gib"
 
     @staticmethod
     def parse_exclude_keywords(raw: str | None) -> list[str]:
@@ -165,17 +164,17 @@ class ConfigRepository:
             cls.KEY_TVDB_API_KEY: "",
             cls.KEY_ENABLE_POINTS_CHECKIN: "true",
             cls.KEY_ENABLE_POINTS_CHAT: "true",
+            cls.KEY_ENABLE_POINTS_REGISTER: "true",
             cls.KEY_ENABLE_POINTS_RENEW: "true",
             cls.KEY_ENABLE_POINTS_REQUEST: "true",
             cls.KEY_ENABLE_POINTS_GENERATE_CODE: "true",
             cls.KEY_ENABLE_POINTS_TRAFFIC_PACK: "true",
+            cls.KEY_ENABLE_POINTS_SPAM: "true",
+            cls.KEY_ENABLE_POINTS_WARN: "true",
             cls.KEY_POINTS_RENEW_MODE: "median",
             cls.KEY_POINTS_RENEW_FIXED: "100",
             cls.KEY_POINTS_RENEW_MIN: "100",
             cls.KEY_POINTS_RENEW_MAX: "1000",
-            cls.KEY_POINTS_REQUEST_MODE: "ratio",
-            cls.KEY_POINTS_REQUEST_RATIO: "0.1",
-            cls.KEY_POINTS_REQUEST_FIXED: "10",
             cls.KEY_POINTS_CHECKIN_MIN: "1",
             cls.KEY_POINTS_CHECKIN_MAX: "3",
             cls.KEY_POINTS_CHECKIN_CONSECUTIVE_BONUS: "2",
@@ -209,8 +208,6 @@ class ConfigRepository:
             cls.KEY_TRAFFIC_UDP_HOST: "0.0.0.0",
             cls.KEY_TRAFFIC_UDP_PORT: "5140",
             cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS: "10",
-            cls.KEY_TRAFFIC_PACK_COST_SCORE: str(DEFAULT_TRAFFIC_PACK_COST_SCORE),
-            cls.KEY_TRAFFIC_PACK_SIZE_GIB: str(int(DEFAULT_TRAFFIC_PACK_SIZE_GIB)),
         }
 
         new_items = []
@@ -365,15 +362,6 @@ class ConfigRepository:
         if renew_max < renew_min:
             renew_max = renew_min
 
-        request_mode = (source.get(cls.KEY_POINTS_REQUEST_MODE) or "ratio").strip()
-        if request_mode not in ("ratio", "fixed"):
-            request_mode = "ratio"
-
-        request_ratio = cls._parse_float(
-            source.get(cls.KEY_POINTS_REQUEST_RATIO), 0.1, 0.0
-        )
-        request_fixed = cls._parse_int(source.get(cls.KEY_POINTS_REQUEST_FIXED), 10, 0)
-
         checkin_min = cls._parse_int(source.get(cls.KEY_POINTS_CHECKIN_MIN), 1, 0)
         checkin_max = cls._parse_int(source.get(cls.KEY_POINTS_CHECKIN_MAX), 3, 0)
         if checkin_max < checkin_min:
@@ -401,9 +389,6 @@ class ConfigRepository:
             "points_renew_fixed": renew_fixed,
             "points_renew_min": renew_min,
             "points_renew_max": renew_max,
-            "points_request_mode": request_mode,
-            "points_request_ratio": request_ratio,
-            "points_request_fixed": request_fixed,
             "points_checkin_min": checkin_min,
             "points_checkin_max": checkin_max,
             "points_checkin_consecutive_bonus": checkin_bonus,
@@ -436,6 +421,15 @@ class ConfigRepository:
         if (sub_raw if sub_raw is not None else "true") != "true":
             return False, f"{label}功能已关闭。"
         return True, ""
+
+    @classmethod
+    def is_points_enabled_from_cache(cls) -> bool:
+        """同步读取内存缓存，判断全局积分体系总开关是否开启。
+
+        Returns:
+            全局积分总开关开启返回 ``True``，否则返回 ``False``。
+        """
+        return cls.cache.get(cls.KEY_ENABLE_POINTS, "true") == "true"
 
     @classmethod
     def check_points_feature_from_cache(cls, sub_key: str) -> tuple[bool, str]:
@@ -478,6 +472,14 @@ class ConfigRepository:
         sub_raw = await self.get_settings(sub_key, "true")
         return self._evaluate_points_feature(master_raw, sub_raw, sub_key)
 
+    async def is_points_enabled(self) -> bool:
+        """读取数据库或缓存，判断全局积分总开关当前是否处于开启状态。
+
+        Returns:
+            全局积分总开关开启返回 ``True``，否则返回 ``False``。
+        """
+        return await self.get_settings(self.KEY_ENABLE_POINTS, "true") == "true"
+
     async def is_points_feature_enabled(self, sub_key: str) -> bool:
         """读取缓存或数据库，判断指定积分子能力是否生效。
 
@@ -502,7 +504,7 @@ class ConfigRepository:
         return cls._POINTS_SUB_SWITCH_LABELS.get(sub_key)
 
     async def get_effective_points_switches(self) -> dict[str, bool]:
-        """获取 6 项积分细粒度子开关经过总开关一票否决后的实际生效状态字典。
+        """获取 9 项积分细粒度子开关经过总开关一票否决后的实际生效状态字典。
 
         Returns:
             以字段名（如 ``enable_points_checkin``）为键、生效布尔值为值的字典
@@ -529,9 +531,6 @@ class ConfigRepository:
             self.KEY_POINTS_RENEW_FIXED,
             self.KEY_POINTS_RENEW_MIN,
             self.KEY_POINTS_RENEW_MAX,
-            self.KEY_POINTS_REQUEST_MODE,
-            self.KEY_POINTS_REQUEST_RATIO,
-            self.KEY_POINTS_REQUEST_FIXED,
             self.KEY_POINTS_CHECKIN_MIN,
             self.KEY_POINTS_CHECKIN_MAX,
             self.KEY_POINTS_CHECKIN_CONSECUTIVE_BONUS,
@@ -740,10 +739,10 @@ class ConfigRepository:
 
     @classmethod
     def _build_traffic_config(cls, source: dict[str, str]) -> TrafficConfigDict:
-        """从配置键值字典解析 Nginx 流量 UDP 监听、刷盘周期及流量包积分兑换单价
+        """从配置键值字典解析 Nginx 流量 UDP 监听与刷盘周期配置
 
         Args:
-            source: 包含流量监听、刷盘及流量包单价配置键的字典。
+            source: 包含流量监听与刷盘配置键的字典。
 
         Returns:
             经过端口上下界保底与类型转换后的 ``TrafficConfigDict``。
@@ -757,26 +756,10 @@ class ConfigRepository:
         flush_interval = cls._parse_int(
             source.get(cls.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS), 10, 1
         )
-        pack_cost_score = cls._parse_int(
-            source.get(cls.KEY_TRAFFIC_PACK_COST_SCORE),
-            DEFAULT_TRAFFIC_PACK_COST_SCORE,
-            1,
-        )
-        pack_size_gib = cls._parse_float(
-            source.get(cls.KEY_TRAFFIC_PACK_SIZE_GIB),
-            DEFAULT_TRAFFIC_PACK_SIZE_GIB,
-            0.0,
-        )
-        if pack_size_gib <= 0:
-            pack_size_gib = DEFAULT_TRAFFIC_PACK_SIZE_GIB
-        pack_unit_bytes = max(1, round(pack_size_gib * BYTES_PER_GIB))
         return {
             "traffic_udp_host": udp_host,
             "traffic_udp_port": udp_port,
             "traffic_flush_interval_seconds": flush_interval,
-            "traffic_pack_cost_score": pack_cost_score,
-            "traffic_pack_size_gib": pack_size_gib,
-            "traffic_pack_unit_bytes": pack_unit_bytes,
         }
 
     @classmethod
@@ -806,7 +789,7 @@ class ConfigRepository:
         return await self.get_settings(self.KEY_ENABLE_TRAFFIC, "false") == "true"
 
     async def get_traffic_config(self) -> TrafficConfigDict:
-        """读取数据库/缓存中的流量 UDP 监听、刷盘周期及流量包兑换单价配置
+        """读取数据库/缓存中的流量 UDP 监听与刷盘周期配置
 
         Returns:
             经规范化与默认值兜底后的 ``TrafficConfigDict``。
@@ -815,8 +798,6 @@ class ConfigRepository:
             self.KEY_TRAFFIC_UDP_HOST,
             self.KEY_TRAFFIC_UDP_PORT,
             self.KEY_TRAFFIC_FLUSH_INTERVAL_SECONDS,
-            self.KEY_TRAFFIC_PACK_COST_SCORE,
-            self.KEY_TRAFFIC_PACK_SIZE_GIB,
         )
         source: dict[str, str] = {}
         for key in keys:

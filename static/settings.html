@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="watch_time.js"></script>
+    <script src="watch_time.js?v=20261120"></script>
     <title>TellyMeta 设置</title>
     <style>
         :root {
@@ -75,6 +75,23 @@
         .modal-close {
             color: var(--link-color);
             cursor: pointer;
+        }
+
+        .modal-scroll-body {
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        .modal-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .modal-stack>* {
+            flex-shrink: 0;
         }
 
         /* 表单样式 */
@@ -385,21 +402,21 @@
         <div class="section">
             <div class="card">
                 <div class="item">
-                    <div class="item-content" style="cursor:pointer;" onclick="openModal('points-modal')">
+                    <div class="item-content" style="cursor:pointer;" onclick="openSystemModalIfEnabled('toggle-points', 'points-modal')">
                         <span class="item-title">积分 / 签到功能</span>
                         <span class="item-subtitle" id="points-summary">加载中...</span>
                     </div>
-                    <span class="config-link" id="points-config-btn" onclick="openModal('points-modal')">配置 ›</span>
+                    <span class="config-link" id="points-config-btn" onclick="openSystemModalIfEnabled('toggle-points', 'points-modal')">配置 ›</span>
                     <label class="switch"><input
                             type="checkbox" id="toggle-points" onchange="toggleSystem('enable_points')"><span
                             class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content" style="cursor:pointer;" onclick="openModal('verification-modal')">
+                    <div class="item-content" style="cursor:pointer;" onclick="openSystemModalIfEnabled('toggle-verification', 'verification-modal')">
                         <span class="item-title">入群验证</span>
                         <span class="item-subtitle" id="verification-summary">加载中...</span>
                     </div>
-                    <span class="config-link" id="verification-config-btn" onclick="openModal('verification-modal')">配置 ›</span>
+                    <span class="config-link" id="verification-config-btn" onclick="openSystemModalIfEnabled('toggle-verification', 'verification-modal')">配置 ›</span>
                     <label class="switch"><input
                             type="checkbox" id="toggle-verification"
                             onchange="toggleSystem('enable_verification')"><span class="slider"></span></label>
@@ -423,31 +440,31 @@
                             class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content" style="cursor:pointer;" onclick="openModal('llm-modal')">
+                    <div class="item-content" style="cursor:pointer;" onclick="openSystemModalIfEnabled('toggle-llm-translate', 'llm-modal')">
                         <span class="item-title">LLM 元数据翻译</span>
                         <span class="item-subtitle" id="llm-summary">加载中...</span>
                     </div>
-                    <span class="config-link" id="llm-config-btn" onclick="openModal('llm-modal')">配置 ›</span>
+                    <span class="config-link" id="llm-config-btn" onclick="openSystemModalIfEnabled('toggle-llm-translate', 'llm-modal')">配置 ›</span>
                     <label class="switch"><input
                             type="checkbox" id="toggle-llm-translate"
                             onchange="toggleSystem('enable_llm_translate')"><span class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content" style="cursor:pointer;" onclick="openModal('watch-time-modal')">
+                    <div class="item-content" style="cursor:pointer;" onclick="openSystemModalIfEnabled('toggle-watch-time', 'watch-time-modal')">
                         <span class="item-title">播放时长统计</span>
                         <span class="item-subtitle" id="watch-time-summary">加载中...</span>
                     </div>
-                    <span class="config-link" id="watch-time-config-btn" onclick="openModal('watch-time-modal')">配置 ›</span>
+                    <span class="config-link" id="watch-time-config-btn" onclick="openSystemModalIfEnabled('toggle-watch-time', 'watch-time-modal')">配置 ›</span>
                     <label class="switch"><input
                             type="checkbox" id="toggle-watch-time"
                             onchange="toggleSystem('enable_watch_time')"><span class="slider"></span></label>
                 </div>
                 <div class="item">
-                    <div class="item-content" style="cursor:pointer;" onclick="openModal('traffic-modal')">
+                    <div class="item-content" style="cursor:pointer;" onclick="openSystemModalIfEnabled('toggle-traffic', 'traffic-modal')">
                         <span class="item-title">Nginx 流量采集与配额</span>
                         <span class="item-subtitle" id="traffic-summary">加载中...</span>
                     </div>
-                    <span class="config-link" id="traffic-config-btn" onclick="openModal('traffic-modal')">配置 ›</span>
+                    <span class="config-link" id="traffic-config-btn" onclick="openSystemModalIfEnabled('toggle-traffic', 'traffic-modal')">配置 ›</span>
                     <label class="switch"><input
                             type="checkbox" id="toggle-traffic"
                             onchange="toggleSystem('enable_traffic')"><span class="slider"></span></label>
@@ -475,80 +492,17 @@
                 </div>
             </div>
         </div>
-
-        <!-- 积分系统细粒度产出与消费子开关 -->
-        <div class="section-title">积分细粒度子开关</div>
-        <div class="section">
-            <div class="section-hint" id="points-master-veto-hint" style="display:none; color:var(--destructive-text-color); margin-top:0; margin-bottom:8px;">
-                ⚠️ 全局积分总开关已关闭：以下 6 项积分产出与消费子能力当前均视作关闭（各自独立开关状态已保留，总开关恢复后按独立状态生效）。
-            </div>
-            <div class="card" id="points-sub-switches-card">
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">签到积分（产出）</span>
-                        <span class="item-subtitle" id="sub-points-checkin-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-checkin"
-                            onchange="toggleSystem('enable_points_checkin')"><span class="slider"></span></label>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">群聊发言积分（产出）</span>
-                        <span class="item-subtitle" id="sub-points-chat-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-chat"
-                            onchange="toggleSystem('enable_points_chat')"><span class="slider"></span></label>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">积分续期（消费）</span>
-                        <span class="item-subtitle" id="sub-points-renew-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-renew"
-                            onchange="toggleSystem('enable_points_renew')"><span class="slider"></span></label>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">积分求片（消费）</span>
-                        <span class="item-subtitle" id="sub-points-request-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-request"
-                            onchange="toggleSystem('enable_points_request')"><span class="slider"></span></label>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">积分生成激活码（消费）</span>
-                        <span class="item-subtitle" id="sub-points-generate-code-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-generate-code"
-                            onchange="toggleSystem('enable_points_generate_code')"><span class="slider"></span></label>
-                </div>
-                <div class="item">
-                    <div class="item-content">
-                        <span class="item-title">积分兑换流量包（消费）</span>
-                        <span class="item-subtitle" id="sub-points-traffic-pack-status">加载中...</span>
-                    </div>
-                    <label class="switch"><input
-                            type="checkbox" id="toggle-points-traffic-pack"
-                            onchange="toggleSystem('enable_points_traffic_pack')"><span class="slider"></span></label>
-                </div>
-            </div>
-        </div>
     </div>
 
-    <!-- 积分与定价规则弹窗 -->
+    <!-- 积分与子开关配置弹窗 -->
     <div class="modal-overlay" id="points-modal">
         <div class="modal">
             <div class="modal-header">
-                <span>积分、签到与定价规则</span>
+                <span>积分、签到与子开关配置</span>
                 <span class="modal-close" onclick="closeModal('points-modal')">取消</span>
             </div>
-            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div class="modal-scroll-body">
+                <div class="modal-stack">
                 <div class="form-group" style="margin-bottom:0">
                     <label class="form-label">续费 / 注册积分模式</label>
                     <select id="points-renew-mode" class="form-input" onchange="updatePointsModeFields()">
@@ -570,21 +524,7 @@
                         <input type="number" min="0" id="points-renew-max" class="form-input">
                     </div>
                 </div>
-                <div class="form-group" style="margin-bottom:0">
-                    <label class="form-label">求片定价模式</label>
-                    <select id="points-request-mode" class="form-input" onchange="updatePointsModeFields()">
-                        <option value="ratio">按续费积分比例</option>
-                        <option value="fixed">固定积分</option>
-                    </select>
-                </div>
-                <div class="form-group" id="points-request-ratio-group" style="margin-bottom:0">
-                    <label class="form-label">求片积分比例（例如 0.1 表示 10%）</label>
-                    <input type="number" step="0.01" min="0" id="points-request-ratio" class="form-input">
-                </div>
-                <div class="form-group" id="points-request-fixed-group" style="display:none; margin-bottom:0">
-                    <label class="form-label">求片固定积分</label>
-                    <input type="number" min="0" id="points-request-fixed" class="form-input">
-                </div>
+                <div class="section-hint" style="margin:0;">求片定价与流量包定价已迁移至「媒体服务器 → 策略」按各服独立配置。</div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                     <div class="form-group" style="margin-bottom:0">
                         <label class="form-label">签到基础最小积分</label>
@@ -610,16 +550,98 @@
                         <label class="form-label">刷屏警告连发阈值(0关闭)</label>
                         <input type="number" min="0" id="points-spam-threshold" class="form-input">
                     </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">流量包单价(积分/包)</label>
-                        <input type="number" min="1" id="points-traffic-pack-cost" class="form-input" placeholder="50">
+                </div>
+
+                <!-- 积分细粒度产出、消费与惩罚子开关 -->
+                <div class="form-label" style="margin-top:4px; margin-bottom:0;">积分细粒度子开关（9 项）</div>
+                <div class="section-hint" id="points-master-veto-hint" style="display:none; color:var(--destructive-text-color); margin:0;">
+                    ⚠️ 全局积分总开关已关闭：以下 9 项积分产出、消费与惩罚子能力当前均视作关闭（各自独立开关状态已保留，总开关恢复后按独立状态生效）。
+                </div>
+                <div class="card" id="points-sub-switches-card" style="margin-bottom:0; border:1px solid var(--secondary-bg-color);">
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">签到积分（产出）</span>
+                            <span class="item-subtitle" id="sub-points-checkin-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-checkin"
+                                onchange="toggleSystem('enable_points_checkin')"><span class="slider"></span></label>
                     </div>
-                    <div class="form-group" style="margin-bottom:0">
-                        <label class="form-label">流量包容量(GiB/包)</label>
-                        <input type="number" min="0.01" step="any" id="points-traffic-pack-gib" class="form-input" placeholder="10">
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">群聊发言积分（产出）</span>
+                            <span class="item-subtitle" id="sub-points-chat-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-chat"
+                                onchange="toggleSystem('enable_points_chat')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">积分自注册（消费）</span>
+                            <span class="item-subtitle" id="sub-points-register-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-register"
+                                onchange="toggleSystem('enable_points_register')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">积分续期（消费）</span>
+                            <span class="item-subtitle" id="sub-points-renew-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-renew"
+                                onchange="toggleSystem('enable_points_renew')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">积分求片（消费）</span>
+                            <span class="item-subtitle" id="sub-points-request-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-request"
+                                onchange="toggleSystem('enable_points_request')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">积分生成激活码（消费）</span>
+                            <span class="item-subtitle" id="sub-points-generate-code-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-generate-code"
+                                onchange="toggleSystem('enable_points_generate_code')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">积分兑换流量包（消费）</span>
+                            <span class="item-subtitle" id="sub-points-traffic-pack-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-traffic-pack"
+                                onchange="toggleSystem('enable_points_traffic_pack')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">刷屏扣分（惩罚）</span>
+                            <span class="item-subtitle" id="sub-points-spam-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-spam"
+                                onchange="toggleSystem('enable_points_spam')"><span class="slider"></span></label>
+                    </div>
+                    <div class="item">
+                        <div class="item-content">
+                            <span class="item-title">管理员警告扣分（惩罚）</span>
+                            <span class="item-subtitle" id="sub-points-warn-status">加载中...</span>
+                        </div>
+                        <label class="switch"><input
+                                type="checkbox" id="toggle-points-warn"
+                                onchange="toggleSystem('enable_points_warn')"><span class="slider"></span></label>
                     </div>
                 </div>
-                <button type="button" class="btn btn-primary" onclick="savePointsConfig()">保存积分与定价配置</button>
+                <button type="button" class="btn btn-primary" onclick="savePointsConfig()">保存积分配置</button>
+                </div>
             </div>
         </div>
     </div>
@@ -647,7 +669,8 @@
                 <span>LLM 元数据翻译配置</span>
                 <span class="modal-close" onclick="closeModal('llm-modal')">取消</span>
             </div>
-            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div class="modal-scroll-body">
+                <div class="modal-stack">
                 <div class="form-group" style="margin-bottom:0">
                     <label class="form-label">AI Base URL</label>
                     <input type="url" id="llm-base-url" class="form-input"
@@ -685,6 +708,7 @@
                     <input type="number" min="1" id="llm-tpm" class="form-input" placeholder="留空不限制">
                 </div>
                 <button type="button" class="btn btn-primary" onclick="saveLlmConfig()">保存 LLM 配置</button>
+                </div>
             </div>
         </div>
     </div>
@@ -822,7 +846,8 @@
                 <span>定时任务与运维策略</span>
                 <span class="modal-close" onclick="closeModal('ops-modal')">取消</span>
             </div>
-            <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px;">
+            <div class="modal-scroll-body">
+                <div class="modal-stack">
                 <span class="item-subtitle">日期支持 cron 语法：<code>*</code> 每天、<code>*/3</code> 每3天、<code>1,15</code> 每月1/15号</span>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                     <div class="form-group" style="margin-bottom:0">
@@ -887,6 +912,7 @@
                     <input type="number" min="0" id="ops-backup-retention-days" class="form-input">
                 </div>
                 <button type="button" class="btn btn-primary" onclick="saveOpsConfig()">保存运维策略</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1035,44 +1061,103 @@
                     </div>
                     <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
                         <span>求片功能</span>
-                        <label class="switch"><input type="checkbox" id="srv-request"><span
+                        <label class="switch"><input type="checkbox" id="srv-request" onchange="updateServerPolicyFields()"><span
                                 class="slider"></span></label>
                     </div>
-                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
-                        <span>播放时长采集</span>
-                        <label class="switch"><input type="checkbox" id="srv-watch-time"><span
-                                class="slider"></span></label>
+                    <div id="srv-request-pricing-group" style="display:none; margin-bottom:15px; padding-left:10px; border-left:2px solid var(--hint-color);">
+                        <div class="section-hint" id="srv-request-free-only-hint" style="display:none; margin:0 0 8px 0;">
+                            当前全局「积分」或「积分求片」已关闭，仅 0 积分免费求片生效；下方付费配置已保留隐藏。
+                        </div>
+                        <div id="srv-request-pricing-fields">
+                            <div class="form-group" style="margin-bottom:10px;">
+                                <label class="form-label">本服求片定价模式（设为 0 即免费求片）</label>
+                                <select class="form-input" id="srv-request-mode" onchange="updateServerPolicyFields()">
+                                    <option value="fixed">固定积分</option>
+                                    <option value="ratio">按续费积分比例</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="srv-request-fixed-group" style="margin-bottom:10px;">
+                                <label class="form-label">求片固定积分（0 表示免费求片）</label>
+                                <input type="number" class="form-input" id="srv-request-fixed" min="0" step="1" placeholder="0">
+                            </div>
+                            <div class="form-group" id="srv-request-ratio-group" style="display:none; margin-bottom:10px;">
+                                <label class="form-label">求片积分比例（例如 0.1 表示 10%，0 表示免费）</label>
+                                <input type="number" class="form-input" id="srv-request-ratio" min="0" step="0.01" placeholder="0">
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm" onclick="setServerFreeRequestZero()">设为免费求片 (0 积分)</button>
                     </div>
-                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
-                        <span>时长保活续期</span>
-                        <label class="switch"><input type="checkbox" id="srv-watch-time-renewal"><span
-                                class="slider"></span></label>
+                    <div id="srv-watch-time-section">
+                        <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                            <span>播放时长采集</span>
+                            <label class="switch"><input type="checkbox" id="srv-watch-time" onchange="updateServerPolicyFields()"><span
+                                    class="slider"></span></label>
+                        </div>
+                        <div id="srv-watch-time-renewal-group" style="padding-left:10px; border-left:2px solid var(--hint-color);">
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                                <span>时长保活续期</span>
+                                <label class="switch"><input type="checkbox" id="srv-watch-time-renewal" onchange="updateServerPolicyFields()"><span
+                                        class="slider"></span></label>
+                            </div>
+                            <div class="form-group" id="srv-watch-time-threshold-group">
+                                <label class="form-label">保活门槛时长 (小时，0 表示未设定门槛)</label>
+                                <input type="number" class="form-input" id="srv-watch-time-threshold-hours" min="0" step="any" placeholder="0">
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">保活门槛时长 (小时，0 表示未设定门槛)</label>
-                        <input type="number" class="form-input" id="srv-watch-time-threshold-hours" min="0" step="any" placeholder="0">
+                    <div id="srv-traffic-section">
+                        <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                            <span>流量采集</span>
+                            <label class="switch"><input type="checkbox" id="srv-traffic" onchange="updateServerPolicyFields()"><span
+                                    class="slider"></span></label>
+                        </div>
+                        <div id="srv-traffic-sub-group" style="padding-left:10px; border-left:2px solid var(--hint-color);">
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                                <span>超流通知 (80% / 100%)</span>
+                                <label class="switch"><input type="checkbox" id="srv-traffic-alert"><span
+                                        class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                                <span>超流自动停用（不触发删号）</span>
+                                <label class="switch"><input type="checkbox" id="srv-traffic-auto-suspend"><span
+                                        class="slider"></span></label>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">月基础流量配额 (GiB，0 表示不限)</label>
+                                <input type="number" class="form-input" id="srv-traffic-quota-gib" min="0" step="any" placeholder="0" oninput="updateServerPolicyFields()">
+                            </div>
+                            <div id="srv-traffic-pack-section" style="display:none; margin-bottom:15px;">
+                                <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                    <span>允许积分购买当期流量包</span>
+                                    <label class="switch"><input type="checkbox" id="srv-allow-traffic-pack" onchange="updateServerPolicyFields()"><span
+                                            class="slider"></span></label>
+                                </div>
+                                <div id="srv-traffic-pack-pricing-group" style="display:none; padding-left:10px; border-left:2px solid var(--hint-color);">
+                                    <div class="form-group" style="margin-bottom:10px;">
+                                        <label class="form-label">流量包定价模式（仅当期有效，重置清零）</label>
+                                        <select class="form-input" id="srv-traffic-pack-mode" onchange="updateServerPolicyFields()">
+                                            <option value="fixed">固定积分 / 包</option>
+                                            <option value="ratio">按续费积分比例 / 包</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group" id="srv-traffic-pack-fixed-group" style="margin-bottom:10px;">
+                                        <label class="form-label">流量包固定积分（最低 1 积分）</label>
+                                        <input type="number" class="form-input" id="srv-traffic-pack-fixed" min="1" step="1" placeholder="50">
+                                    </div>
+                                    <div class="form-group" id="srv-traffic-pack-ratio-group" style="display:none; margin-bottom:10px;">
+                                        <label class="form-label">流量包积分比例（按续费基准比例，最低折算 1 积分）</label>
+                                        <input type="number" class="form-input" id="srv-traffic-pack-ratio" min="0.01" step="0.01" placeholder="0.5">
+                                    </div>
+                                    <div class="form-group" style="margin-bottom:10px;">
+                                        <label class="form-label">单包流量容量 (GiB)</label>
+                                        <input type="number" class="form-input" id="srv-traffic-pack-gib" min="0.01" step="any" placeholder="10">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
-                        <span>流量采集</span>
-                        <label class="switch"><input type="checkbox" id="srv-traffic"><span
-                                class="slider"></span></label>
-                    </div>
-                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
-                        <span>超流通知 (80% / 100%)</span>
-                        <label class="switch"><input type="checkbox" id="srv-traffic-alert"><span
-                                class="slider"></span></label>
-                    </div>
-                    <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
-                        <span>超流自动停用（不触发删号）</span>
-                        <label class="switch"><input type="checkbox" id="srv-traffic-auto-suspend"><span
-                                class="slider"></span></label>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">月基础流量配额 (GiB，0 表示不限)</label>
-                        <input type="number" class="form-input" id="srv-traffic-quota-gib" min="0" step="any" placeholder="0">
-                    </div>
-                    <button type="button" class="btn btn-sm" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
-                    <button type="button" class="btn btn-sm" style="margin-top:10px" onclick="openLibraryModal()">📂
+                    <button type="button" class="btn btn-sm" id="srv-nsfw-btn" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
+                    <button type="button" class="btn btn-sm" id="srv-library-btn" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
                 </div>
 
@@ -1227,7 +1312,7 @@
                 const s = sys.value;
                 const pointsEnabled = !!s.enable_points;
                 document.getElementById('toggle-points').checked = pointsEnabled;
-                // 初始化 6 项积分细粒度子开关独立配置状态
+                // 初始化 9 项积分细粒度子开关独立配置状态
                 POINTS_SUB_SWITCH_DEFS.forEach(def => {
                     const cb = document.getElementById(def.toggleId);
                     if (cb) cb.checked = s[def.key] !== false;
@@ -1236,17 +1321,12 @@
                 document.getElementById('points-renew-fixed').value = s.points_renew_fixed ?? 100;
                 document.getElementById('points-renew-min').value = s.points_renew_min ?? 100;
                 document.getElementById('points-renew-max').value = s.points_renew_max ?? 1000;
-                document.getElementById('points-request-mode').value = s.points_request_mode || 'ratio';
-                document.getElementById('points-request-ratio').value = s.points_request_ratio ?? 0.1;
-                document.getElementById('points-request-fixed').value = s.points_request_fixed ?? 10;
                 document.getElementById('points-checkin-min').value = s.points_checkin_min ?? 1;
                 document.getElementById('points-checkin-max').value = s.points_checkin_max ?? 3;
                 document.getElementById('points-checkin-consecutive-bonus').value = s.points_checkin_consecutive_bonus ?? 2;
                 document.getElementById('points-checkin-lucky-interval').value = s.points_checkin_lucky_interval ?? 7;
                 document.getElementById('points-message-daily-cap').value = s.points_message_daily_cap ?? 20;
                 document.getElementById('points-spam-threshold').value = s.points_spam_threshold ?? 5;
-                document.getElementById('points-traffic-pack-cost').value = s.traffic_pack_cost_score ?? 50;
-                document.getElementById('points-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
                 updatePointsModeFields();
                 updatePointsConfigVisibility(pointsEnabled);
 
@@ -1334,6 +1414,12 @@
                 desc: '产出端 · 群聊发言统计与每日结算（防刷屏独立保留）'
             },
             {
+                key: 'enable_points_register',
+                toggleId: 'toggle-points-register',
+                statusId: 'sub-points-register-status',
+                desc: '消费端 · 默认注册模式消耗积分自助注册（关闭时仅限激活码）'
+            },
+            {
                 key: 'enable_points_renew',
                 toggleId: 'toggle-points-renew',
                 statusId: 'sub-points-renew-status',
@@ -1355,12 +1441,24 @@
                 key: 'enable_points_traffic_pack',
                 toggleId: 'toggle-points-traffic-pack',
                 statusId: 'sub-points-traffic-pack-status',
-                desc: '消费端 · 使用积分兑换流量包'
+                desc: '消费端 · 使用积分兑换流量包（需同时启用限流与单服买包）'
+            },
+            {
+                key: 'enable_points_spam',
+                toggleId: 'toggle-points-spam',
+                statusId: 'sub-points-spam-status',
+                desc: '惩罚端 · 群聊触发连续刷屏警告时连带扣除积分'
+            },
+            {
+                key: 'enable_points_warn',
+                toggleId: 'toggle-points-warn',
+                statusId: 'sub-points-warn-status',
+                desc: '惩罚端 · 管理员执行警告 (/warn) 时连带扣除积分'
             }
         ];
 
         /**
-         * 根据全局积分总开关状态同步 6 项积分细粒度子开关的生效提示与一票否决警告横幅。
+         * 根据全局积分总开关状态同步 9 项积分细粒度子开关的生效提示与一票否决警告横幅。
          * @param {boolean} masterEnabled 全局积分总开关当前是否开启。
          */
         function updatePointsSubSwitchesVisibility(masterEnabled) {
@@ -1395,54 +1493,34 @@
             const renewText = renewMode === 'fixed'
                 ? `固定 ${document.getElementById('points-renew-fixed').value || 100}`
                 : `中位数 ${document.getElementById('points-renew-min').value || 100}-${document.getElementById('points-renew-max').value || 1000}`;
-            const reqMode = document.getElementById('points-request-mode').value;
-            const reqText = reqMode === 'fixed'
-                ? `固定 ${document.getElementById('points-request-fixed').value || 10}`
-                : `${Math.round(parseFloat(document.getElementById('points-request-ratio').value || '0.1') * 100)}%`;
             const cMin = document.getElementById('points-checkin-min').value || 1;
             const cMax = document.getElementById('points-checkin-max').value || 3;
-            const packCost = document.getElementById('points-traffic-pack-cost').value || 50;
-            const packGib = document.getElementById('points-traffic-pack-gib').value || 10;
-            summary.innerText = `续费: ${renewText} · 求片: ${reqText} · 签到: ${cMin}-${cMax}分 · 流量包: ${packCost}分/${packGib}GiB`;
+            summary.innerText = `续费: ${renewText} · 签到: ${cMin}-${cMax}分`;
         }
 
         function updatePointsModeFields() {
             const renewMode = document.getElementById('points-renew-mode').value;
             document.getElementById('points-renew-fixed-group').style.display = renewMode === 'fixed' ? 'block' : 'none';
             document.getElementById('points-renew-median-group').style.display = renewMode === 'median' ? 'grid' : 'none';
-
-            const reqMode = document.getElementById('points-request-mode').value;
-            document.getElementById('points-request-ratio-group').style.display = reqMode === 'ratio' ? 'block' : 'none';
-            document.getElementById('points-request-fixed-group').style.display = reqMode === 'fixed' ? 'block' : 'none';
         }
 
         async function savePointsConfig() {
-            const parseFloatOr = (id, def) => {
-                const raw = document.getElementById(id).value.trim();
-                const val = parseFloat(raw);
-                return Number.isNaN(val) ? def : val;
-            };
             const payload = {
                 points_renew_mode: document.getElementById('points-renew-mode').value,
                 points_renew_fixed: parseIntOr('points-renew-fixed', 100),
                 points_renew_min: parseIntOr('points-renew-min', 100),
                 points_renew_max: parseIntOr('points-renew-max', 1000),
-                points_request_mode: document.getElementById('points-request-mode').value,
-                points_request_ratio: parseFloatOr('points-request-ratio', 0.1),
-                points_request_fixed: parseIntOr('points-request-fixed', 10),
                 points_checkin_min: parseIntOr('points-checkin-min', 1),
                 points_checkin_max: parseIntOr('points-checkin-max', 3),
                 points_checkin_consecutive_bonus: parseIntOr('points-checkin-consecutive-bonus', 2),
                 points_checkin_lucky_interval: parseIntOr('points-checkin-lucky-interval', 7),
                 points_message_daily_cap: parseIntOr('points-message-daily-cap', 20),
-                points_spam_threshold: parseIntOr('points-spam-threshold', 5),
-                traffic_pack_cost_score: parseIntOr('points-traffic-pack-cost', 50),
-                traffic_pack_size_gib: parseFloatOr('points-traffic-pack-gib', 10)
+                points_spam_threshold: parseIntOr('points-spam-threshold', 5)
             };
             const res = await api('/system/points', 'POST', payload);
             updatePointsConfigVisibility(document.getElementById('toggle-points').checked);
             closeModal('points-modal');
-            tg.showAlert('✅ ' + (res.message || '积分与定价配置已保存'));
+            tg.showAlert('✅ ' + (res.message || '积分配置已保存'));
         }
 
         function openMkvModalIfEnabled() {
@@ -1717,34 +1795,125 @@
             });
         }
 
+        let serverFreeRequestOverride = false;
+
+        /**
+         * 一键将当前服务器求片定价设为 0 积分免费求片模式。
+         */
+        function setServerFreeRequestZero() {
+            const modeEl = document.getElementById('srv-request-mode');
+            const fixedEl = document.getElementById('srv-request-fixed');
+            const ratioEl = document.getElementById('srv-request-ratio');
+            if (modeEl) modeEl.value = 'fixed';
+            if (fixedEl) fixedEl.value = 0;
+            if (ratioEl) ratioEl.value = 0;
+            serverFreeRequestOverride = true;
+            updateServerPolicyFields();
+        }
+
+        /**
+         * 按“全局开关 -> 单服开关 -> 子策略与定价模式”层级联动控制策略 Tab 各区域显隐。
+         */
+        function updateServerPolicyFields() {
+            const setDisplay = (id, show, mode = 'block') => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = show ? mode : 'none';
+            };
+            const pointsMasterOn = !!document.getElementById('toggle-points')?.checked;
+            const globalReqPointsOn = pointsMasterOn && !!document.getElementById('toggle-points-request')?.checked;
+            const globalPackPointsOn = pointsMasterOn && !!document.getElementById('toggle-points-traffic-pack')?.checked;
+            const globalWatchOn = !!document.getElementById('toggle-watch-time')?.checked;
+            const globalTrafficOn = !!document.getElementById('toggle-traffic')?.checked;
+
+            const reqOn = !!document.getElementById('srv-request')?.checked;
+            setDisplay('srv-request-pricing-group', reqOn);
+            const freeHintEl = document.getElementById('srv-request-free-only-hint');
+            if (freeHintEl) {
+                freeHintEl.textContent = serverFreeRequestOverride
+                    ? '已设为 0 积分免费求片，保存后所有用户可直接免费求片。'
+                    : '当前全局「积分」或「积分求片」已关闭，仅 0 积分免费求片生效；下方付费配置已保留隐藏（也可点击下方按钮切换为 0 积分免费求片）。';
+            }
+            setDisplay('srv-request-free-only-hint', reqOn && !globalReqPointsOn);
+            setDisplay('srv-request-pricing-fields', reqOn && globalReqPointsOn);
+            if (reqOn && globalReqPointsOn) {
+                const reqMode = document.getElementById('srv-request-mode')?.value || 'fixed';
+                setDisplay('srv-request-fixed-group', reqMode === 'fixed');
+                setDisplay('srv-request-ratio-group', reqMode === 'ratio');
+            }
+
+            const srvWatchOn = !!document.getElementById('srv-watch-time')?.checked;
+            const srvWatchRenewOn = !!document.getElementById('srv-watch-time-renewal')?.checked;
+            setDisplay('srv-watch-time-section', globalWatchOn);
+            setDisplay('srv-watch-time-renewal-group', globalWatchOn && srvWatchOn);
+            setDisplay('srv-watch-time-threshold-group', globalWatchOn && srvWatchOn && srvWatchRenewOn);
+
+            const srvTrafficOn = !!document.getElementById('srv-traffic')?.checked;
+            const quotaGib = parseFloat(document.getElementById('srv-traffic-quota-gib')?.value);
+            const hasQuota = Number.isFinite(quotaGib) && quotaGib > 0;
+            const packOn = !!document.getElementById('srv-allow-traffic-pack')?.checked;
+            setDisplay('srv-traffic-section', globalTrafficOn);
+            setDisplay('srv-traffic-sub-group', globalTrafficOn && srvTrafficOn);
+            setDisplay('srv-traffic-pack-section', globalTrafficOn && srvTrafficOn && globalPackPointsOn && hasQuota);
+            setDisplay('srv-traffic-pack-pricing-group', globalTrafficOn && srvTrafficOn && globalPackPointsOn && hasQuota && packOn);
+            if (globalTrafficOn && srvTrafficOn && globalPackPointsOn && hasQuota && packOn) {
+                const packMode = document.getElementById('srv-traffic-pack-mode')?.value || 'fixed';
+                setDisplay('srv-traffic-pack-fixed-group', packMode === 'fixed');
+                setDisplay('srv-traffic-pack-ratio-group', packMode === 'ratio');
+            }
+        }
+
+        /**
+         * 根据当前选择的服务器类型（Emby/Jellyfin/Sonarr/Radarr/qBittorrent）动态切换基础字段、Tab 页签与 Webhook 提示区域。
+         */
         function onServerTypeChange() {
             const type = document.getElementById('srv-type').value;
             const isQb = type === 'qbittorrent';
+            const isMedia = ['emby', 'jellyfin'].includes(type);
             const isArr = ['sonarr', 'radarr'].includes(type);
             const isEmby = type === 'emby';
-            const showWebhook = !isQb && currentServerId !== null;
+            const isEdit = currentServerId !== null;
+            const showWebhook = !isQb && isEdit;
             document.getElementById('qb-fields-group').style.display = isQb ? 'block' : 'none';
             document.getElementById('arr-qb-group').style.display = isArr ? 'block' : 'none';
+            document.getElementById('srv-tabs').style.display = isQb ? 'none' : 'flex';
+            document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
+            document.getElementById('tab-paths').style.display = isArr ? 'block' : 'none';
+            document.getElementById('req-topic-group').style.display = isArr ? 'block' : 'none';
+            document.getElementById('arr-nfo-group').style.display = isArr ? 'flex' : 'none';
+            if (document.getElementById('srv-nsfw-btn')) {
+                document.getElementById('srv-nsfw-btn').style.display = (isMedia && isEdit) ? 'inline-block' : 'none';
+            }
+            if (document.getElementById('srv-library-btn')) {
+                document.getElementById('srv-library-btn').style.display = (isMedia && isEdit) ? 'inline-block' : 'none';
+            }
             document.getElementById('webhook-info-group').style.display = showWebhook ? 'block' : 'none';
             document.getElementById('webhook-header-group').style.display = (showWebhook && !isEmby) ? 'block' : 'none';
             document.getElementById('srv-webhook-url-hint').textContent = isEmby
                 ? 'Emby 不支持自定义请求头，已直接在上方 Webhook URL 中附带 ?token= 鉴权参数。'
                 : '请配合下方 Header 鉴权信息使用（推荐），URL 本身不包含密钥。';
             document.getElementById('srv-key-label').textContent = isQb ? '密码 / API Key' : 'API Key';
+            if (isQb) {
+                switchTab('basic');
+            }
         }
 
         // --- Server Edit ---
         /**
-         * 打开“添加服务器”弹窗并初始化默认表单项（包含时长保活关闭与门槛归零默认值）。
+         * 打开“添加服务器”弹窗并初始化默认表单项（求片与流量包默认关闭、求片默认免费 0 积分）。
          */
         function openAddServerModal() {
             currentServerId = null;
+            serverFreeRequestOverride = false;
             document.getElementById('server-form').reset();
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
             document.getElementById('srv-qb-limit').value = 43200;
             if (document.getElementById('srv-reg-months')) document.getElementById('srv-reg-months').value = 1;
             if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = true;
+            if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = false;
+            if (document.getElementById('srv-request-mode')) document.getElementById('srv-request-mode').value = 'fixed';
+            if (document.getElementById('srv-request-fixed')) document.getElementById('srv-request-fixed').value = 0;
+            if (document.getElementById('srv-request-ratio')) document.getElementById('srv-request-ratio').value = 0;
             if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = true;
             if (document.getElementById('srv-watch-time-renewal')) document.getElementById('srv-watch-time-renewal').checked = false;
             if (document.getElementById('srv-watch-time-threshold-hours')) document.getElementById('srv-watch-time-threshold-hours').value = 0;
@@ -1752,23 +1921,31 @@
             if (document.getElementById('srv-traffic-alert')) document.getElementById('srv-traffic-alert').checked = true;
             if (document.getElementById('srv-traffic-auto-suspend')) document.getElementById('srv-traffic-auto-suspend').checked = false;
             if (document.getElementById('srv-traffic-quota-gib')) document.getElementById('srv-traffic-quota-gib').value = 0;
+            if (document.getElementById('srv-allow-traffic-pack')) document.getElementById('srv-allow-traffic-pack').checked = false;
+            if (document.getElementById('srv-traffic-pack-mode')) document.getElementById('srv-traffic-pack-mode').value = 'fixed';
+            if (document.getElementById('srv-traffic-pack-fixed')) document.getElementById('srv-traffic-pack-fixed').value = 50;
+            if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = 0.5;
+            if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = 10;
+            if (document.getElementById('srv-allow-nfo')) document.getElementById('srv-allow-nfo').checked = true;
+            if (document.getElementById('path-mappings-list')) document.getElementById('path-mappings-list').innerHTML = '';
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
             fillQbServerSelect(null);
             onServerTypeChange();
+            updateServerPolicyFields();
 
-            document.getElementById('srv-tabs').style.display = 'none';
             switchTab('basic');
             openModal('server-modal', '添加服务器');
         }
 
         /**
-         * 打开“编辑服务器”弹窗并回填配置项（将后端门槛秒数换算为小时数回显）。
+         * 打开“编辑服务器”弹窗并回填各服独立策略、定价参数与阈值转换。
          * @param {object} s 服务器 DTO 对象。
          */
         function openEditServer(s) {
             currentServerId = s.id;
+            serverFreeRequestOverride = false;
             document.getElementById('srv-name').value = s.name;
             document.getElementById('srv-type').value = s.server_type;
             document.getElementById('srv-type').disabled = true;
@@ -1795,10 +1972,6 @@
 
             const isMedia = ['emby', 'jellyfin'].includes(s.server_type);
             const isArr = ['sonarr', 'radarr'].includes(s.server_type);
-            document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
-            document.getElementById('tab-paths').style.display = isArr ? 'block' : 'none';
-            document.getElementById('req-topic-group').style.display = isArr ? 'block' : 'none';
-            document.getElementById('arr-nfo-group').style.display = isArr ? 'flex' : 'none';
             if (isArr) {
                 document.getElementById('srv-allow-nfo').checked = s.allow_nfo !== false;
             }
@@ -1835,7 +2008,10 @@
                 document.getElementById('srv-tos').value = s.tos || '';
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
                 if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
-                if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = s.allow_request !== false;
+                if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = Boolean(s.allow_request);
+                if (document.getElementById('srv-request-mode')) document.getElementById('srv-request-mode').value = s.request_points_mode || 'fixed';
+                if (document.getElementById('srv-request-fixed')) document.getElementById('srv-request-fixed').value = s.request_points_fixed ?? 0;
+                if (document.getElementById('srv-request-ratio')) document.getElementById('srv-request-ratio').value = s.request_points_ratio ?? 0;
                 if (document.getElementById('srv-watch-time')) document.getElementById('srv-watch-time').checked = s.enable_watch_time !== false;
                 if (document.getElementById('srv-watch-time-renewal')) document.getElementById('srv-watch-time-renewal').checked = Boolean(s.enable_watch_time_renewal);
                 if (document.getElementById('srv-watch-time-threshold-hours')) {
@@ -1849,12 +2025,17 @@
                     const quotaBytes = Number(s.traffic_quota_bytes || 0);
                     document.getElementById('srv-traffic-quota-gib').value = quotaBytes > 0 ? Number((quotaBytes / 1073741824).toFixed(4)) : 0;
                 }
+                if (document.getElementById('srv-allow-traffic-pack')) document.getElementById('srv-allow-traffic-pack').checked = Boolean(s.allow_traffic_pack);
+                if (document.getElementById('srv-traffic-pack-mode')) document.getElementById('srv-traffic-pack-mode').value = s.traffic_pack_points_mode || 'fixed';
+                if (document.getElementById('srv-traffic-pack-fixed')) document.getElementById('srv-traffic-pack-fixed').value = s.traffic_pack_points_fixed ?? 50;
+                if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = s.traffic_pack_points_ratio ?? 0.5;
+                if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
                 onRegModeChange();
+                updateServerPolicyFields();
             } else {
                 renderPathMappings(s.path_mappings || []);
             }
 
-            document.getElementById('srv-tabs').style.display = 'flex';
             switchTab('basic');
             openModal('server-modal', '编辑服务器');
         }
@@ -2007,11 +2188,16 @@
 
         // --- Save Server ---
         /**
-         * 提交新增或更新服务器表单，将保活门槛小时数换算为非负整数秒提交至设置 API。
+         * 提交新增或更新服务器表单，仅携带当前处于展开可见状态的子策略与定价字段，实现无损保存。
          * @param {SubmitEvent} e 表单提交事件。
          */
         async function handleServerSubmit(e) {
             e.preventDefault();
+
+            const isSectionVisible = (id) => {
+                const el = document.getElementById(id);
+                return Boolean(el && el.style.display !== 'none');
+            };
 
             const notifyTopicEl = document.getElementById('srv-notify-topic');
             const notifyId = notifyTopicEl ? (parseInt(notifyTopicEl.value) || 0) : 0;
@@ -2037,15 +2223,42 @@
                 payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
                 payload.allow_request = document.getElementById('srv-request').checked;
-                payload.enable_watch_time = document.getElementById('srv-watch-time').checked;
-                payload.enable_watch_time_renewal = document.getElementById('srv-watch-time-renewal').checked;
-                const thresholdHours = parseFloat(document.getElementById('srv-watch-time-threshold-hours').value);
-                payload.watch_time_renewal_threshold_seconds = Number.isFinite(thresholdHours) && thresholdHours > 0 ? Math.round(thresholdHours * 3600) : 0;
-                payload.enable_traffic = document.getElementById('srv-traffic').checked;
-                payload.enable_traffic_alert = document.getElementById('srv-traffic-alert').checked;
-                payload.enable_traffic_auto_suspend = document.getElementById('srv-traffic-auto-suspend').checked;
-                const quotaGib = parseFloat(document.getElementById('srv-traffic-quota-gib').value);
-                payload.traffic_quota_bytes = Number.isFinite(quotaGib) && quotaGib > 0 ? Math.round(quotaGib * 1073741824) : 0;
+                if (payload.allow_request && (isSectionVisible('srv-request-pricing-fields') || serverFreeRequestOverride)) {
+                    payload.request_points_mode = document.getElementById('srv-request-mode').value;
+                    payload.request_points_fixed = Math.max(0, parseInt(document.getElementById('srv-request-fixed').value, 10) || 0);
+                    const reqRatio = parseFloat(document.getElementById('srv-request-ratio').value);
+                    payload.request_points_ratio = Number.isFinite(reqRatio) && reqRatio >= 0 ? reqRatio : 0;
+                }
+                if (isSectionVisible('srv-watch-time-section')) {
+                    payload.enable_watch_time = document.getElementById('srv-watch-time').checked;
+                    if (isSectionVisible('srv-watch-time-renewal-group')) {
+                        payload.enable_watch_time_renewal = document.getElementById('srv-watch-time-renewal').checked;
+                        if (isSectionVisible('srv-watch-time-threshold-group')) {
+                            const thresholdHours = parseFloat(document.getElementById('srv-watch-time-threshold-hours').value);
+                            payload.watch_time_renewal_threshold_seconds = Number.isFinite(thresholdHours) && thresholdHours > 0 ? Math.round(thresholdHours * 3600) : 0;
+                        }
+                    }
+                }
+                if (isSectionVisible('srv-traffic-section')) {
+                    payload.enable_traffic = document.getElementById('srv-traffic').checked;
+                    if (isSectionVisible('srv-traffic-sub-group')) {
+                        payload.enable_traffic_alert = document.getElementById('srv-traffic-alert').checked;
+                        payload.enable_traffic_auto_suspend = document.getElementById('srv-traffic-auto-suspend').checked;
+                        const quotaGib = parseFloat(document.getElementById('srv-traffic-quota-gib').value);
+                        payload.traffic_quota_bytes = Number.isFinite(quotaGib) && quotaGib > 0 ? Math.round(quotaGib * 1073741824) : 0;
+                        if (isSectionVisible('srv-traffic-pack-section')) {
+                            payload.allow_traffic_pack = document.getElementById('srv-allow-traffic-pack').checked;
+                            if (isSectionVisible('srv-traffic-pack-pricing-group')) {
+                                payload.traffic_pack_points_mode = document.getElementById('srv-traffic-pack-mode').value;
+                                payload.traffic_pack_points_fixed = Math.max(1, parseInt(document.getElementById('srv-traffic-pack-fixed').value, 10) || 50);
+                                const packRatio = parseFloat(document.getElementById('srv-traffic-pack-ratio').value);
+                                payload.traffic_pack_points_ratio = Number.isFinite(packRatio) && packRatio > 0 ? packRatio : 0.5;
+                                const packGib = parseFloat(document.getElementById('srv-traffic-pack-gib').value);
+                                payload.traffic_pack_size_gib = Number.isFinite(packGib) && packGib > 0 ? packGib : 10;
+                            }
+                        }
+                    }
+                }
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
                 payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;
@@ -2060,14 +2273,18 @@
                 })).filter(m => m.remote && m.local);
             }
 
+            let res = null;
             if (currentServerId) {
-                await api(`/servers/${currentServerId}`, 'PATCH', payload);
+                res = await api(`/servers/${currentServerId}`, 'PATCH', payload);
             } else {
                 payload.server_type = type;
-                await api('/servers', 'POST', payload);
+                res = await api('/servers', 'POST', payload);
             }
             closeModal('server-modal');
             loadData();
+            if (res && res.message) {
+                tg.showAlert('✅ ' + res.message);
+            }
         }
 
         async function deleteServer() {
@@ -2104,6 +2321,17 @@
                 wrapper.innerHTML = html;
             }
         }
+        /**
+         * 仅在指定总开关处于开启状态时打开对应系统设置弹窗，避免关闭体系后误入配置入口。
+         * @param {string} toggleId 总开关复选框 DOM ID。
+         * @param {string} modalId 目标弹窗 DOM ID。
+         */
+        function openSystemModalIfEnabled(toggleId, modalId) {
+            const toggle = document.getElementById(toggleId);
+            if (!toggle || !toggle.checked) return;
+            openModal(modalId);
+        }
+
         function openModal(id, title = null) {
             if (title) document.getElementById('modal-title').innerText = title;
             document.querySelector(`#${id}`).style.display = 'flex';
@@ -2118,10 +2346,13 @@
             enable_points: 'toggle-points',
             enable_points_checkin: 'toggle-points-checkin',
             enable_points_chat: 'toggle-points-chat',
+            enable_points_register: 'toggle-points-register',
             enable_points_renew: 'toggle-points-renew',
             enable_points_request: 'toggle-points-request',
             enable_points_generate_code: 'toggle-points-generate-code',
             enable_points_traffic_pack: 'toggle-points-traffic-pack',
+            enable_points_spam: 'toggle-points-spam',
+            enable_points_warn: 'toggle-points-warn',
             enable_verification: 'toggle-verification',
             enable_cleanup_inactive_users: 'toggle-cleanup',
             enable_mkv_process: 'toggle-mkv-process',
@@ -2152,6 +2383,9 @@
             } else if (key === 'enable_traffic') {
                 updateTrafficVisibility(enabled);
             }
+            if (document.getElementById('server-modal')?.style.display === 'flex') {
+                updateServerPolicyFields();
+            }
         }
 
         /**
@@ -2164,11 +2398,25 @@
                 const res = await api(`/system/${key}/toggle`, 'POST');
                 const nextState = typeof res.new_state === 'boolean' ? res.new_state : !!(el && el.checked);
                 syncToggleVisualState(key, nextState);
+                const msg = res && res.message ? res.message : '';
+                if (
+                    msg
+                    && (
+                        msg.includes('解除')
+                        || msg.includes('释放')
+                        || msg.includes('解封')
+                        || msg.includes('暂不会实际生效')
+                        || msg.includes('失败')
+                    )
+                ) {
+                    tg.showAlert(msg);
+                }
             } catch (e) {
                 if (el) {
                     el.checked = !el.checked;
                     syncToggleVisualState(key, !!el.checked);
                 }
+                tg.showAlert('❌ ' + (e.message || '切换失败'));
             }
         }
 

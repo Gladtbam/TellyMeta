@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -129,7 +130,17 @@ class ServerInstance(Base):
         Boolean, default=True, server_default=text("true")
     )
     allow_request: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=text("true")
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # 服务器独立求片定价模式与参数（新服默认 fixed / 0 分；0 分求片不依赖全局积分系统）
+    request_points_mode: Mapped[str] = mapped_column(
+        String(16), default="fixed", server_default=text("'fixed'"), nullable=False
+    )
+    request_points_fixed: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    request_points_ratio: Mapped[float] = mapped_column(
+        Float, default=0.0, server_default=text("0.0"), nullable=False
     )
     allow_nfo: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
@@ -157,6 +168,22 @@ class ServerInstance(Base):
     )
     traffic_quota_bytes: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    # 服务器独立流量包开关、单价与单包容量配置（新服默认关闭，仅当开启积分与限流后生效，最低 1 积分）
+    allow_traffic_pack: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    traffic_pack_points_mode: Mapped[str] = mapped_column(
+        String(16), default="fixed", server_default=text("'fixed'"), nullable=False
+    )
+    traffic_pack_points_fixed: Mapped[int] = mapped_column(
+        Integer, default=50, server_default=text("50"), nullable=False
+    )
+    traffic_pack_points_ratio: Mapped[float] = mapped_column(
+        Float, default=0.5, server_default=text("0.5"), nullable=False
+    )
+    traffic_pack_size_gib: Mapped[float] = mapped_column(
+        Float, default=10.0, server_default=text("10.0"), nullable=False
     )
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
@@ -219,8 +246,12 @@ class MediaUser(Base):
     auto_renew: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
-    # 本周期基础流量消耗、跨周期流量包余额与历史总流量消耗（字节），以及本周期 80%/100% 告警单次去重与超流停用隔离标记
+    # 本周期基础流量消耗、当期临时调额、当期流量包余额与历史总流量消耗（字节），以及告警去重与超流停用隔离标记
     cycle_traffic_bytes: Mapped[int] = mapped_column(
+        BigInteger, default=0, server_default=text("0"), nullable=False
+    )
+    # 管理员当期临时调额字节数（支持正负加减，随当期重置或过期重锚一并清零）
+    cycle_traffic_adjustment_bytes: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default=text("0"), nullable=False
     )
     traffic_pack_bytes: Mapped[int] = mapped_column(

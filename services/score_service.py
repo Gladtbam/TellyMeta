@@ -70,15 +70,26 @@ class ScoreService:
             # 重置状态以防止重复处罚
             self.state.consecutive_count = 0
 
-            updated_user = await self.telegram_repo.update_warn_and_score(user_id)
+            # 防刷屏警告本身独立运作；仅在积分总开关与“刷屏扣分”子开关同时生效时才连带扣分并输出积分
+            spam_penalty_enabled = await self.config_repo.is_points_feature_enabled(
+                ConfigRepository.KEY_ENABLE_POINTS_SPAM
+            )
+            if spam_penalty_enabled:
+                updated_user = await self.telegram_repo.update_warn_and_score(user_id)
+            else:
+                updated_user = await self.telegram_repo.update_warn_only(user_id)
             if updated_user:
+                score_line = (
+                    f"\n当前积分: **{int(updated_user.score)}**"
+                    if spam_penalty_enabled
+                    else ""
+                )
                 return Result(
                     success=True,
                     message=TelegramMessage.render_markdown(t"""\
                         用户 [{user_id}](tg://user?id={user_id}) 由于刷屏行为已被警告一次。
 
-                        当前警告次数: **{updated_user.warning_count}**
-                        当前积分: **{updated_user.score}**
+                        当前警告次数: **{updated_user.warning_count}**{score_line:raw}
                     """),
                 )
             return Result(

@@ -13,10 +13,14 @@ from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
 from core.config import get_settings
+from core.economy_policy import (
+    calculate_request_points_cost,
+    evaluate_request_access,
+)
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
 from models.events import NotificationEvent
-from models.orm import LibraryBinding
+from models.orm import LibraryBinding, ServerInstance
 from models.radarr import MovieResource
 from models.sonarr import SeriesResource
 from models.tvdb import TvdbData
@@ -179,12 +183,22 @@ class RequestService:
 
         副作用：原子预留用户积分、创建求片记录并通知管理审核群组/话题。
         """
-        # 提交新求片前先校验总开关与“积分求片”子开关；撤回、拒审与超时释放等退分路径不受限制
-        allowed, reason = await self.config_repo.check_points_feature(
-            ConfigRepository.KEY_ENABLE_POINTS_REQUEST
+        # 查询服务器开关、定价与积分门槛：免费求片（cost == 0）完全独立于积分开关；付费求片受总开关与子开关管控
+        media_server = await self.server_repo.get_by_id(media_server_id, fresh=True)
+        fixed_cost = max(0, int(request_cost))
+        points_allowed, points_reason = (True, "")
+        if fixed_cost > 0:
+            points_allowed, points_reason = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_REQUEST
+            )
+        req_ok, _, req_err_msg = evaluate_request_access(
+            media_server,
+            cost=fixed_cost,
+            points_request_allowed=points_allowed,
+            points_request_reason=points_reason,
         )
-        if not allowed:
-            return Result(False, reason)
+        if not req_ok:
+            return Result(False, req_err_msg)
 
         client, binding = await self._get_client_by_library(
             media_server_id, library_name
@@ -232,13 +246,13 @@ class RequestService:
             )
 
         title, overview, poster = await self._get_media_content(selected_media, client)
-        media_server = await self.server_repo.get_by_id(media_server_id)
         media_server_name = getattr(media_server, "name", "未知")
         user_name = await self.client.get_user_name(user_id)
 
-        # 按提交时费用固定本次价格并原子预留积分，后续动态调价不追补或改扣
-        fixed_cost = max(0, int(request_cost))
-        if not await self.telegram_repo.deduct_score_if_sufficient(user_id, fixed_cost):
+        # 仅当单服求片定价 > 0 时检查并原子预留积分；0 分免费求片完全不触碰积分余额
+        if fixed_cost > 0 and not await self.telegram_repo.deduct_score_if_sufficient(
+            user_id, fixed_cost
+        ):
             user = await self.telegram_repo.get_or_create(user_id)
             return Result(
                 False,
@@ -301,15 +315,24 @@ class RequestService:
             )
             if fixed_cost > 0:
                 await self.telegram_repo.update_score(user_id, fixed_cost)
+                logger.warning(
+                    "求片通知发送失败，已释放预留积分: request_id={}, user_id={}, cost={}",
+                    req_id,
+                    user_id,
+                    fixed_cost,
+                )
+                return Result(
+                    False,
+                    "❌ 求片通知发送失败，预留积分已退回，请稍后重试。",
+                )
             logger.warning(
-                "求片通知发送失败，已释放预留积分: request_id={}, user_id={}, cost={}",
+                "免费求片通知发送失败: request_id={}, user_id={}",
                 req_id,
                 user_id,
-                fixed_cost,
             )
             return Result(
                 False,
-                "❌ 求片通知发送失败，预留积分已退回，请稍后重试。",
+                "❌ 求片通知发送失败，请稍后重试。",
             )
 
         msg_id = getattr(sent_msg, "id", None)
@@ -317,7 +340,7 @@ class RequestService:
             await self.request_repo.update_topic_message_id(req_id, msg_id)
 
         logger.info(
-            "求片提交成功并预留积分: request_id={}, user_id={}, arr_id={}, media={}:{}, reserved_cost={}",
+            "求片提交成功: request_id={}, user_id={}, arr_id={}, media={}:{}, reserved_cost={}",
             req_id,
             user_id,
             arr_id,
@@ -325,9 +348,14 @@ class RequestService:
             media_id,
             fixed_cost,
         )
+        if fixed_cost > 0:
+            return Result(
+                True,
+                f"✅ 请求已成功提交！(已预留 **{fixed_cost}** 积分，请求编号 #{req_id})\n请耐心等待管理员审核。",
+            )
         return Result(
             True,
-            f"✅ 请求已成功提交！(已预留 **{fixed_cost}** 积分，请求编号 #{req_id})\n请耐心等待管理员审核。",
+            f"✅ 请求已成功提交！（请求编号 #{req_id}）\n请耐心等待管理员审核。",
         )
 
     async def _add_media_to_arr(
@@ -468,9 +496,13 @@ class RequestService:
                 await self.telegram_repo.update_score(
                     expired_req.user_id, expired_req.reserved_cost
                 )
+                return Result(
+                    False,
+                    "该求片请求已超过 7 天有效期并自动取消，已释放预留积分，无法批准。",
+                )
             return Result(
                 False,
-                "该求片请求已超过 7 天有效期并自动取消，已释放预留积分，无法批准。",
+                "该求片请求已超过 7 天有效期并自动取消，无法批准。",
             )
 
         # 原子抢占为 processing，防止并发重复审批或与撤销/超时并发冲突
@@ -514,14 +546,21 @@ class RequestService:
                 media_year="",
                 server_name=server_name,
             )
+            if claimed.reserved_cost > 0:
+                return Result(
+                    True,
+                    TelegramMessage.render_markdown(
+                        t"✅ 已批准并添加 **{msg}**（结算积分: {claimed.reserved_cost}，操作人: {approver_name}）"
+                    ),
+                )
             return Result(
                 True,
                 TelegramMessage.render_markdown(
-                    t"✅ 已批准并添加 **{msg}**（结算积分: {claimed.reserved_cost}，操作人: {approver_name}）"
+                    t"✅ 已批准并添加 **{msg}**（操作人: {approver_name}）"
                 ),
             )
 
-        # Arr 添加失败时释放全部预留积分，不发生该次消费
+        # Arr 添加失败时仅在曾预留积分的情况下退回
         await self.request_repo.atomic_transition(
             request_id,
             from_status="processing",
@@ -535,13 +574,18 @@ class RequestService:
                 claimed.user_id, claimed.reserved_cost
             )
         logger.warning(
-            "Arr 添加失败，已释放预留积分: request_id={}, user_id={}, released_cost={}, reason={}",
+            "Arr 添加失败: request_id={}, user_id={}, released_cost={}, reason={}",
             request_id,
             claimed.user_id,
             claimed.reserved_cost,
             msg,
         )
         server_name = await self._get_media_server_name(claimed.media_server_id)
+        release_dm_line = (
+            f"\n已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"
+            if claimed.reserved_cost > 0
+            else ""
+        )
         await self._notify_requester_dm(
             request_id,
             claimed.user_id,
@@ -549,15 +593,16 @@ class RequestService:
             text=TelegramMessage.render_html(t"""\
                 ❌ <b>求片添加失败</b>
 
-                您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）在加入媒体库时失败：{msg}
-                已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"""),
+                您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）在加入媒体库时失败：{msg}{release_dm_line:raw}"""),
         )
-        return Result(
-            False,
-            TelegramMessage.render_markdown(
-                t"❌ {msg}（已释放预留积分 {claimed.reserved_cost}）"
-            ),
-        )
+        if claimed.reserved_cost > 0:
+            return Result(
+                False,
+                TelegramMessage.render_markdown(
+                    t"❌ {msg}（已释放预留积分 {claimed.reserved_cost}）"
+                ),
+            )
+        return Result(False, TelegramMessage.render_markdown(t"❌ {msg}"))
 
     async def handle_rejection(
         self, request_id: int, approver_name: str = "管理员"
@@ -592,6 +637,12 @@ class RequestService:
             approver_name,
         )
         server_name = await self._get_media_server_name(updated.media_server_id)
+        has_cost = updated.reserved_cost > 0
+        reason_text = (
+            f"管理员（{approver_name}）已拒绝该请求，已释放全部预留积分 {updated.reserved_cost}。"
+            if has_cost
+            else f"管理员（{approver_name}）已拒绝该请求。"
+        )
         await self._notify_requester_dm(
             request_id,
             updated.user_id,
@@ -600,12 +651,19 @@ class RequestService:
             media_title=updated.title or f"#{request_id}",
             media_year="",
             server_name=server_name,
-            reason=f"管理员（{approver_name}）已拒绝该请求，已释放全部预留积分 {updated.reserved_cost}。",
+            reason=reason_text,
         )
+        if has_cost:
+            return Result(
+                True,
+                TelegramMessage.render_markdown(
+                    t"❌ 已拒绝求片请求 #{request_id}（操作人: {approver_name}），已释放预留积分 {updated.reserved_cost}。"
+                ),
+            )
         return Result(
             True,
             TelegramMessage.render_markdown(
-                t"❌ 已拒绝求片请求 #{request_id}（操作人: {approver_name}），已释放预留积分 {updated.reserved_cost}。"
+                t"❌ 已拒绝求片请求 #{request_id}（操作人: {approver_name}）。"
             ),
         )
 
@@ -634,16 +692,22 @@ class RequestService:
             await self.telegram_repo.update_score(
                 updated.user_id, updated.reserved_cost
             )
+            logger.info(
+                "申请人已撤销求片并释放积分: request_id={}, user_id={}, released_cost={}",
+                request_id,
+                updated.user_id,
+                updated.reserved_cost,
+            )
+            return Result(
+                True,
+                f"已撤销求片请求 #{request_id}，已释放预留积分 {updated.reserved_cost}。",
+            )
         logger.info(
-            "申请人已撤销求片并释放积分: request_id={}, user_id={}, released_cost={}",
+            "申请人已撤销免费求片: request_id={}, user_id={}",
             request_id,
             updated.user_id,
-            updated.reserved_cost,
         )
-        return Result(
-            True,
-            f"已撤销求片请求 #{request_id}，已释放预留积分 {updated.reserved_cost}。",
-        )
+        return Result(True, f"已撤销求片请求 #{request_id}。")
 
     async def expire_pending_requests(self, now: datetime | None = None) -> int:
         """超时清理：自动取消超过配置天数的待审核求片请求并释放全部预留积分"""
@@ -681,6 +745,11 @@ class RequestService:
                 updated.reserved_cost,
             )
             server_name = await self._get_media_server_name(updated.media_server_id)
+            expire_release_line = (
+                f"\n已全额释放预留积分 <b>{updated.reserved_cost}</b>。"
+                if updated.reserved_cost > 0
+                else ""
+            )
             await self._notify_requester_dm(
                 updated.id,
                 updated.user_id,
@@ -688,15 +757,19 @@ class RequestService:
                 text=TelegramMessage.render_html(t"""\
                     ⏰ <b>求片已超时自动取消</b>
 
-                    您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）待审核已满 {req_days} 天未处理，系统已自动取消。
-                    已全额释放预留积分 <b>{updated.reserved_cost}</b>。"""),
+                    您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）待审核已满 {req_days} 天未处理，系统已自动取消。{expire_release_line:raw}"""),
             )
         return expired_count
 
     async def get_user_requests(
         self, user_id: int, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """获取用户的求片申请及积分预留/结算/释放追踪列表"""
+        """获取用户的求片申请及预留/结算状态列表；0 分免费求片隐藏积分标签。"""
+        cost_labels = {
+            "reserved": "已预留",
+            "settled": "已结算",
+            "released": "已释放",
+        }
         items = await self.request_repo.get_by_user(user_id, limit=limit)
         return [
             {
@@ -709,6 +782,12 @@ class RequestService:
                 "media_id": item.media_id,
                 "title": item.title,
                 "reserved_cost": item.reserved_cost,
+                "is_free": int(item.reserved_cost or 0) <= 0,
+                "cost_label": (
+                    ""
+                    if int(item.reserved_cost or 0) <= 0
+                    else f"积分：{item.reserved_cost} ({cost_labels.get(item.cost_status, item.cost_status)})"
+                ),
                 "status": item.status,
                 "cost_status": item.cost_status,
                 "approver_name": item.approver_name,
@@ -722,13 +801,65 @@ class RequestService:
             for item in items
         ]
 
-    async def get_request_cost(self) -> int:
-        """获取求片消耗积分（支持按续费积分比例或固定积分）"""
-        points_cfg = await self.config_repo.get_points_config()
-        if points_cfg["points_request_mode"] == "fixed":
-            return int(points_cfg["points_request_fixed"])
-        renew_score = await self.telegram_repo.get_renew_score()
-        return int(renew_score * float(points_cfg["points_request_ratio"]))
+    async def get_request_cost(
+        self,
+        server_id: int | None = None,
+        *,
+        server: ServerInstance | None = None,
+    ) -> int:
+        """计算指定服务器单次求片消耗积分（支持 fixed 与 ratio，允许返回 0）。
+
+        Args:
+            server_id: 目标媒体服务器 ID。
+            server: 可选已加载的服务器实例（避免重复查询）。
+
+        Returns:
+            非负整数消耗积分数；0 表示免费求片。
+        """
+        target = server
+        if target is None and server_id is not None:
+            target = await self.server_repo.get_by_id(server_id, fresh=True)
+        if target is None:
+            return 0
+        renew_score = 0
+        if target.request_points_mode != "fixed":
+            renew_score = await self.telegram_repo.get_renew_score()
+        return calculate_request_points_cost(target, renew_score)
+
+    async def resolve_request_cost_and_access(
+        self, server_id: int
+    ) -> tuple[ServerInstance | None, int, bool, str, str]:
+        """解析目标服务器的求片定价与路由放行状态，确保选库、搜索与提交门禁完全一致。
+
+        Args:
+            server_id: 目标媒体服务器 ID。
+
+        Returns:
+            ``(server, cost, allowed, error_code, error_message)``。
+        """
+        server = await self.server_repo.get_by_id(server_id, fresh=True)
+        if server is None:
+            ok, code, msg = evaluate_request_access(
+                None,
+                cost=0,
+                points_request_allowed=False,
+                points_request_reason="",
+            )
+            return None, 0, ok, code, msg
+
+        cost = await self.get_request_cost(server=server)
+        points_allowed, points_reason = (True, "")
+        if cost > 0:
+            points_allowed, points_reason = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_REQUEST
+            )
+        ok, code, msg = evaluate_request_access(
+            server,
+            cost=cost,
+            points_request_allowed=points_allowed,
+            points_request_reason=points_reason,
+        )
+        return server, cost, ok, code, msg
 
     async def get_requestable_libraries(self, media_server_id: int) -> list[dict]:
         """API: 获取可求片的库列表（按 Emby/Jellyfin 实例筛选）"""
@@ -789,7 +920,7 @@ class RequestService:
         self, user_id: int, media_server_id: int, library_name: str, media_id: int
     ) -> Result:
         """API: 提交求片"""
-        cost = await self.get_request_cost()
+        cost = await self.get_request_cost(media_server_id)
         return await self.submit_final_request(
             user_id, media_server_id, library_name, media_id, cost
         )

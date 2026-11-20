@@ -52,3 +52,41 @@ input:checked + .slider {
 input:checked + .slider:before {
     transform: translateX(20px);
 }
+
+/* 用户侧观看度百分比进度条样式 */
+.watch-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    margin-bottom: 6px;
+}
+
+.watch-progress-pct {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--link-color, #2481cc);
+}
+
+.watch-progress-pct.is-eligible {
+    color: #34c759;
+}
+
+.watch-progress-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background-color: rgba(142, 142, 147, 0.22);
+    overflow: hidden;
+}
+
+.watch-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background-color: var(--button-color, #2481cc);
+    transition: width 0.3s ease;
+}
+
+.watch-progress-fill.is-eligible {
+    background-color: #34c759;
+}

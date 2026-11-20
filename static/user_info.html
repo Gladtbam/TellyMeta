@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="watch_time.js"></script>
+    <script src="watch_time.js?v=20261120"></script>
     <title>用户资料详情</title>
     <style>
         :root {
@@ -458,6 +458,30 @@
         </div>
     </div>
 
+    <!-- 当期临时流量调额/清零弹窗 -->
+    <div id="traffic-adjust-modal" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-title">当期流量调额 / 清零</div>
+            <div class="modal-desc" id="traffic-adjust-server-label">仅当期有效，周期重置自动清零；超流恢复后将自动解除停用</div>
+            <input type="number" step="0.5" id="traffic-adjust-gib" class="modal-input" placeholder="调额 GiB（正数加额，负数扣减，0 表示不增减）">
+            <div class="chips-container">
+                <span class="chip" onclick="setTrafficAdjustChip(5)">+5 GiB</span>
+                <span class="chip" onclick="setTrafficAdjustChip(10)">+10 GiB</span>
+                <span class="chip" onclick="setTrafficAdjustChip(50)">+50 GiB</span>
+                <span class="chip" onclick="setTrafficAdjustChip(-5)">-5 GiB</span>
+                <span class="chip" onclick="setTrafficAdjustChip(0)">0</span>
+            </div>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 16px; cursor: pointer;">
+                <input type="checkbox" id="traffic-reset-usage">
+                <span>同时清零本周期已用流量</span>
+            </label>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-cancel" onclick="closeTrafficAdjustModal()">取消</button>
+                <button class="modal-btn modal-btn-confirm" onclick="submitTrafficAdjust()">确认提交</button>
+            </div>
+        </div>
+    </div>
+
     <div id="loader" class="loader">
         <div class="spinner"></div>
         <span>正在加载用户详情...</span>
@@ -493,7 +517,7 @@
                     <button class="action-btn btn-warn" onclick="handleWarn()">
                         <span>⚠️ 警告 (+1)</span>
                     </button>
-                    <button class="action-btn btn-change" onclick="openChangeScoreModal()">
+                    <button class="action-btn btn-change" id="btn-change-score" onclick="openChangeScoreModal()">
                         <span>💰 修改积分</span>
                     </button>
                     <button class="action-btn btn-del" onclick="handleDel()">
@@ -510,31 +534,31 @@
 
             <div class="section-title">账户状态</div>
             <div class="card">
-                <div class="item">
+                <div class="item" id="row-score">
                     <div class="item-content"><span class="item-title">当前积分</span></div>
                     <span class="item-value" id="score">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-consecutive-checkin">
                     <div class="item-content"><span class="item-title">连续签到</span></div>
                     <span class="item-value" id="consecutive-checkin">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-checkin">
                     <div class="item-content"><span class="item-title">累计签到</span></div>
                     <span class="item-value" id="checkin">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-warning">
                     <div class="item-content"><span class="item-title">警告次数</span></div>
                     <span class="item-value" id="warning">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-renew-score">
                     <div class="item-content"><span class="item-title">续期/注册所需积分</span></div>
                     <span class="item-value" id="renew-score">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-cycle-watch-time">
                     <div class="item-content"><span class="item-title">本周期观看时长</span></div>
                     <span class="item-value" id="cycle-watch-time">-</span>
                 </div>
-                <div class="item">
+                <div class="item" id="row-total-watch-time">
                     <div class="item-content"><span class="item-title">累计观看时长</span></div>
                     <span class="item-value" id="total-watch-time">-</span>
                 </div>
@@ -649,8 +673,76 @@
             document.getElementById('change-score-modal').style.display = 'none';
         }
 
+        let currentTargetData = null;
+        let adjustTrafficServerId = null;
+
         function setScoreChip(val) {
             document.getElementById('score-input').value = val;
+        }
+
+        /**
+         * 打开指定限流服务器的当期流量调额与清零弹窗。
+         * @param {number|string} serverId 目标媒体服务器 ID。
+         */
+        function openTrafficAdjustModal(serverId) {
+            adjustTrafficServerId = serverId;
+            const acc = (currentTargetData?.media_accounts || []).find(a => a.server_id === serverId);
+            const srvName = acc ? acc.server_name : `服务器 #${serverId}`;
+            document.getElementById('traffic-adjust-server-label').innerText =
+                `${srvName}（仅当期有效，周期重置自动清零；若解除超流将自动放行）`;
+            document.getElementById('traffic-adjust-gib').value = '0';
+            document.getElementById('traffic-reset-usage').checked = false;
+            document.getElementById('traffic-adjust-modal').style.display = 'flex';
+        }
+
+        /**
+         * 关闭当期流量调额弹窗并清空当前选中的目标服务器状态。
+         */
+        function closeTrafficAdjustModal() {
+            document.getElementById('traffic-adjust-modal').style.display = 'none';
+            adjustTrafficServerId = null;
+        }
+
+        /**
+         * 通过快捷预设标签快速填充当期调额 GiB 数值。
+         * @param {number} gib 预设调额容量（GiB）。
+         */
+        function setTrafficAdjustChip(gib) {
+            document.getElementById('traffic-adjust-gib').value = String(gib);
+        }
+
+        /**
+         * 管理员提交单媒体账号的当期流量临时调额与可选已用清零请求。
+         */
+        async function submitTrafficAdjust() {
+            if (!adjustTrafficServerId) return;
+            const rawGib = document.getElementById('traffic-adjust-gib').value.trim();
+            const deltaGib = rawGib === '' ? 0 : Number(rawGib);
+            const resetUsage = document.getElementById('traffic-reset-usage').checked;
+            if (Number.isNaN(deltaGib)) {
+                showToast('请输入有效的调额 GiB 数值', false);
+                return;
+            }
+            if (deltaGib === 0 && !resetUsage) {
+                showToast('请填写非零调额或勾选清零本周期已用流量', false);
+                return;
+            }
+            try {
+                const uid = getTargetUserId();
+                const res = await postAdminAction(
+                    `/api/miniapp/admin/user/${uid}/accounts/${adjustTrafficServerId}/traffic_adjust`,
+                    { delta_gib: deltaGib, reset_cycle_usage: resetUsage }
+                );
+                if (res.success === false) {
+                    showToast(res.message || '流量调额失败', false);
+                    return;
+                }
+                closeTrafficAdjustModal();
+                showToast(res.message || '流量调额成功');
+                fetchTargetUserData(uid, true);
+            } catch (e) {
+                showToast(e.message, false);
+            }
         }
 
         async function submitChangeScore() {
@@ -750,10 +842,11 @@
         }
 
         /**
-         * 渲染管理员视角下的用户概览及只读媒体账号保活状态卡片。
+         * 渲染管理员视角下的用户概览及按生效体系过滤的媒体账号状态卡片。
          * @param {object} data 用户详情 DTO 对象。
          */
         function renderUserInfo(data) {
+            currentTargetData = data;
             document.getElementById('loader').style.display = 'none';
             document.getElementById('main-content').style.display = 'block';
 
@@ -777,6 +870,16 @@
                 document.getElementById('badge-not-member').style.display = 'inline-block';
                 document.getElementById('badge-member').style.display = 'none';
             }
+
+            const { pointsOn, checkinOn, renewCostOn, watchTimeOn } = resolveVisibleEconomyFlags(data);
+
+            document.getElementById('btn-change-score').style.display = pointsOn ? 'flex' : 'none';
+            document.getElementById('row-score').style.display = pointsOn ? 'flex' : 'none';
+            document.getElementById('row-consecutive-checkin').style.display = checkinOn ? 'flex' : 'none';
+            document.getElementById('row-checkin').style.display = checkinOn ? 'flex' : 'none';
+            document.getElementById('row-renew-score').style.display = renewCostOn ? 'flex' : 'none';
+            document.getElementById('row-cycle-watch-time').style.display = watchTimeOn ? 'flex' : 'none';
+            document.getElementById('row-total-watch-time').style.display = watchTimeOn ? 'flex' : 'none';
 
             // 账户状态
             document.getElementById('score').innerText = data.score;
@@ -803,16 +906,35 @@
                         expiry = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
                     }
 
+                    const watchTimeLine = acc.enable_watch_time
+                        ? `<span class="item-subtitle">观看时长: 本周期 ${formatWatchDuration(acc.cycle_watch_time_seconds)} · 累计 ${formatWatchDuration(acc.total_watch_time_seconds)}</span>`
+                        : '';
+                    const watchRenewLine = acc.watch_time_renewal_open
+                        ? `<span class="item-subtitle">保活状态: ${formatWatchTimeRenewalProgress(acc)} · 自动保活: ${acc.auto_renew ? '已开启' : '未开启'}</span>`
+                        : '';
+                    const packBytes = Math.max(0, Number(acc.traffic_pack_bytes || 0));
+                    const adjBytes = Number(acc.cycle_traffic_adjustment_bytes || 0);
+                    const packPart = packBytes > 0 ? ` · 当期流量包: ${formatTrafficBytes(packBytes)}` : '';
+                    const trafficLine = (acc.enable_traffic || packBytes > 0 || adjBytes !== 0 || acc.is_traffic_suspended)
+                        ? `<span class="item-subtitle">流量进度: ${formatTrafficQuotaSummary(acc)}${packPart} · 重置日: ${formatResetDate(acc.next_reset_at)}</span>`
+                        : '';
+                    const adjustBtnHtml = acc.traffic_limited
+                        ? `<button class="action-btn btn-change" style="padding: 6px 10px; font-size: 12px; width: auto;" onclick="openTrafficAdjustModal(${acc.server_id})">📊 调额/清零</button>`
+                        : '';
+
                     card.innerHTML = `
                         <div class="item">
                             <div class="item-content">
                                 <span class="item-title">${acc.server_name} <span class="tag-type">${acc.server_type}</span></span>
                                 <span class="item-subtitle">账号: <b>${acc.media_name}</b> | 到期: ${expiry}</span>
-                                <span class="item-subtitle">观看时长: 本周期 ${formatWatchDuration(acc.cycle_watch_time_seconds)} · 累计 ${formatWatchDuration(acc.total_watch_time_seconds)}</span>
-                                <span class="item-subtitle">保活状态: ${formatWatchTimeRenewalProgress(acc)} · 自动保活: ${acc.auto_renew ? '已开启' : '未开启'}</span>
-                                <span class="item-subtitle">流量进度: ${formatTrafficQuotaSummary(acc)} · 流量包: ${formatTrafficBytes(acc.traffic_pack_bytes)} · 重置日: ${formatResetDate(acc.next_reset_at)}</span>
+                                ${watchTimeLine}
+                                ${watchRenewLine}
+                                ${trafficLine}
                             </div>
-                            <span style="font-size: 13px; font-weight: 500; color: ${statusColor};">${acc.status_text}</span>
+                            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+                                <span style="font-size: 13px; font-weight: 500; color: ${statusColor};">${acc.status_text}</span>
+                                ${adjustBtnHtml}
+                            </div>
                         </div>
                     `;
                     mediaList.appendChild(card);

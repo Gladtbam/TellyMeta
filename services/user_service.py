@@ -12,6 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.billing_anchor import backfill_billing_cycle
 from core.config import get_settings
+from core.economy_policy import (
+    DEFAULT_TRAFFIC_PACK_COST_SCORE,
+    DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+    calculate_request_points_cost,
+    calculate_traffic_balances,
+    calculate_traffic_pack_points_cost,
+    calculate_traffic_pack_unit_bytes,
+    evaluate_request_access,
+    evaluate_traffic_pack_access,
+    is_traffic_effective,
+    is_watch_time_effective,
+)
 from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
     remove_account_lifecycle_jobs,
@@ -20,7 +32,10 @@ from core.scheduler_jobs import (
 from core.telegram_message import TelegramMessage
 from models.orm import RegistrationMode, ServerType, TelegramUser
 from repositories.code_repo import CodeRepository
-from repositories.config_repo import ConfigRepository
+from repositories.config_repo import (
+    DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
+    ConfigRepository,
+)
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
@@ -324,11 +339,28 @@ class UserService:
         """
         user = await self.telegram_repo.get_or_create(user_id)
         renew_score = int(await self.telegram_repo.get_renew_score())
+        global_watch_time_enabled = await self.config_repo.is_watch_time_enabled()
         global_traffic_enabled = await self.config_repo.is_traffic_enabled()
-        enable_points_traffic_pack = await self.config_repo.is_points_feature_enabled(
-            ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
+        global_points_enabled = (
+            await self.config_repo.get_settings(
+                ConfigRepository.KEY_ENABLE_POINTS, "true"
+            )
+            == "true"
         )
-        traffic_cfg = await self.config_repo.get_traffic_config()
+        effective_points = await self.config_repo.get_effective_points_switches()
+        enable_points_register = bool(
+            effective_points.get("enable_points_register", False)
+        )
+        enable_points_request = bool(
+            effective_points.get("enable_points_request", False)
+        )
+        enable_points_renew = bool(effective_points.get("enable_points_renew", False))
+        enable_points_generate_code = bool(
+            effective_points.get("enable_points_generate_code", False)
+        )
+        enable_points_traffic_pack = bool(
+            effective_points.get("enable_points_traffic_pack", False)
+        )
 
         media_accounts = []
         registered_server_ids: set[int] = set()
@@ -342,7 +374,11 @@ class UserService:
                 total_watch = int(mu.total_watch_time_seconds or 0)
                 cycle_watch_time_seconds += cycle_watch
                 total_watch_time_seconds += total_watch
-                wt_status = evaluate_watch_time_renewal(server, mu)
+                wt_status = evaluate_watch_time_renewal(
+                    server,
+                    mu,
+                    global_watch_time_enabled=global_watch_time_enabled,
+                )
 
                 anchor_day = mu.anchor_day
                 next_reset_at = mu.next_reset_at
@@ -357,27 +393,51 @@ class UserService:
                     anchor_day = derived_anchor
                     next_reset_at = derived_reset
 
-                # 仅当全局流量总开关与单服流量开关同时开启时，账号采集状态才视为启用
-                enable_traffic = (
-                    global_traffic_enabled and bool(server.enable_traffic)
-                    if server
-                    else False
+                # 仅当全局及单服对应开关均生效时才视为启用
+                enable_watch_time = is_watch_time_effective(
+                    global_watch_time_enabled, server
+                )
+                enable_traffic = is_traffic_effective(global_traffic_enabled, server)
+                request_points_cost = calculate_request_points_cost(server, renew_score)
+                request_open, _, _ = evaluate_request_access(
+                    server,
+                    cost=request_points_cost,
+                    points_request_allowed=enable_points_request,
+                    points_request_reason="",
+                )
+                pack_open, _ = evaluate_traffic_pack_access(
+                    server,
+                    points_pack_allowed=enable_points_traffic_pack,
+                    points_pack_reason="",
+                    global_traffic_enabled=global_traffic_enabled,
+                )
+                pack_cost = (
+                    calculate_traffic_pack_points_cost(server, renew_score)
+                    if server is not None
+                    else DEFAULT_TRAFFIC_PACK_COST_SCORE
+                )
+                pack_unit_bytes = (
+                    calculate_traffic_pack_unit_bytes(server)
+                    if server is not None
+                    else DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+                )
+                pack_size_gib = float(
+                    server.traffic_pack_size_gib
+                    if server is not None and server.traffic_pack_size_gib
+                    else DEFAULT_TRAFFIC_PACK_SIZE_GIB
                 )
                 cycle_traffic = max(0, int(mu.cycle_traffic_bytes or 0))
                 pack_bytes = max(0, int(mu.traffic_pack_bytes or 0))
                 total_traffic = max(0, int(mu.total_traffic_bytes or 0))
-                quota_bytes = (
-                    max(0, int(server.traffic_quota_bytes or 0)) if server else 0
+                bal = calculate_traffic_balances(
+                    server.traffic_quota_bytes if server else 0,
+                    mu.cycle_traffic_adjustment_bytes,
+                    cycle_traffic,
+                    pack_bytes,
                 )
-                # 配额为 0 表示不限量（剩余量置为 None）；有限额时钳位至 >= 0 防止返回负数
-                remaining_bytes = (
-                    max(0, quota_bytes - cycle_traffic) if quota_bytes > 0 else None
-                )
-                total_remaining_bytes = (
-                    (remaining_bytes + pack_bytes)
-                    if remaining_bytes is not None
-                    else None
-                )
+                quota_bytes = bal.effective_base_quota_bytes if bal.is_limited else 0
+                remaining_bytes = bal.base_remaining_bytes
+                total_remaining_bytes = bal.total_remaining_bytes
                 is_traffic_suspended = bool(mu.is_traffic_suspended)
                 if mu.is_banned and is_traffic_suspended:
                     status_text = "🚫 封禁 · 超流停用"
@@ -409,7 +469,13 @@ class UserService:
                             server.allow_subtitle_upload if server else False
                         ),
                         "allow_request": server.allow_request if server else False,
+                        "request_open": request_open,
+                        "request_points_mode": (
+                            server.request_points_mode if server else "fixed"
+                        ),
+                        "request_points_cost": request_points_cost,
                         "tos": server.tos if server else None,
+                        "enable_watch_time": enable_watch_time,
                         "cycle_watch_time_seconds": cycle_watch,
                         "total_watch_time_seconds": total_watch,
                         "anchor_day": anchor_day,
@@ -422,11 +488,15 @@ class UserService:
                         "watch_time_renewal_open": wt_status.is_open,
                         "watch_time_renewal_eligible": wt_status.is_eligible,
                         "watch_time_renewal_status_text": wt_status.status_text,
+                        "watch_time_progress_percent": wt_status.progress_percent,
                         "enable_traffic": enable_traffic,
+                        "traffic_limited": bal.is_limited,
                         "cycle_traffic_bytes": cycle_traffic,
                         "traffic_pack_bytes": pack_bytes,
                         "total_traffic_bytes": total_traffic,
                         "traffic_quota_bytes": quota_bytes,
+                        "server_traffic_quota_bytes": bal.server_quota_bytes,
+                        "cycle_traffic_adjustment_bytes": bal.adjustment_bytes,
                         "traffic_remaining_bytes": remaining_bytes,
                         "traffic_total_remaining_bytes": total_remaining_bytes,
                         "is_traffic_suspended": is_traffic_suspended,
@@ -435,6 +505,18 @@ class UserService:
                             if server
                             else False
                         ),
+                        "allow_traffic_pack": (
+                            bool(server.allow_traffic_pack) if server else False
+                        ),
+                        "traffic_pack_open": pack_open,
+                        "traffic_pack_points_mode": (
+                            server.traffic_pack_points_mode if server else "fixed"
+                        ),
+                        "traffic_pack_cost_score": pack_cost,
+                        "traffic_pack_size_gib": pack_size_gib,
+                        "traffic_pack_unit_bytes": pack_unit_bytes,
+                        "can_points_renew": enable_points_renew,
+                        "can_generate_code": enable_points_generate_code,
                     }
                 )
 
@@ -477,7 +559,10 @@ class UserService:
                 can_register = True
                 status_label = "验证注册"
             elif mode == RegistrationMode.DEFAULT:
-                if user.score >= renew_score:
+                if not enable_points_register:
+                    reason = "当前仅开放激活码注册，请使用注册激活码或联系管理员。"
+                    status_label = "需激活码"
+                elif user.score >= renew_score:
                     can_register = True
                     status_label = f"需{renew_score}积分"
                 else:
@@ -489,6 +574,9 @@ class UserService:
                 reason = "未知的注册模式"
                 status_label = "不可用"
 
+            requires_points = (
+                mode == RegistrationMode.DEFAULT and enable_points_register
+            )
             available_servers.append(
                 {
                     "server_id": srv.id,
@@ -503,6 +591,8 @@ class UserService:
                     "status_label": status_label,
                     "tos": srv.tos,
                     "has_external_verification": mode == RegistrationMode.EXTERNAL,
+                    "requires_points": requires_points,
+                    "points_cost": renew_score if requires_points else 0,
                 }
             )
 
@@ -512,36 +602,106 @@ class UserService:
             "available_servers": available_servers,
             "cycle_watch_time_seconds": cycle_watch_time_seconds,
             "total_watch_time_seconds": total_watch_time_seconds,
-            "enable_points_traffic_pack": enable_points_traffic_pack,
-            "traffic_pack_cost_score": int(traffic_cfg["traffic_pack_cost_score"]),
-            "traffic_pack_size_gib": float(traffic_cfg["traffic_pack_size_gib"]),
-            "traffic_pack_unit_bytes": int(traffic_cfg["traffic_pack_unit_bytes"]),
+            "enable_points": global_points_enabled,
+            **effective_points,
+            "enable_watch_time": global_watch_time_enabled,
+            "enable_traffic": global_traffic_enabled,
         }
 
     async def get_user_info(self, user_id: int) -> Result:
-        """获取用户信息"""
+        """获取用于 Bot 文本降级展示的用户信息（按生效开关隐藏禁用体系字段）"""
         data = await self.get_user_info_data(user_id)
         user: TelegramUser = data["user"]
         media_accounts = data["media_accounts"]
 
-        message = TelegramMessage.render_markdown(t"""\
-            👤 **个人信息**
-
-            **Telegram ID**: `{user.id}`
-            **积分**: `{user.score}`
-            **连续签到**: `{user.current_consecutive_checkin_count}` 天
-            **累计签到**: `{user.checkin_count}` 天
-            **警告**: `{user.warning_count}` 次
-        """)
+        lines = [
+            "👤 **个人信息**",
+            "",
+            f"**Telegram ID**: `{user.id}`",
+        ]
+        if data["enable_points"]:
+            lines.append(f"**积分**: `{user.score}`")
+        if data.get("enable_points_checkin"):
+            lines.append(f"**连续签到**: `{user.current_consecutive_checkin_count}` 天")
+            lines.append(f"**累计签到**: `{user.checkin_count}` 天")
+        lines.append(f"**警告**: `{user.warning_count}` 次")
+        message = "\n".join(lines)
 
         if media_accounts:
+            from models.nginx import format_traffic_bytes
+
             message += "\n\n**媒体账户**\n"
             for mu in media_accounts:
-                message += TelegramMessage.render_markdown(
-                    t"- {mu['server_name']}: {mu['media_name']} ({mu['status_text']})\n"
-                )
+                parts = [
+                    f"- {mu['server_name']}: {mu['media_name']} ({mu['status_text']})"
+                ]
+                if mu.get("enable_watch_time"):
+                    cycle_min = int(mu.get("cycle_watch_time_seconds", 0)) // 60
+                    total_min = int(mu.get("total_watch_time_seconds", 0)) // 60
+                    parts.append(
+                        f"  有效播放时长: 本周期 {cycle_min} 分钟 / 累计 {total_min} 分钟"
+                    )
+                if mu.get("enable_traffic"):
+                    used_s = format_traffic_bytes(int(mu.get("cycle_traffic_bytes", 0)))
+                    quota_val = int(mu.get("traffic_quota_bytes", 0))
+                    quota_s = (
+                        format_traffic_bytes(quota_val)
+                        if mu.get("traffic_limited")
+                        else "不限"
+                    )
+                    pack_val = int(mu.get("traffic_pack_bytes", 0))
+                    pack_note = (
+                        f"（含流量包 {format_traffic_bytes(pack_val)}）"
+                        if pack_val > 0
+                        else ""
+                    )
+                    parts.append(f"  流量用量: {used_s} / {quota_s}{pack_note}")
+                message += "\n".join(parts) + "\n"
 
         return Result(success=True, message=message)
+
+    async def warn_user(
+        self, target_user_id: int, *, increment: int = 1
+    ) -> TelegramUser:
+        """为目标用户累计警告次数；仅在积分惩罚通道生效时连带扣除等额积分。
+
+        Args:
+            target_user_id: 目标用户 Telegram ID。
+            increment: 本次新增警告次数（默认 ``1``）。
+
+        Returns:
+            更新并提交后的 ``TelegramUser`` 对象。
+        """
+        warn_penalty_enabled = await self.config_repo.is_points_feature_enabled(
+            ConfigRepository.KEY_ENABLE_POINTS_WARN
+        )
+        if warn_penalty_enabled:
+            return await self.telegram_repo.update_warn_and_score(
+                target_user_id, increment=increment
+            )
+        return await self.telegram_repo.update_warn_only(
+            target_user_id, increment=increment
+        )
+
+    async def change_user_score(self, target_user_id: int, score_change: int) -> Result:
+        """管理员手动调整用户社区积分；全局积分总开关关闭时拒绝操作。
+
+        Args:
+            target_user_id: 目标用户 Telegram ID。
+            score_change: 积分增减量（正数加分，负数扣分）。
+
+        Returns:
+            ``Result``，成功时 ``extra_data`` 携带更新后的 ``user`` 与 ``score``。
+        """
+        if not await self.config_repo.is_points_enabled():
+            return Result(False, "全局积分总开关已关闭，无法修改积分。")
+        user = await self.telegram_repo.update_score(target_user_id, score_change)
+        prefix = "+" if score_change > 0 else ""
+        return Result(
+            True,
+            f"已修改积分 ({prefix}{score_change})，当前积分: {user.score}",
+            extra_data={"score": user.score, "user": user},
+        )
 
     async def get_rank_list(self) -> Result:
         """获取排行榜"""

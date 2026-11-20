@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import textwrap
 from typing import Any
 
 from apscheduler.jobstores.base import JobLookupError
@@ -59,23 +58,69 @@ async def start_handler(
         )
 
 
+def _get_visible_help_lines_and_commands() -> tuple[list[str], set[str]]:
+    """根据全局与积分细粒度有效开关生成可见 Bot 指令帮助列表与有效指令集。
+
+    Returns:
+        ``(help_lines, known_commands)`` 二元组；禁用积分或签到时自动隐藏对应指令。
+    """
+    points_enabled = ConfigRepository.is_points_enabled_from_cache()
+    checkin_enabled = ConfigRepository.is_points_feature_enabled_from_cache(
+        ConfigRepository.KEY_ENABLE_POINTS_CHECKIN
+    )
+
+    lines = ["/help - [私聊]帮助"]
+    known_commands = {
+        "start",
+        "help",
+        "info",
+        "chat_id",
+        "del",
+        "warn",
+        "kick",
+        "ban",
+        "bind",
+        "cancel",
+    }
+
+    if checkin_enabled:
+        lines.append("/checkin - 签到")
+        known_commands.add("checkin")
+
+    lines.extend(
+        [
+            "/del - [管理员]删除 Emby 账户, 需回复一个用户",
+            "/warn - [管理员]警告用户, 需回复一个用户",
+            "/info - [管理员]查看用户信息",
+        ]
+    )
+
+    if points_enabled:
+        lines.extend(
+            [
+                "/settle - [管理员]手动结算积分",
+                "/change - [管理员]手动修改积分, 正数加负数减",
+            ]
+        )
+        known_commands.update({"settle", "change"})
+
+    lines.extend(
+        [
+            "/kick - [管理员]踢出用户, 需回复一个用户",
+            "/ban - [管理员]封禁用户, 需回复一个用户",
+            "/chat_id - 获取当前群组ID, 需在群组中使用",
+        ]
+    )
+    return lines, known_commands
+
+
 @TelethonClientWarper.handler(
     events.NewMessage(pattern=rf"^/help({settings.telegram_bot_name})?$", incoming=True)
 )
 async def help_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
-    """帮助消息处理器"""
-    msg = textwrap.dedent("""\
-    /help - [私聊]帮助
-    /checkin - 签到
-    /del - [管理员]删除 Emby 账户, 需回复一个用户
-    /warn - [管理员]警告用户, 需回复一个用户
-    /info - [管理员]查看用户信息
-    /settle - [管理员]手动结算积分
-    /change - [管理员]手动修改积分, 正数加负数减
-    /kick - [管理员]踢出用户, 需回复一个用户
-    /ban - [管理员]封禁用户, 需回复一个用户
-    /chat_id - 获取当前群组ID, 需在群组中使用
-    """)
+    """帮助消息处理器（按有效开关动态裁剪积分与签到命令）"""
+    lines, _ = _get_visible_help_lines_and_commands()
+    msg = "\n".join(lines) + "\n"
 
     if event.is_private:
         await safe_respond(event, msg)
@@ -273,23 +318,9 @@ async def group_message_handler(
 )
 async def unknown_command_handler(app: FastAPI, event: events.NewMessage.Event) -> None:
     """未知命令处理器
-    忽略 @ 其它 Bot 的指令；对其余未知命令提示 /help 并安全清理消息
+    忽略 @ 其它 Bot 的指令；对其余未知或已禁用体系指令提示 /help 并安全清理消息
     """
-    known_commands = {
-        "start",
-        "help",
-        "info",
-        "chat_id",
-        "del",
-        "checkin",
-        "warn",
-        "change",
-        "settle",
-        "kick",
-        "ban",
-        "bind",
-        "cancel",
-    }
+    _, known_commands = _get_visible_help_lines_and_commands()
     try:
         command = event.pattern_match.group(1).lower()  # type: ignore
         target_bot = event.pattern_match.group(2)  # type: ignore

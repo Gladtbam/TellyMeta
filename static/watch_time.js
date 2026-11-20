@@ -18,9 +18,40 @@ function formatWatchDuration(seconds) {
 }
 
 /**
- * 格式化媒体账号的时长保活门槛进度文案（直接复用后端单源评估文本）。
+ * 计算媒体账号当前周期观看度百分比数值（0~100，未达标时封顶 99.9）。
  * @param {object|null|undefined} acc 媒体账号 DTO 对象。
- * @returns {string} 保活进度、达标状态或未开放提示文本。
+ * @returns {number} 观看度百分比数值。
+ */
+function resolveWatchProgressPercent(acc) {
+    if (!acc || !acc.watch_time_renewal_open) return 0;
+    if (acc.watch_time_progress_percent !== null && acc.watch_time_progress_percent !== undefined) {
+        const raw = Number(acc.watch_time_progress_percent);
+        if (Number.isFinite(raw)) {
+            return Math.max(0, Math.min(100, raw));
+        }
+    }
+    if (acc.watch_time_renewal_eligible) return 100;
+    const threshold = Math.max(0, Number(acc.watch_time_renewal_threshold_seconds || 0));
+    const current = Math.max(0, Number(acc.cycle_watch_time_seconds || 0));
+    if (threshold <= 0 || current <= 0) return 0;
+    if (current >= threshold) return 100;
+    return Math.min(99.9, Math.floor((current * 1000) / threshold) / 10);
+}
+
+/**
+ * 格式化观看度百分比文本（整数不带小数，小数保留 1 位）。
+ * @param {number} percent 观看度百分比数值。
+ * @returns {string} 形如「50%」或「99.9%」的百分比字符串。
+ */
+function formatWatchProgressPercent(percent) {
+    const val = Math.max(0, Math.min(100, Number(percent) || 0));
+    return Number.isInteger(val) ? `${val}%` : `${val.toFixed(1)}%`;
+}
+
+/**
+ * 格式化媒体账号的时长保活门槛进度文案（直接复用后端单源百分比评估文本，不暴露具体时长）。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @returns {string} 观看度达标状态或未开放提示文本。
  */
 function formatWatchTimeRenewalProgress(acc) {
     if (!acc || !acc.watch_time_renewal_open) {
@@ -28,7 +59,37 @@ function formatWatchTimeRenewalProgress(acc) {
             ? acc.watch_time_renewal_status_text
             : '当前服务器未开放保活续期';
     }
-    return acc.watch_time_renewal_status_text || formatWatchDuration(acc.cycle_watch_time_seconds);
+    return acc.watch_time_renewal_status_text || `观看度 ${formatWatchProgressPercent(resolveWatchProgressPercent(acc))}`;
+}
+
+/**
+ * 渲染用户侧媒体账号“观看度”百分比进度条 HTML；未开放保活或门槛为 0 时返回空字符串。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @param {boolean} showStatusNote 是否附带后端状态说明副标题。
+ * @returns {string} 进度条行 HTML 字符串。
+ */
+function renderWatchProgressRow(acc, showStatusNote = true) {
+    if (!acc || !acc.watch_time_renewal_open) return '';
+    const pct = resolveWatchProgressPercent(acc);
+    const pctLabel = formatWatchProgressPercent(pct);
+    const eligible = Boolean(acc.watch_time_renewal_eligible);
+    const cls = eligible ? ' is-eligible' : '';
+    const statusLine = showStatusNote
+        ? `<span class="item-subtitle" style="font-size:12px; margin-top:6px;">${formatWatchTimeRenewalProgress(acc)}</span>`
+        : '';
+    return `
+                        <div class="item">
+                            <div class="item-content">
+                                <div class="watch-progress-header">
+                                    <span class="item-subtitle" style="margin-top:0;">观看度</span>
+                                    <span class="watch-progress-pct${cls}">${pctLabel}${eligible ? ' · 已达标' : ''}</span>
+                                </div>
+                                <div class="watch-progress-track">
+                                    <div class="watch-progress-fill${cls}" style="width:${pct}%"></div>
+                                </div>
+                                ${statusLine}
+                            </div>
+                        </div>`;
 }
 
 /**
@@ -40,8 +101,8 @@ function formatWatchTimeRenewalProgress(acc) {
 function formatAutoRenewHint(acc, detailed = false) {
     if (acc && acc.watch_time_renewal_open) {
         return detailed
-            ? '到期前若本周期有效时长达标将自动免费续期'
-            : '临近到期且达标时自动免费续期';
+            ? '到期前若本周期观看度达 100% 将自动免费续期'
+            : '临近到期且观看度达 100% 时自动免费续期';
     }
     return detailed
         ? '当前服务器未开放保活续期（开启后暂不生效）'
@@ -106,6 +167,9 @@ function formatTrafficQuotaSummary(acc) {
     const usedText = formatTrafficBytes(acc.cycle_traffic_bytes);
     const packBytes = Math.max(0, Number(acc.traffic_pack_bytes || 0));
     const packSuffix = packBytes > 0 ? ` · 流量包 ${formatTrafficBytes(packBytes)}` : '';
+    const adjBytes = Number(acc.cycle_traffic_adjustment_bytes || 0);
+    const adjSign = adjBytes > 0 ? '+' : '-';
+    const adjSuffix = adjBytes !== 0 ? `（含当期临时调额 ${adjSign}${formatTrafficBytes(Math.abs(adjBytes))}）` : '';
     const suspendSuffix = acc.is_traffic_suspended ? '（已超流停用）' : '';
     if (!acc.enable_traffic) {
         return acc.cycle_traffic_bytes > 0 || packBytes > 0
@@ -119,7 +183,7 @@ function formatTrafficQuotaSummary(acc) {
     const remaining = acc.traffic_remaining_bytes !== null && acc.traffic_remaining_bytes !== undefined
         ? Number(acc.traffic_remaining_bytes)
         : Math.max(0, quota - Number(acc.cycle_traffic_bytes || 0));
-    return `已用 ${usedText} / 配额 ${formatTrafficBytes(quota)}（基础剩余 ${formatTrafficBytes(remaining)}）${packSuffix}${suspendSuffix}`;
+    return `已用 ${usedText} / 配额 ${formatTrafficBytes(quota)}（基础剩余 ${formatTrafficBytes(remaining)}）${adjSuffix}${packSuffix}${suspendSuffix}`;
 }
 
 /**
@@ -138,7 +202,7 @@ function resolveAccountStatusColor(acc) {
  * @param {number|string} serverId 服务器 ID。
  * @param {object} tg Telegram WebApp 对象。
  * @param {object} acc 当前媒体账号 DTO 对象。
- * @param {object} packConfig 全局流量包配置（enabled、costScore、sizeGib）。
+ * @param {object} packConfig 当前服流量包配置（enabled、costScore、sizeGib）。
  * @param {Function|null} onSuccess 可选成功回调。
  */
 async function handleRedeemTrafficPack(serverId, tg, acc, packConfig, onSuccess = null) {
@@ -146,15 +210,16 @@ async function handleRedeemTrafficPack(serverId, tg, acc, packConfig, onSuccess 
         tg.showAlert('当前未开放积分兑换流量包功能。');
         return;
     }
-    const costScore = packConfig && packConfig.costScore ? packConfig.costScore : 50;
-    const sizeGib = packConfig && packConfig.sizeGib ? packConfig.sizeGib : 10;
+    const costScore = Number(packConfig && packConfig.costScore) > 0 ? Number(packConfig.costScore) : 50;
+    const sizeGib = Number(packConfig && packConfig.sizeGib) > 0 ? Number(packConfig.sizeGib) : 10;
+    const resetHint = acc && acc.next_reset_at ? formatResetDate(acc.next_reset_at) : '下次重置日';
     let unsuspendHint = '';
     if (acc && acc.is_traffic_suspended) {
         unsuspendHint = acc.is_banned
             ? '\n兑换成功后将解除超流停用；由于账号同时处于过期封禁，需续期后才能恢复播放权限。'
             : '\n兑换成功后将立即为您解除超流停用并恢复播放权限。';
     }
-    if (!confirm(`确认消耗 ${costScore} 积分兑换 ${sizeGib} GiB 流量包吗？${unsuspendHint}`)) {
+    if (!confirm(`确认消耗 ${costScore} 积分兑换 ${sizeGib} GiB 当期流量包吗？\n流量包仅当期有效，将在 ${resetHint} 本周期重置清零。${unsuspendHint}`)) {
         return;
     }
 
@@ -189,6 +254,21 @@ async function handleRedeemTrafficPack(serverId, tg, acc, packConfig, onSuccess 
         tg.MainButton.hide();
         tg.showAlert(e.message || '兑换流量包失败');
     }
+}
+
+/**
+ * 从用户概览 DTO 中统一计算个人总览区各经济指标行的可见性布尔标志。
+ * @param {object|null|undefined} data 用户概览 DTO 对象。
+ * @returns {{pointsOn: boolean, checkinOn: boolean, renewCostOn: boolean, watchTimeOn: boolean}} 各维度显隐标志。
+ */
+function resolveVisibleEconomyFlags(data) {
+    const pointsOn = Boolean(data && data.enable_points !== false);
+    const checkinOn = Boolean(pointsOn && data && data.enable_points_checkin !== false);
+    const renewCostOn = Boolean(
+        pointsOn && data && (data.enable_points_renew !== false || data.enable_points_register !== false)
+    );
+    const watchTimeOn = Boolean(data && data.enable_watch_time);
+    return { pointsOn, checkinOn, renewCostOn, watchTimeOn };
 }
 
 /**

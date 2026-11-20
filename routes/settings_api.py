@@ -503,6 +503,10 @@ async def create_server(
         data.url,
         data.api_key,
         registration_expiry_months=data.registration_expiry_months,
+        allow_request=data.allow_request,
+        request_points_mode=data.request_points_mode,
+        request_points_fixed=data.request_points_fixed,
+        request_points_ratio=data.request_points_ratio,
         enable_watch_time=data.enable_watch_time,
         enable_watch_time_renewal=data.enable_watch_time_renewal,
         watch_time_renewal_threshold_seconds=data.watch_time_renewal_threshold_seconds,
@@ -510,6 +514,11 @@ async def create_server(
         enable_traffic_alert=data.enable_traffic_alert,
         enable_traffic_auto_suspend=data.enable_traffic_auto_suspend,
         traffic_quota_bytes=data.traffic_quota_bytes,
+        allow_traffic_pack=data.allow_traffic_pack,
+        traffic_pack_points_mode=data.traffic_pack_points_mode,
+        traffic_pack_points_fixed=data.traffic_pack_points_fixed,
+        traffic_pack_points_ratio=data.traffic_pack_points_ratio,
+        traffic_pack_size_gib=data.traffic_pack_size_gib,
         qb_username=data.qb_username,
         qb_torrent_limit=data.qb_torrent_limit,
         qb_server_id=data.qb_server_id,
@@ -564,34 +573,34 @@ async def update_server(
         update_dict["url"] = data.url
     if data.api_key and data.api_key != "******":
         update_dict["api_key"] = data.api_key
-    if data.tos is not None:
-        update_dict["tos"] = data.tos
-    if data.allow_subtitle_upload is not None:
-        update_dict["allow_subtitle_upload"] = data.allow_subtitle_upload
-    if data.allow_request is not None:
-        update_dict["allow_request"] = data.allow_request
-    if data.allow_nfo is not None:
-        update_dict["allow_nfo"] = data.allow_nfo
-    if data.enable_watch_time is not None:
-        update_dict["enable_watch_time"] = data.enable_watch_time
-    if data.enable_watch_time_renewal is not None:
-        update_dict["enable_watch_time_renewal"] = data.enable_watch_time_renewal
-    if data.watch_time_renewal_threshold_seconds is not None:
-        update_dict["watch_time_renewal_threshold_seconds"] = (
-            data.watch_time_renewal_threshold_seconds
-        )
-    if data.enable_traffic is not None:
-        update_dict["enable_traffic"] = data.enable_traffic
-    if data.enable_traffic_alert is not None:
-        update_dict["enable_traffic_alert"] = data.enable_traffic_alert
-    if data.enable_traffic_auto_suspend is not None:
-        update_dict["enable_traffic_auto_suspend"] = data.enable_traffic_auto_suspend
-    if data.traffic_quota_bytes is not None:
-        update_dict["traffic_quota_bytes"] = data.traffic_quota_bytes
+    # 非空布尔/数值/定价字段按统一白名单增量写入，避免局部 PATCH 覆盖未传字段
+    for field in (
+        "tos",
+        "allow_subtitle_upload",
+        "allow_request",
+        "request_points_mode",
+        "request_points_fixed",
+        "request_points_ratio",
+        "allow_nfo",
+        "enable_watch_time",
+        "enable_watch_time_renewal",
+        "watch_time_renewal_threshold_seconds",
+        "enable_traffic",
+        "enable_traffic_alert",
+        "enable_traffic_auto_suspend",
+        "traffic_quota_bytes",
+        "allow_traffic_pack",
+        "traffic_pack_points_mode",
+        "traffic_pack_points_fixed",
+        "traffic_pack_points_ratio",
+        "traffic_pack_size_gib",
+        "qb_torrent_limit",
+    ):
+        field_val = getattr(data, field)
+        if field_val is not None:
+            update_dict[field] = field_val
     if data.qb_username is not None:
         update_dict["qb_username"] = data.qb_username.strip() or None
-    if data.qb_torrent_limit is not None:
-        update_dict["qb_torrent_limit"] = data.qb_torrent_limit
     if "qb_server_id" in data.model_fields_set:
         if data.qb_server_id is not None:
             qb_target = await repo.get_by_id(data.qb_server_id)
@@ -645,22 +654,41 @@ async def update_server(
 
     # 执行基础信息更新与重载（仅在连接或鉴权等客户端相关字段变更时重载客户端，避免开关切换触发不必要重连）
     traffic_release_note = ""
+    quota_changed = (
+        data.traffic_quota_bytes is not None
+        and current_server is not None
+        and int(data.traffic_quota_bytes)
+        != int(current_server.traffic_quota_bytes or 0)
+    )
     if update_dict:
+        if data.enable_traffic is False or quota_changed:
+            # 必须在将单服流量关闭或变更配额之前先把在途字节刷盘，保证后续余量重算与解封准确
+            await AccountService(request.app, session).flush_pending_traffic()
         await repo.update_basic_info(server_id, **update_dict)
         invalidate_traffic_server_cache(request.app)
         if data.enable_watch_time is False:
             # 关闭单台服务器播放时长采集时立即停用活跃会话并清理 Emby 心跳（保留历史记录）
             await service.handle_watch_time_disabled(server_id)
-        if data.enable_traffic is False or data.enable_traffic_auto_suspend is False:
-            # 关闭单服流量采集或超流自动停用开关时，安全清除本服超流停用标记并按组合状态解封
+        if (
+            data.enable_traffic is False
+            or data.enable_traffic_auto_suspend is False
+            or quota_changed
+        ):
+            # 关流/关停用/调整配额后，按最新配额与开关安全释放符合条件的超流停用账号
             account_service = AccountService(request.app, session)
             (
                 released_count,
                 failed_count,
             ) = await account_service.release_traffic_suspensions(server_id)
-            traffic_release_note = format_traffic_release_summary(
-                released_count, failed_count, as_suffix=True
-            )
+            if (
+                data.enable_traffic is False
+                or data.enable_traffic_auto_suspend is False
+                or released_count > 0
+                or failed_count > 0
+            ):
+                traffic_release_note = format_traffic_release_summary(
+                    released_count, failed_count, as_suffix=True
+                )
         if {"name", "url", "api_key", "path_mappings", "qb_username"} & set(
             update_dict
         ):

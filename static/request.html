@@ -348,6 +348,8 @@
                 oninput="debounceSearch()">
         </div>
 
+        <div id="request-cost-hint" style="display:none; margin:0 16px 8px; padding:8px 12px; border-radius:8px; font-size:12px; background:var(--bg-color); color:var(--hint-color);"></div>
+
         <div class="library-scroll" id="lib-list">
             <!-- Chips -->
         </div>
@@ -410,6 +412,33 @@
         let libraries = [];
         let searchTimer = null;
         let currentItem = null;
+        let requestPointsCost = 0;
+
+        /**
+         * 从当前用户概览接口读取目标服务器的实时求片积分价格；免费服务器（0 分）保持隐藏积分提示。
+         */
+        async function loadRequestCostHint() {
+            try {
+                const res = await fetch('/api/miniapp/me', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                const acc = (data.media_accounts || []).find(a => String(a.server_id) === String(serverId));
+                requestPointsCost = acc ? Math.max(0, Number(acc.request_points_cost || 0)) : 0;
+                const hintEl = document.getElementById('request-cost-hint');
+                if (hintEl) {
+                    if (requestPointsCost > 0) {
+                        hintEl.textContent = `单次求片预留 ${requestPointsCost} 积分（拒绝、撤回或超时自动退还）`;
+                        hintEl.style.display = 'block';
+                    } else {
+                        hintEl.style.display = 'none';
+                    }
+                }
+            } catch (_) {
+                // 费用展示属于辅助信息，拉取异常不阻断求片搜索主流程
+            }
+        }
 
         function goBack() {
             if (serverId) {
@@ -560,7 +589,9 @@
                 btn.style.display = 'none';
             } else {
                 btn.style.display = 'block';
-                btn.innerText = '提交请求';
+                btn.innerText = requestPointsCost > 0
+                    ? `提交请求（预留 ${requestPointsCost} 积分）`
+                    : '提交请求';
                 btn.style.opacity = '1';
                 btn.onclick = submitRequest;
             }
@@ -666,6 +697,10 @@
                 card.className = 'req-card';
                 const statusText = STATUS_LABELS[item.status] || item.status;
                 const costText = COST_LABELS[item.cost_status] || item.cost_status;
+                const showCost = !item.is_free && Number(item.reserved_cost || 0) > 0;
+                const costSuffix = showCost
+                    ? ` • ${item.cost_label || `积分：${item.reserved_cost} (${costText})`}`
+                    : '';
                 const createdStr = item.created_at ? item.created_at.replace('T', ' ').slice(0, 16) : '';
                 const reasonLine = item.fail_reason ? `<div>说明：${item.fail_reason}</div>` : '';
                 const cancelBtn = item.status === 'pending'
@@ -677,7 +712,7 @@
                         <div class="req-badge">${statusText}</div>
                     </div>
                     <div class="req-meta">
-                        <div>媒体库：${item.library_name} • 积分：${item.reserved_cost} (${costText})</div>
+                        <div>媒体库：${item.library_name}${costSuffix}</div>
                         <div>提交时间：${createdStr}</div>
                         ${reasonLine}
                     </div>
@@ -704,6 +739,7 @@
         }
 
         // Init
+        loadRequestCostHint();
         loadLibraries();
     </script>
 </body>

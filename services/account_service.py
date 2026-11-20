@@ -2,6 +2,7 @@ import base64
 import contextlib
 import ipaddress
 import json
+import math
 import re
 import socket
 from collections.abc import Callable, Sequence
@@ -20,6 +21,14 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from core.billing_anchor import backfill_billing_cycle, resolve_anchored_cycle_window
 from core.config import get_settings
+from core.economy_policy import (
+    BYTES_PER_GIB,
+    TrafficBalance,
+    calculate_traffic_balances,
+    calculate_traffic_pack_points_cost,
+    calculate_traffic_pack_unit_bytes,
+    evaluate_traffic_pack_access,
+)
 from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
     clear_traffic_unsuspend_job,
@@ -106,6 +115,7 @@ class _PreExpiryReminderContext:
     watch_open: bool
     watch_eligible: bool
     watch_status_text: str
+    points_renew_enabled: bool = True
 
 
 # 到期准点复核允许的调度器短时唤醒漂移容差（防止毫秒级唤醒晚于 expires_at 误触发重锚与清空当期流量）
@@ -356,6 +366,14 @@ class AccountService:
         elif mode == RegistrationMode.OPEN:
             can_register = True
         elif mode == RegistrationMode.DEFAULT:
+            allowed, reason = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_REGISTER
+            )
+            if not allowed:
+                return Result(
+                    False,
+                    f"{reason} 当前仅支持通过激活码注册该服务器。",
+                )
             user = await self.telegram_repo.get_or_create(user_id)
             register_score = int(await self.telegram_repo.get_renew_score())
             if user.score >= register_score:
@@ -621,7 +639,7 @@ class AccountService:
         Returns:
             续期操作结果 ``Result``，携带成功状态与通知文案
         """
-        await self._flush_pending_traffic()
+        await self.flush_pending_traffic()
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -632,7 +650,11 @@ class AccountService:
             if not server:
                 return Result(False, "服务器配置已失效。")
 
-            wt_status = evaluate_watch_time_renewal(server, media_user)
+            wt_status = evaluate_watch_time_renewal(
+                server,
+                media_user,
+                global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
+            )
             if not use_score:
                 renew_channel = _RenewChannel.CODE
             elif wt_status.is_eligible:
@@ -730,16 +752,29 @@ class AccountService:
                 )
 
             expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
-            suspension_note = (
-                "（提示：账号当前仍处于超流停用状态，兑换流量包或等待账期重置后可恢复播放）"
-                if media_user.is_traffic_suspended
-                else ""
-            )
+            suspension_note = ""
+            if media_user.is_traffic_suspended:
+                points_pack_ok = await self.config_repo.is_points_feature_enabled(
+                    ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
+                )
+                pack_open, _ = evaluate_traffic_pack_access(
+                    server,
+                    points_pack_allowed=points_pack_ok,
+                    points_pack_reason="",
+                    global_traffic_enabled=await self.config_repo.is_traffic_enabled(),
+                )
+                suspension_note = (
+                    "（提示：账号当前仍处于超流停用状态，兑换流量包或等待账期重置后可恢复播放）"
+                    if pack_open
+                    else "（提示：账号当前仍处于超流停用状态，请等待账期重置或联系管理员调整配额后恢复播放）"
+                )
             if renew_channel == _RenewChannel.WATCH_TIME:
+                points_enabled = ConfigRepository.is_points_enabled_from_cache()
+                wt_tag = "时长保活免积分" if points_enabled else "时长保活自动续期"
                 return Result(
                     True,
                     TelegramMessage.render_markdown(
-                        t"续期成功（时长保活免积分），您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
+                        t"续期成功（{wt_tag}），您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
                     ),
                 )
 
@@ -843,12 +878,17 @@ class AccountService:
         if getattr(self.app.state, "telethon_client", None) is None:
             return False
         exp_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
+        points_enabled = ConfigRepository.is_points_enabled_from_cache()
+        if points_enabled:
+            cost_line = "消耗积分: <code>0</code>（当前观看度已达 100%）"
+        else:
+            cost_line = "续期方式: <code>保活自动免费续期（当前观看度已达 100%）</code>"
         msg = TelegramMessage.render_html(t"""\
             ✅ <b>自动保活续期成功</b>
 
             服务器: <code>{server_name}</code>
             媒体账号: <code>{media_name}</code>
-            消耗积分: <code>0</code>（有效播放时长已达标）
+            {cost_line:raw}
             有效期延长至: <code>{exp_str}</code>
         """)
         try:
@@ -928,7 +968,7 @@ class AccountService:
         Returns:
             结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
         """
-        await self._flush_pending_traffic()
+        await self.flush_pending_traffic()
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -943,7 +983,11 @@ class AccountService:
             if not server or not server.is_enabled:
                 return AutoRenewOutcome(False, "服务器不存在或已停用")
 
-            wt_status = evaluate_watch_time_renewal(server, media_user)
+            wt_status = evaluate_watch_time_renewal(
+                server,
+                media_user,
+                global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
+            )
             if not wt_status.is_eligible:
                 return AutoRenewOutcome(False, wt_status.status_text)
 
@@ -1088,22 +1132,88 @@ class AccountService:
             if not server:
                 return Result(False, "服务器配置已失效。")
 
+            wt_status = evaluate_watch_time_renewal(
+                server,
+                media_user,
+                global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
+            )
+            if not wt_status.is_open:
+                return Result(
+                    False,
+                    "当前服务器未开放时长保活续期（请确认全局及单服时长统计与保活开关均已开启）。",
+                )
+
             target_state = (not media_user.auto_renew) if enabled is None else enabled
             media_user = await self.media_repo.set_auto_renew(media_user, target_state)
 
-            wt_status = evaluate_watch_time_renewal(server, media_user)
             if target_state:
-                if wt_status.is_open:
-                    msg = "已开启自动保活：临近到期且本周期有效播放时长达标时将自动免积分续期。"
-                else:
-                    msg = (
-                        "已开启自动保活（提示：当前服务器未开放保活续期，"
-                        "仅在服务器开启保活并设定大于 0 的门槛后生效）。"
-                    )
+                msg = "已开启自动保活：临近到期且本周期有效播放时长达标时将自动免积分续期。"
             else:
                 msg = "已关闭自动保活。"
 
             return Result(True, msg, extra_data={"auto_renew": target_state})
+
+    @staticmethod
+    def _sync_traffic_alert_flags_locked(
+        media_user: MediaUser, bal: TrafficBalance
+    ) -> None:
+        """依据最新有效配额与剩余余额刷新 80%/100% 配额预警去重标记。
+
+        Args:
+            media_user: 已持有账号锁的媒体账号 ORM 对象。
+            bal: 按当前配额与调额计算的 ``TrafficBalance`` 快照。
+
+        Side Effects:
+            当账号退出超流状态或余量回升至阈值以上时，就地重置 ``media_user.traffic_alert_80_sent``
+            与 ``media_user.traffic_alert_100_sent`` 标记；不执行数据库提交。
+        """
+        if not bal.is_limited:
+            media_user.traffic_alert_80_sent = False
+            media_user.traffic_alert_100_sent = False
+            return
+        total_remaining = bal.total_remaining_bytes or 0
+        total_pool = bal.total_pool_bytes or 0
+        if total_remaining > 0:
+            media_user.traffic_alert_100_sent = False
+        if total_pool > 0 and total_remaining * 5 > total_pool:
+            media_user.traffic_alert_80_sent = False
+
+    @staticmethod
+    def _should_release_suspension_locked(
+        global_traffic_on: bool,
+        srv: ServerInstance | None,
+        mu: MediaUser,
+    ) -> tuple[bool, TrafficBalance]:
+        """判断处于超流停用状态的账号在最新配置与额度下是否满足释放条件。
+
+        Args:
+            global_traffic_on: 全局流量总开关（``traffic:enable``）是否开启。
+            srv: 所属媒体服务器实例（可为 ``None``）。
+            mu: 目标媒体账号 ORM 对象。
+
+        Returns:
+            ``(should_release, balance)`` 二元组；当任一流量开关/自动停用门控关闭、
+            所属服不限流或当期双池总剩余大于 0 时返回 ``True``。
+        """
+        bal = calculate_traffic_balances(
+            srv.traffic_quota_bytes if srv else 0,
+            mu.cycle_traffic_adjustment_bytes,
+            mu.cycle_traffic_bytes,
+            mu.traffic_pack_bytes,
+        )
+        srv_auto_suspend = bool(
+            srv is not None
+            and srv.is_enabled
+            and srv.enable_traffic
+            and srv.enable_traffic_auto_suspend
+        )
+        should_release = (
+            (not global_traffic_on)
+            or (not srv_auto_suspend)
+            or (not bal.is_limited)
+            or ((bal.total_remaining_bytes or 0) > 0)
+        )
+        return should_release, bal
 
     async def _send_traffic_unsuspended_dm(
         self,
@@ -1113,6 +1223,7 @@ class AccountService:
         media_name: str,
         added_bytes: int,
         total_pack_bytes: int,
+        next_reset_at: datetime | None = None,
     ) -> bool:
         """向因超流停用且兑换流量包后立即恢复播放权限的用户发送 Bot 私聊通知
 
@@ -1123,7 +1234,8 @@ class AccountService:
             server_name: 媒体服务器名称。
             media_name: 媒体账号用户名。
             added_bytes: 本次兑换增加的流量包字节数。
-            total_pack_bytes: 兑换后的流量包总余额字节数。
+            total_pack_bytes: 兑换后的当期流量包总余额字节数。
+            next_reset_at: 下一次账期重置时间（用于提示单期清零边界）。
 
         Returns:
             私聊送达成功返回 ``True``，未配置客户端或送达失败返回 ``False``。
@@ -1132,13 +1244,19 @@ class AccountService:
             return False
         added_str = format_traffic_bytes(added_bytes)
         total_pack_str = format_traffic_bytes(total_pack_bytes)
+        reset_note = (
+            f"{next_reset_at.strftime('%Y-%m-%d %H:%M')} 账期重置时清零"
+            if next_reset_at is not None
+            else "本周期重置时清零"
+        )
         msg = TelegramMessage.render_html(t"""\
             ✅ <b>流量包兑换成功，超流停用已解除</b>
 
             服务器: <code>{server_name}</code>
             媒体账号: <code>{media_name}</code>
             本次增加: <code>+{added_str}</code>
-            流量包余额: <code>{total_pack_str}</code>
+            当期流量包余额: <code>{total_pack_str}</code>
+            有效说明: <code>仅限当前账期使用，将于 {reset_note}</code>
             您的播放权限已立即恢复，祝观影愉快！
         """)
         try:
@@ -1155,10 +1273,10 @@ class AccountService:
     async def redeem_traffic_pack(
         self, user_id: int, server_id: int, quantity: int = 1
     ) -> Result:
-        """消耗 Telegram 积分兑换指定媒体账号的持久化流量包，并在安全时自动解除超流停用
+        """消耗 Telegram 积分兑换指定媒体账号的单期流量包，并在安全时自动解除超流停用
 
-        受全局积分总开关与“积分兑换流量包”子开关共同控制；仅当账号当时仅因超流停用
-        且未处于过期封禁（``is_banned == False``）时才解除外部媒体服务器禁用并通知用户。
+        严格校验 ``积分启用 ∩ 流量包积分开关 ∩ 全局与单服有限配额限流 ∩ 单服 allow_traffic_pack``；
+        单价支持单服 ``fixed`` / ``ratio``（最低 1 积分），购买余额仅限本周期有效，随 ``next_reset_at`` 清零。
 
         Args:
             user_id: Telegram 用户 ID。
@@ -1174,14 +1292,7 @@ class AccountService:
         allowed, reason = await self.config_repo.check_points_feature(
             ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
         )
-        if not allowed:
-            return Result(False, reason)
-
-        traffic_cfg = await self.config_repo.get_traffic_config()
-        unit_cost = max(1, int(traffic_cfg["traffic_pack_cost_score"]))
-        unit_bytes = max(1, int(traffic_cfg["traffic_pack_unit_bytes"]))
-        total_cost = unit_cost * quantity
-        added_bytes = unit_bytes * quantity
+        global_traffic_on = await self.config_repo.is_traffic_enabled()
 
         should_unban_external = False
         server_name = ""
@@ -1189,16 +1300,35 @@ class AccountService:
         new_pack_bytes = 0
         remaining_score = 0
         still_banned = False
+        next_reset_at: datetime | None = None
+        total_cost = 0
+        added_bytes = 0
 
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            server = await self.server_repo.get_by_id(server_id, fresh=True)
+            gate_ok, gate_reason = evaluate_traffic_pack_access(
+                server,
+                points_pack_allowed=allowed,
+                points_pack_reason=reason,
+                global_traffic_enabled=global_traffic_on,
+            )
+            if not gate_ok:
+                return Result(False, gate_reason)
             if media_user is None:
                 return Result(False, "您尚未注册该服务器，请先注册后再兑换流量包。")
 
-            server = await self.server_repo.get_by_id(server_id, fresh=True)
-            if not server or not server.is_enabled:
-                return Result(False, "服务器不存在或已停用，暂不支持兑换流量包。")
+            assert server is not None
+            renew_score = (
+                await self.telegram_repo.get_renew_score()
+                if server.traffic_pack_points_mode != "fixed"
+                else 0
+            )
+            unit_cost = calculate_traffic_pack_points_cost(server, renew_score)
+            unit_bytes = calculate_traffic_pack_unit_bytes(server)
+            total_cost = unit_cost * quantity
+            added_bytes = unit_bytes * quantity
 
             server_name = server.name
             media_name = media_user.media_name
@@ -1254,21 +1384,18 @@ class AccountService:
                 )
                 fresh_mu.is_traffic_suspended = False
 
-                quota = max(0, int(server.traffic_quota_bytes or 0))
-                if quota > 0:
-                    base_remaining = max(
-                        0, quota - int(fresh_mu.cycle_traffic_bytes or 0)
-                    )
-                    new_pack = int(fresh_mu.traffic_pack_bytes)
-                    new_total_remaining = base_remaining + new_pack
-                    if new_total_remaining > 0:
-                        fresh_mu.traffic_alert_100_sent = False
-                    if new_total_remaining * 5 > (quota + new_pack):
-                        fresh_mu.traffic_alert_80_sent = False
+                bal = calculate_traffic_balances(
+                    server.traffic_quota_bytes,
+                    fresh_mu.cycle_traffic_adjustment_bytes,
+                    fresh_mu.cycle_traffic_bytes,
+                    fresh_mu.traffic_pack_bytes,
+                )
+                self._sync_traffic_alert_flags_locked(fresh_mu, bal)
 
                 await self.media_repo.session.commit()
                 await self.media_repo.session.refresh(fresh_mu)
                 new_pack_bytes = int(fresh_mu.traffic_pack_bytes)
+                next_reset_at = fresh_mu.next_reset_at
                 tg_user = await self.telegram_repo.get_or_create(user_id)
                 remaining_score = int(tg_user.score)
             except (SQLAlchemyError, ValueError, RuntimeError) as exc:
@@ -1291,24 +1418,30 @@ class AccountService:
                 media_name=media_name,
                 added_bytes=added_bytes,
                 total_pack_bytes=new_pack_bytes,
+                next_reset_at=next_reset_at,
             )
 
         added_str = format_traffic_bytes(added_bytes)
         total_pack_str = format_traffic_bytes(new_pack_bytes)
+        reset_clause = (
+            f"仅限当前账期有效，将于 {next_reset_at.strftime('%Y-%m-%d %H:%M')} 清零。"
+            if next_reset_at is not None
+            else "仅限当前账期有效，将于本周期重置时清零。"
+        )
         if should_unban_external:
             msg = (
                 f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
-                f"当前流量包余额 {total_pack_str}，已为您立即解除超流停用。"
+                f"当前流量包余额 {total_pack_str}，已为您立即解除超流停用。{reset_clause}"
             )
         elif still_banned:
             msg = (
                 f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
-                f"当前流量包余额 {total_pack_str}。由于账号仍处于过期封禁状态，续期后将恢复播放。"
+                f"当前流量包余额 {total_pack_str}。{reset_clause}由于账号仍处于过期封禁状态，续期后将恢复播放。"
             )
         else:
             msg = (
                 f"流量包兑换成功（+{added_str}，消耗 {total_cost} 积分），"
-                f"当前流量包余额 {total_pack_str}。"
+                f"当前流量包余额 {total_pack_str}。{reset_clause}"
             )
 
         return Result(
@@ -1321,6 +1454,7 @@ class AccountService:
                 "traffic_pack_bytes": new_pack_bytes,
                 "is_traffic_suspended": False,
                 "unsuspended": should_unban_external,
+                "next_reset_at": next_reset_at.isoformat() if next_reset_at else None,
             },
         )
 
@@ -1701,10 +1835,9 @@ class AccountService:
     async def release_traffic_suspensions(
         self, server_id: int | None = None
     ) -> tuple[int, int]:
-        """关闭流量采集或超流自动停用开关时，安全批量释放超流停用账号
+        """关闭流量开关、关闭超流停用或调高/清零服务器配额时，安全批量释放符合条件的超流停用账号
 
-        永久保留历史流量与流量包余额；仅当账号不同时处于过期封禁（``is_banned``）时
-        才在外部媒体服务器解除禁用，绝不误放过期封禁账号。
+        保留历史总流量，仅在满足最新释放判定且未处于过期封禁（``is_banned``）时才解除外部媒体服务器禁用。
 
         Args:
             server_id: 目标服务器 ID；为 ``None`` 时扫描全部服务器（用于全局开关关闭）。
@@ -1732,42 +1865,181 @@ class AccountService:
                     continue
 
                 fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
-                # 防止锁等待期间管理员已重新同时开启了全局及单服自动停用开关
-                if (
-                    global_traffic_on
-                    and fresh_srv is not None
-                    and fresh_srv.is_enabled
-                    and fresh_srv.enable_traffic
-                    and fresh_srv.enable_traffic_auto_suspend
-                ):
+                should_release, bal = self._should_release_suspension_locked(
+                    global_traffic_on, fresh_srv, fresh_mu
+                )
+                if not should_release:
                     continue
 
-                keep_disabled = compute_external_disabled_state(
-                    is_banned=bool(fresh_mu.is_banned),
-                    is_traffic_suspended=False,
-                )
-                if not keep_disabled:
-                    outcome = await sync_external_disabled_state(
-                        self.media_clients.get(sid),
-                        media_id=fresh_mu.media_id,
-                        target_disabled=False,
-                        treat_404_as_synced=True,
-                        log_context="释放超流停用外部解封",
-                        user_id=uid,
-                        server_id=sid,
-                    )
-                    if not outcome.ok:
-                        failed_count += 1
-                        continue
+                self._sync_traffic_alert_flags_locked(fresh_mu, bal)
 
-                fresh_mu.is_traffic_suspended = False
-                await self.media_repo.session.commit()
-                released_count += 1
+                status = await self._clear_or_sync_traffic_suspension_locked(
+                    fresh_mu,
+                    fresh_srv,
+                    log_context="释放超流停用外部解封",
+                )
+                if status == "cleared":
+                    await self.media_repo.session.commit()
+                    released_count += 1
+                elif status == "retryable_error":
+                    failed_count += 1
+                    schedule_traffic_unsuspend_retry(
+                        self._get_scheduler(),
+                        uid,
+                        sid,
+                        run_date=self._now() + timedelta(minutes=15),
+                    )
+                    await self.media_repo.session.commit()
 
         return released_count, failed_count
 
-    async def _flush_pending_traffic(self) -> None:
-        """在执行账期重置前尽力将内存中的在途流量增量刷盘，避免旧周期流量跨期混入"""
+    async def adjust_account_cycle_traffic(
+        self,
+        user_id: int,
+        server_id: int,
+        *,
+        delta_gib: float = 0.0,
+        reset_cycle_usage: bool = False,
+    ) -> Result:
+        """管理员调整指定媒体账号当前账期临时额度（±GiB）或清零当期已用流量，并按 ADR-0002 安全解封
+
+        操作前强制调用 ``flush_pending_traffic()`` 刷盘内存缓冲；仅影响当前账期
+        （``cycle_traffic_adjustment_bytes`` / ``cycle_traffic_bytes``），绝不清空历史总流量
+        ``total_traffic_bytes``，且清零已用时不清除用户购买的当期流量包余额 ``traffic_pack_bytes``。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+            delta_gib: 当期临时配额增减量（GiB，可正可负）。
+            reset_cycle_usage: 是否同步清零当期已用流量、既有调额与预警标记。
+
+        Returns:
+            操作结果 ``Result``，``extra_data`` 附带调额后流量与解封状态明细。
+        """
+        if not math.isfinite(delta_gib):
+            return Result(False, "调额 GiB 数值无效。")
+        delta_bytes = round(delta_gib * BYTES_PER_GIB)
+        if not reset_cycle_usage and delta_bytes == 0:
+            return Result(False, "请指定非零的临时调额 GiB 或选择清零当期已用流量。")
+
+        await self.flush_pending_traffic()
+        now = self._now()
+        scheduler = self._get_scheduler()
+
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            if fresh_mu is None:
+                return Result(False, "目标媒体账号不存在。")
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            if fresh_srv is None:
+                return Result(False, "所属媒体服务器不存在。")
+            global_traffic_on = ConfigRepository.is_traffic_enabled_from_cache()
+            if not global_traffic_on:
+                return Result(False, "全局流量采集总开关已关闭，不支持当期流量调额。")
+            if not fresh_srv.is_enabled or not fresh_srv.enable_traffic:
+                return Result(
+                    False, "该服务器已停用或未开启流量采集，不支持当期流量调额。"
+                )
+            if max(0, int(fresh_srv.traffic_quota_bytes or 0)) <= 0:
+                return Result(False, "该服务器为不限流模式，无需当期流量调额或清零。")
+
+            if reset_cycle_usage:
+                fresh_mu.cycle_traffic_bytes = 0
+                fresh_mu.cycle_traffic_adjustment_bytes = 0
+                fresh_mu.traffic_alert_80_sent = False
+                fresh_mu.traffic_alert_100_sent = False
+
+            if delta_bytes != 0:
+                fresh_mu.cycle_traffic_adjustment_bytes = (
+                    int(fresh_mu.cycle_traffic_adjustment_bytes or 0) + delta_bytes
+                )
+
+            should_release, bal = self._should_release_suspension_locked(
+                global_traffic_on, fresh_srv, fresh_mu
+            )
+            self._sync_traffic_alert_flags_locked(fresh_mu, bal)
+
+            was_suspended = bool(fresh_mu.is_traffic_suspended)
+            unsuspended = False
+            retry_scheduled = False
+            cleared_while_banned = False
+            if was_suspended and should_release:
+                status = await self._clear_or_sync_traffic_suspension_locked(
+                    fresh_mu,
+                    fresh_srv,
+                    log_context="管理员当期流量调额解封",
+                )
+                if status == "cleared":
+                    if fresh_mu.is_banned:
+                        cleared_while_banned = True
+                    else:
+                        unsuspended = True
+                elif status == "retryable_error":
+                    retry_scheduled = True
+                    schedule_traffic_unsuspend_retry(
+                        scheduler,
+                        user_id,
+                        server_id,
+                        run_date=now + timedelta(minutes=15),
+                    )
+
+            await self.media_repo.session.commit()
+            await self.media_repo.session.refresh(fresh_mu)
+
+            quota_text = (
+                format_traffic_bytes(bal.effective_base_quota_bytes)
+                if bal.is_limited
+                else "不限流量"
+            )
+            remain_text = (
+                format_traffic_bytes(bal.total_remaining_bytes or 0)
+                if bal.total_remaining_bytes is not None
+                else "不限"
+            )
+            actions: list[str] = []
+            if reset_cycle_usage:
+                actions.append("已清零当期已用流量")
+            if delta_bytes != 0:
+                sign = "+" if delta_bytes > 0 else "-"
+                actions.append(
+                    f"当期临时调额 {sign}{format_traffic_bytes(abs(delta_bytes))}"
+                )
+            suffix = ""
+            if unsuspended:
+                suffix = "，并已自动解除超流停用"
+            elif cleared_while_banned:
+                suffix = "，已清除超流停用标记（因账号仍处于过期封禁，外部保持禁用）"
+            elif retry_scheduled:
+                suffix = "，外部媒体服解封暂时失败，已登记自动重试任务"
+
+            msg = (
+                f"{'、'.join(actions)}{suffix}。"
+                f"当前生效配额: {quota_text}，当期总剩余: {remain_text}。"
+            )
+            return Result(
+                True,
+                msg,
+                extra_data={
+                    "effective_quota_bytes": (
+                        bal.effective_base_quota_bytes if bal.is_limited else 0
+                    ),
+                    "cycle_traffic_bytes": int(fresh_mu.cycle_traffic_bytes),
+                    "cycle_traffic_adjustment_bytes": int(
+                        fresh_mu.cycle_traffic_adjustment_bytes
+                    ),
+                    "traffic_remaining_bytes": bal.base_remaining_bytes,
+                    "traffic_total_remaining_bytes": bal.total_remaining_bytes,
+                    "is_traffic_suspended": bool(fresh_mu.is_traffic_suspended),
+                    "unsuspended": unsuspended,
+                },
+            )
+
+    async def flush_pending_traffic(self) -> None:
+        """在执行账期重置、切换流量开关或管理员调额前尽力将内存中的在途流量增量刷盘。
+
+        副作用：尝试触发 ``TrafficService.flush()`` 落库，可预期持久化异常会被抑制以保护上层状态切换。
+        """
         traffic_service = getattr(
             getattr(self.app, "state", None), "traffic_service", None
         )
@@ -1884,8 +2156,10 @@ class AccountService:
         new_started_at, new_next_reset_at = resolve_anchored_cycle_window(
             now, fresh_mu.anchor_day, fresh_mu.next_reset_at
         )
-        # 仅清零当期基础流量与 80%/100% 预警标记；永久保留流量包余额、历史总流量与观影时长
+        # 重置当期基础消耗、当期临时调额、当期流量包余额及预警标记；永久保留历史总流量与观影时长
         fresh_mu.cycle_traffic_bytes = 0
+        fresh_mu.cycle_traffic_adjustment_bytes = 0
+        fresh_mu.traffic_pack_bytes = 0
         fresh_mu.traffic_alert_80_sent = False
         fresh_mu.traffic_alert_100_sent = False
         fresh_mu.cycle_started_at = new_started_at
@@ -1922,25 +2196,13 @@ class AccountService:
             return False
 
         global_traffic_on = ConfigRepository.is_traffic_enabled_from_cache()
-        srv_auto_suspend = bool(
-            fresh_srv is not None
-            and fresh_srv.is_enabled
-            and fresh_srv.enable_traffic
-            and fresh_srv.enable_traffic_auto_suspend
-        )
-        quota = max(0, int(fresh_srv.traffic_quota_bytes or 0)) if fresh_srv else 0
-        base_rem = (
-            max(0, quota - int(fresh_mu.cycle_traffic_bytes or 0)) if quota > 0 else 1
-        )
-        pack_rem = max(0, int(fresh_mu.traffic_pack_bytes or 0))
-        should_release = (
-            (not global_traffic_on)
-            or (not srv_auto_suspend)
-            or (quota <= 0)
-            or ((base_rem + pack_rem) > 0)
+        should_release, bal = self._should_release_suspension_locked(
+            global_traffic_on, fresh_srv, fresh_mu
         )
         if not should_release:
             return False
+
+        self._sync_traffic_alert_flags_locked(fresh_mu, bal)
 
         status = await self._clear_or_sync_traffic_suspension_locked(
             fresh_mu,
@@ -1995,7 +2257,7 @@ class AccountService:
         Returns:
             本次成功重置账期或释放残余超流停用的账号数量。
         """
-        await self._flush_pending_traffic()
+        await self.flush_pending_traffic()
         now = self._now()
         await self.media_repo.backfill_missing_billing_anchors(now=now)
 
@@ -2045,7 +2307,7 @@ class AccountService:
         Returns:
             统计各项恢复与校准数量的字典。
         """
-        await self._flush_pending_traffic()
+        await self.flush_pending_traffic()
         now = self._now()
         scheduler = self._get_scheduler()
         summary = {
@@ -2162,7 +2424,7 @@ class AccountService:
         Returns:
             ``"reset"``、``"retry_unsuspend"`` 或 ``"skipped"``。
         """
-        await self._flush_pending_traffic()
+        await self.flush_pending_traffic()
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -2232,20 +2494,21 @@ class AccountService:
             return False
 
         exp_str = ctx.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+        paid_methods = "积分或激活码" if ctx.points_renew_enabled else "激活码"
         if ctx.watch_open and ctx.watch_eligible:
             hint_line = (
-                "当前观影时长已达标，可前往 Mini App 免费续期"
+                "当前观看度已达 100%，可前往 Mini App 免费续期"
                 if not ctx.auto_renew
-                else "当前观影时长已达标，请确认账号状态。"
+                else "当前观看度已达 100%，请确认账号状态。"
             )
         elif ctx.watch_open:
             hint_line = (
-                f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用积分/激活码续期。"
+                f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用{paid_methods}续期。"
                 if ctx.auto_renew
-                else f"保活进度: {ctx.watch_status_text}，可使用积分、激活码或在达标后免费续期。"
+                else f"保活进度: {ctx.watch_status_text}，可使用{paid_methods}或在达标后免费续期。"
             )
         else:
-            hint_line = "请前往 Mini App 使用积分或激活码及时续期，以免过期封禁。"
+            hint_line = f"请前往 Mini App 使用{paid_methods}及时续期，以免过期封禁。"
 
         msg = TelegramMessage.render_html(t"""\
             ⏰ <b>媒体账号临近到期提醒</b>
@@ -2328,7 +2591,14 @@ class AccountService:
             if fresh_srv is None or not fresh_srv.is_enabled:
                 return "server_disabled"
 
-            wt_status = evaluate_watch_time_renewal(fresh_srv, fresh_mu)
+            wt_status = evaluate_watch_time_renewal(
+                fresh_srv,
+                fresh_mu,
+                global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
+            )
+            points_renew_enabled = await self.config_repo.is_points_feature_enabled(
+                ConfigRepository.KEY_ENABLE_POINTS_RENEW
+            )
             reminder_ctx = _PreExpiryReminderContext(
                 user_id=user_id,
                 server_name=fresh_srv.name,
@@ -2338,6 +2608,7 @@ class AccountService:
                 watch_open=wt_status.is_open,
                 watch_eligible=wt_status.is_eligible,
                 watch_status_text=wt_status.status_text,
+                points_renew_enabled=points_renew_enabled,
             )
 
         # 释放非重入账号锁后再发起 Telegram 私聊网络 IO，防止长耗时网络阻塞同账号其他操作

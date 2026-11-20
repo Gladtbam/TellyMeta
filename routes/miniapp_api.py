@@ -31,6 +31,7 @@ from core.webapp_auth import (
 from models.orm import RegistrationMode
 from models.schemas import (
     AdminActionResponse,
+    AdminTrafficAdjustDto,
     AutoRenewToggleDto,
     AvailableServerDto,
     ChangeScoreDto,
@@ -43,11 +44,7 @@ from models.schemas import (
     TrafficPackRedeemResponse,
     UserInfoDto,
 )
-from repositories.config_repo import (
-    DEFAULT_TRAFFIC_PACK_COST_SCORE,
-    DEFAULT_TRAFFIC_PACK_SIZE_GIB,
-    DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
-)
+from repositories.config_repo import DEFAULT_TRAFFIC_PACK_UNIT_BYTES
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService
@@ -251,16 +248,18 @@ def _build_user_info_dto(
         has_username=has_username,
         cycle_watch_time_seconds=int(data.get("cycle_watch_time_seconds", 0)),
         total_watch_time_seconds=int(data.get("total_watch_time_seconds", 0)),
+        enable_points=bool(data.get("enable_points", True)),
+        enable_points_checkin=bool(data.get("enable_points_checkin", True)),
+        enable_points_chat=bool(data.get("enable_points_chat", True)),
+        enable_points_register=bool(data.get("enable_points_register", True)),
+        enable_points_renew=bool(data.get("enable_points_renew", True)),
+        enable_points_request=bool(data.get("enable_points_request", True)),
+        enable_points_generate_code=bool(data.get("enable_points_generate_code", True)),
         enable_points_traffic_pack=bool(data.get("enable_points_traffic_pack", True)),
-        traffic_pack_cost_score=int(
-            data.get("traffic_pack_cost_score", DEFAULT_TRAFFIC_PACK_COST_SCORE)
-        ),
-        traffic_pack_size_gib=float(
-            data.get("traffic_pack_size_gib", DEFAULT_TRAFFIC_PACK_SIZE_GIB)
-        ),
-        traffic_pack_unit_bytes=int(
-            data.get("traffic_pack_unit_bytes", DEFAULT_TRAFFIC_PACK_UNIT_BYTES)
-        ),
+        enable_points_spam=bool(data.get("enable_points_spam", True)),
+        enable_points_warn=bool(data.get("enable_points_warn", True)),
+        enable_watch_time=bool(data.get("enable_watch_time", True)),
+        enable_traffic=bool(data.get("enable_traffic", False)),
         media_accounts=[
             MediaAccountDto(
                 server_id=item["media_user"].server_id,
@@ -273,7 +272,11 @@ def _build_user_info_dto(
                 is_banned=item["is_banned"],
                 allow_subtitle_upload=bool(item.get("allow_subtitle_upload", False)),
                 allow_request=bool(item.get("allow_request", False)),
+                request_open=bool(item.get("request_open", False)),
+                request_points_mode=str(item.get("request_points_mode") or "fixed"),
+                request_points_cost=int(item.get("request_points_cost", 0)),
                 tos=item.get("tos"),
+                enable_watch_time=bool(item.get("enable_watch_time", True)),
                 cycle_watch_time_seconds=int(item.get("cycle_watch_time_seconds", 0)),
                 total_watch_time_seconds=int(item.get("total_watch_time_seconds", 0)),
                 anchor_day=item.get("anchor_day"),
@@ -295,10 +298,18 @@ def _build_user_info_dto(
                     item.get("watch_time_renewal_status_text")
                     or "当前服务器未开放保活续期"
                 ),
+                watch_time_progress_percent=item.get("watch_time_progress_percent"),
                 enable_traffic=bool(item.get("enable_traffic", False)),
+                traffic_limited=bool(item.get("traffic_limited", False)),
                 cycle_traffic_bytes=int(item.get("cycle_traffic_bytes", 0)),
                 traffic_pack_bytes=int(item.get("traffic_pack_bytes", 0)),
                 total_traffic_bytes=int(item.get("total_traffic_bytes", 0)),
+                server_traffic_quota_bytes=int(
+                    item.get("server_traffic_quota_bytes", 0)
+                ),
+                cycle_traffic_adjustment_bytes=int(
+                    item.get("cycle_traffic_adjustment_bytes", 0)
+                ),
                 traffic_quota_bytes=int(item.get("traffic_quota_bytes", 0)),
                 traffic_remaining_bytes=item.get("traffic_remaining_bytes"),
                 traffic_total_remaining_bytes=item.get("traffic_total_remaining_bytes"),
@@ -306,6 +317,18 @@ def _build_user_info_dto(
                 enable_traffic_auto_suspend=bool(
                     item.get("enable_traffic_auto_suspend", False)
                 ),
+                allow_traffic_pack=bool(item.get("allow_traffic_pack", False)),
+                traffic_pack_open=bool(item.get("traffic_pack_open", False)),
+                traffic_pack_points_mode=str(
+                    item.get("traffic_pack_points_mode") or "fixed"
+                ),
+                traffic_pack_cost_score=int(item.get("traffic_pack_cost_score", 50)),
+                traffic_pack_size_gib=float(item.get("traffic_pack_size_gib", 10.0)),
+                traffic_pack_unit_bytes=int(
+                    item.get("traffic_pack_unit_bytes", DEFAULT_TRAFFIC_PACK_UNIT_BYTES)
+                ),
+                can_points_renew=bool(item.get("can_points_renew", True)),
+                can_generate_code=bool(item.get("can_generate_code", True)),
             )
             for item in media_accounts_data
         ],
@@ -423,9 +446,7 @@ async def admin_warn_user(
     """管理员警告目标用户 (+1)"""
     try:
         user_service = UserService(request.app, session)
-        user = await user_service.telegram_repo.update_warn_and_score(
-            target_user_id, increment=1
-        )
+        user = await user_service.warn_user(target_user_id, increment=1)
         return AdminActionResponse(
             success=True,
             message=f"已警告用户，当前警告次数: {user.warning_count} 次",
@@ -449,14 +470,8 @@ async def admin_change_user_score(
     """管理员修改目标用户积分"""
     try:
         user_service = UserService(request.app, session)
-        user = await user_service.telegram_repo.update_score(
-            target_user_id, body.score_change
-        )
-        prefix = "+" if body.score_change > 0 else ""
-        return AdminActionResponse(
-            success=True,
-            message=f"已修改积分 ({prefix}{body.score_change})，当前积分: {user.score}",
-        )
+        result = await user_service.change_user_score(target_user_id, body.score_change)
+        return AdminActionResponse(success=result.success, message=result.message)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("修改积分失败: {}", e)
         raise HTTPException(status_code=500, detail="修改用户积分失败") from e
@@ -532,6 +547,40 @@ async def admin_ban_user(
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("封禁用户失败: {}", e)
         raise HTTPException(status_code=500, detail="封禁用户操作失败") from e
+
+
+@router.post(
+    "/admin/user/{target_user_id}/accounts/{server_id}/traffic_adjust",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=AdminActionResponse,
+)
+async def admin_adjust_account_traffic(
+    request: Request,
+    target_user_id: int,
+    server_id: int,
+    body: AdminTrafficAdjustDto,
+    session: AsyncSession = Depends(get_db),
+) -> AdminActionResponse:
+    """管理员调整目标媒体账号当期临时流量额度（±GiB）或清零当期已用流量"""
+    service = AccountService(request.app, session)
+    result = await service.adjust_account_cycle_traffic(
+        target_user_id,
+        server_id,
+        delta_gib=body.delta_gib,
+        reset_cycle_usage=body.reset_cycle_usage,
+    )
+    extra = result.extra_data if isinstance(result.extra_data, dict) else {}
+    return AdminActionResponse(
+        success=result.success,
+        message=result.message,
+        effective_quota_bytes=extra.get("effective_quota_bytes"),
+        cycle_traffic_bytes=extra.get("cycle_traffic_bytes"),
+        cycle_traffic_adjustment_bytes=extra.get("cycle_traffic_adjustment_bytes"),
+        traffic_remaining_bytes=extra.get("traffic_remaining_bytes"),
+        traffic_total_remaining_bytes=extra.get("traffic_total_remaining_bytes"),
+        is_traffic_suspended=extra.get("is_traffic_suspended"),
+        unsuspended=bool(extra.get("unsuspended", False)),
+    )
 
 
 @router.post("/redeem_code", response_model=ToggleResponse)
@@ -855,14 +904,26 @@ async def trigger_upload_subtitle(
 # --- Request API (求片) ---
 
 
-async def _require_requestable_server(session: AsyncSession, server_id: int):
-    """校验目标服务器存在且已开启求片功能，否则抛出统一 HTTP 业务异常。"""
-    server_repo = ServerRepository(session)
-    server = await server_repo.get_by_id(server_id)
-    if not server:
-        raise ApiError(404, "SERVER_NOT_FOUND", "服务器不存在")
-    if not server.allow_request:
-        raise ApiError(403, "REQUEST_DISABLED", "该服务器未开启求片功能")
+async def _require_requestable_server(
+    request: Request, session: AsyncSession, server_id: int
+):
+    """校验目标服务器存在、已开启求片且付费求片满足积分权限，否则统一抛出 HTTP 404/403 业务异常。
+
+    Args:
+        request: FastAPI 请求对象，用于初始化 ``RequestService`` 解析单服求片定价。
+        session: 异步数据库会话。
+        server_id: 目标媒体服务器 ID。
+
+    Returns:
+        校验通过的目标 ``ServerInstance``。
+    """
+    service = RequestService(request.app, session)
+    server, _, allowed, code, message = await service.resolve_request_cost_and_access(
+        server_id
+    )
+    if not allowed:
+        status_code = 404 if code == "SERVER_NOT_FOUND" else 403
+        raise ApiError(status_code, code, message)
     return server
 
 
@@ -876,7 +937,7 @@ async def get_request_libraries(
     session: AsyncSession = Depends(get_db),
 ):
     """获取可求片的媒体库列表"""
-    await _require_requestable_server(session, server_id)
+    await _require_requestable_server(request, session, server_id)
 
     service = RequestService(request.app, session)
     return await service.get_requestable_libraries(server_id)
@@ -892,7 +953,7 @@ async def search_media(
     session: AsyncSession = Depends(get_db),
 ):
     """搜索媒体"""
-    await _require_requestable_server(session, server_id)
+    await _require_requestable_server(request, session, server_id)
 
     service = RequestService(request.app, session)
     return await service.search_media_items(server_id, library, query)
@@ -907,7 +968,7 @@ async def submit_request(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, bool | str]:
     """提交求片请求"""
-    await _require_requestable_server(session, server_id)
+    await _require_requestable_server(request, session, server_id)
 
     service = RequestService(request.app, session)
     result = await service.submit_request_api(

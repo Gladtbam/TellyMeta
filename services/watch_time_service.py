@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -16,6 +17,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
+from core.economy_policy import is_watch_time_renewal_open
 from core.media_utils import (
     clean_str as _clean_str,
 )
@@ -100,6 +102,40 @@ class WatchTimeRenewalStatus:
     threshold_seconds: int
     current_seconds: int
     status_text: str
+    progress_percent: float | None = None
+
+
+def calculate_watch_progress_percent(
+    current_seconds: int, threshold_seconds: int
+) -> float:
+    """按保活门槛计算当前周期观看度百分比（范围 ``0.0``–``100.0``，未达标时封顶 ``99.9``）。
+
+    Args:
+        current_seconds: 当前周期累计有效观看秒数。
+        threshold_seconds: 服务器设定的保活门槛秒数（须大于 0）。
+
+    Returns:
+        保留一位小数的向下取整百分比数值，仅当真正达到门槛时返回 ``100.0``。
+    """
+    if threshold_seconds <= 0 or current_seconds <= 0:
+        return 0.0
+    if current_seconds >= threshold_seconds:
+        return 100.0
+    return min(99.9, math.floor(current_seconds * 1000 / threshold_seconds) / 10)
+
+
+def _format_watch_progress_percent(progress_percent: float) -> str:
+    """将观看度百分比数值格式化为紧凑百分比字符串（如 ``50%`` 或 ``99.9%``）。
+
+    Args:
+        progress_percent: ``0.0`` 至 ``100.0`` 的观看度数值。
+
+    Returns:
+        无多余末尾零的百分比字符串。
+    """
+    if progress_percent == int(progress_percent):
+        return f"{int(progress_percent)}%"
+    return f"{progress_percent:.1f}%"
 
 
 def format_watch_duration_cn(seconds: int) -> str:
@@ -122,28 +158,36 @@ def format_watch_duration_cn(seconds: int) -> str:
 
 
 def evaluate_watch_time_renewal(
-    server: ServerInstance | None, media_user: MediaUser
+    server: ServerInstance | None,
+    media_user: MediaUser,
+    *,
+    global_watch_time_enabled: bool | None = None,
 ) -> WatchTimeRenewalStatus:
     """统一评估指定媒体账号当前周期的时长保活续期开放状态与达标资格
 
+    依次检验全局 ``watch_time:enable``、服务器实例及其单服时长采集 ``enable_watch_time``
+    与保活开关 ``enable_watch_time_renewal``（及门槛 > 0），任一上级关闭均否决保活资格。
+
     Args:
-        server: 所属服务器实例（不存在时按未开放保活处理）
-        media_user: 目标媒体账号实例
+        server: 所属服务器实例（不存在时按未开放保活处理）。
+        media_user: 目标媒体账号实例。
+        global_watch_time_enabled: 全局播放时长开关状态；缺省时读取 ``ConfigRepository`` 缓存。
 
     Returns:
-        包含开放状态、达标标志、门槛/当前秒数及展示文案的 ``WatchTimeRenewalStatus``
+        包含开放状态、达标标志、门槛/当前秒数及展示文案的 ``WatchTimeRenewalStatus``。
     """
+    global_on = (
+        ConfigRepository.is_watch_time_enabled_from_cache()
+        if global_watch_time_enabled is None
+        else global_watch_time_enabled
+    )
     threshold_seconds = (
         max(0, int(server.watch_time_renewal_threshold_seconds or 0))
         if server is not None
         else 0
     )
     current_seconds = max(0, int(media_user.cycle_watch_time_seconds or 0))
-    is_open = bool(
-        server is not None
-        and server.enable_watch_time_renewal
-        and threshold_seconds > 0
-    )
+    is_open = is_watch_time_renewal_open(global_on, server)
     if not is_open:
         return WatchTimeRenewalStatus(
             is_open=False,
@@ -151,21 +195,18 @@ def evaluate_watch_time_renewal(
             threshold_seconds=threshold_seconds,
             current_seconds=current_seconds,
             status_text="当前服务器未开放保活续期",
+            progress_percent=None,
         )
 
     is_eligible = current_seconds >= threshold_seconds
-    remaining_seconds = max(0, threshold_seconds - current_seconds)
+    progress_percent = calculate_watch_progress_percent(
+        current_seconds, threshold_seconds
+    )
+    pct_label = _format_watch_progress_percent(progress_percent)
     if is_eligible:
-        status_text = (
-            f"已达标（{format_watch_duration_cn(current_seconds)} / "
-            f"{format_watch_duration_cn(threshold_seconds)}，可免积分续期）"
-        )
+        status_text = f"观看度 {pct_label}（已达标，可免费保活续期）"
     else:
-        status_text = (
-            f"未达标（{format_watch_duration_cn(current_seconds)} / "
-            f"{format_watch_duration_cn(threshold_seconds)}，还差 "
-            f"{format_watch_duration_cn(remaining_seconds)}）"
-        )
+        status_text = f"观看度 {pct_label}（未达标）"
 
     return WatchTimeRenewalStatus(
         is_open=True,
@@ -173,6 +214,7 @@ def evaluate_watch_time_renewal(
         threshold_seconds=threshold_seconds,
         current_seconds=current_seconds,
         status_text=status_text,
+        progress_percent=progress_percent,
     )
 
 
@@ -1972,6 +2014,7 @@ class WatchTimeService:
             本次成功关闭的活跃会话快照条数。
         """
         now = self._now()
+        policy = await self._load_policy()
         stmt = (
             select(MediaPlaybackSession.user_id, MediaPlaybackSession.server_id)
             .where(MediaPlaybackSession.is_active.is_(True))
@@ -1991,6 +2034,13 @@ class WatchTimeService:
         for uid, sid in account_pairs:
             lock = get_account_lock(uid, sid)
             async with lock:
+                fresh_mu = (
+                    await self.session.execute(
+                        select(MediaUser)
+                        .where(MediaUser.id == uid, MediaUser.server_id == sid)
+                        .execution_options(populate_existing=True)
+                    )
+                ).scalar_one_or_none()
                 rows_stmt = (
                     select(MediaPlaybackSession)
                     .where(
@@ -1998,15 +2048,21 @@ class WatchTimeService:
                         MediaPlaybackSession.server_id == sid,
                         MediaPlaybackSession.is_active.is_(True),
                     )
+                    .order_by(MediaPlaybackSession.last_effective_at.asc())
                     .execution_options(populate_existing=True)
                 )
                 rows = (await self.session.execute(rows_stmt)).scalars().all()
                 for row in rows:
-                    row.is_active = False
-                    row.is_paused = False
-                    row.ended_at = now
+                    await self._close_and_settle_grace_capped(
+                        media_user=fresh_mu,
+                        sess=row,
+                        grace_seconds=policy.grace_seconds,
+                        daily_cap_seconds=policy.daily_cap_seconds,
+                        now=now,
+                    )
                     closed_count += 1
-                await self.session.flush()
+                    # 多端并发会话逐条刷新已合并区间，保证下一条通过 _subtract_intervals 去重时不重复叠加
+                    await self.session.flush()
                 if commit:
                     await self.session.commit()
         return closed_count

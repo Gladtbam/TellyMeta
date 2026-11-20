@@ -102,26 +102,59 @@ class TelegramRepository:
         await self.session.refresh(user)
         return user
 
-    async def update_warn_and_score(
-        self, user_id: int, increment: int = 1
+    async def _apply_warning_update(
+        self, user_id: int, increment: int = 1, *, deduct_score: bool
     ) -> TelegramUser:
-        """更新用户警告次数
+        """持久化累加用户警告次数，并按需连带扣减积分。
+
         Args:
-            user_id (int): Telegram用户ID
-            increment (int, optional): 增加的警告次数，默认为1。可以为负数以减少警告次数。
+            user_id: Telegram 用户 ID。
+            increment: 增加的警告次数（默认为 ``1``）。
+            deduct_score: 为 ``True`` 时按更新后的累计警告次数扣减积分。
+
         Returns:
-            TelegramUser: 更新后的用户对象
+            更新后的 ``TelegramUser`` 对象。
         """
         user = await self.get_or_create(user_id)
-
         user.warning_count += increment
-        user.score -= user.warning_count
-        if user.score < 0:
-            user.score = 0
+        if deduct_score:
+            user.score -= user.warning_count
+            if user.score < 0:
+                user.score = 0
 
         await self.session.commit()
         await self.session.refresh(user)
         return user
+
+    async def update_warn_and_score(
+        self, user_id: int, increment: int = 1
+    ) -> TelegramUser:
+        """更新用户警告次数并按当前警告次数扣减积分。
+
+        Args:
+            user_id (int): Telegram 用户 ID。
+            increment (int, optional): 增加的警告次数，默认为 ``1``，可为负数以撤销警告。
+
+        Returns:
+            TelegramUser: 更新后的用户对象。
+        """
+        return await self._apply_warning_update(
+            user_id, increment=increment, deduct_score=True
+        )
+
+    async def update_warn_only(self, user_id: int, increment: int = 1) -> TelegramUser:
+        """仅更新用户警告次数，不改动社区积分余额。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            increment: 增加的警告次数，默认为 ``1``。
+
+        Returns:
+            更新后的 ``TelegramUser`` 对象。
+        """
+        return await self._apply_warning_update(
+            user_id, increment=increment, deduct_score=False
+        )
 
     async def update_score(self, user_id: int, score: int) -> TelegramUser:
         """更新用户积分
