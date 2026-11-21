@@ -40,6 +40,7 @@ class ServerRepository:
         traffic_pack_points_fixed: int = 50,
         traffic_pack_points_ratio: float = 0.5,
         traffic_pack_size_gib: float = 10.0,
+        default_user_policy: str | None = None,
         qb_username: str | None = None,
         qb_torrent_limit: int = 43200,
         qb_server_id: int | None = None,
@@ -105,6 +106,7 @@ class ServerRepository:
             traffic_pack_points_fixed=max(1, int(traffic_pack_points_fixed)),
             traffic_pack_points_ratio=max(1e-6, float(traffic_pack_points_ratio)),
             traffic_pack_size_gib=max(1e-6, float(traffic_pack_size_gib)),
+            default_user_policy=default_user_policy,
             qb_username=qb_username,
             qb_torrent_limit=qb_torrent_limit,
             qb_server_id=qb_server_id,
@@ -189,7 +191,7 @@ class ServerRepository:
         if not server:
             return None
 
-        nullable_fields = {"qb_server_id", "qb_username"}
+        nullable_fields = {"qb_server_id", "qb_username", "default_user_policy"}
         for key, value in kwargs.items():
             if hasattr(server, key) and (value is not None or key in nullable_fields):
                 setattr(server, key, value)

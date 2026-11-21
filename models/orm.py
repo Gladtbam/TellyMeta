@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -185,6 +186,8 @@ class ServerInstance(Base):
     traffic_pack_size_gib: Mapped[float] = mapped_column(
         Float, default=10.0, server_default=text("10.0"), nullable=False
     )
+    # 媒体服务器默认账号 UserPolicy 模板（JSON 字符串，按服务器独立配置）
+    default_user_policy: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Radarr/Sonarr 路径映射: JSON 字符串: {"/remote/path": "/local/path"}
     path_mappings: Mapped[str | None] = mapped_column(String(1024), nullable=True)

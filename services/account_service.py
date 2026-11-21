@@ -38,6 +38,11 @@ from core.scheduler_jobs import (
     schedule_traffic_unsuspend_retry,
 )
 from core.telegram_message import TelegramMessage
+from core.user_policy import (
+    build_default_user_policy_patch,
+    merge_user_policy,
+    parse_server_default_user_policy,
+)
 from models.nginx import format_traffic_bytes
 from models.orm import MediaUser, RegistrationMode, ServerInstance, ServerType
 from models.protocols import User
@@ -393,17 +398,37 @@ class AccountService:
         created_media_id: str | None = None
         try:
             media_user_dto, pw = await media_service.create(username)
-            if not media_user_dto:
+            if not media_user_dto or not media_user_dto.Id:
                 await self._rollback_registration_cost(
                     user_id, server_id, reserved_score, reserved_count
                 )
                 return Result(False, "注册失败，无法创建账户，请联系管理员。")
 
-            media_user_id: str = media_user_dto.Id
+            # Jellyfin UserDto.Id 为 UUID 对象，落库与路径拼接前统一归一化为字符串
+            media_user_id: str = str(media_user_dto.Id)
             created_media_id = media_user_id
 
-            # 先应用初始权限/NSFW策略，若失败则尚未写入本地记录，可直接清理外部账户
-            if not server.nsfw_enabled:
+            # 先应用默认 UserPolicy 模板及初始权限/NSFW策略，若失败则尚未写入本地记录，可直接清理外部账户
+            policy_spec = parse_server_default_user_policy(server.default_user_policy)
+            policy_patch = build_default_user_policy_patch(
+                policy_spec, server.server_type
+            )
+            if policy_patch:
+                base_policy = getattr(media_user_dto, "Policy", None)
+                if base_policy is None:
+                    fetched_info, _ = await self._fetch_external_user(
+                        media_service, media_user_id
+                    )
+                    base_policy = fetched_info.Policy if fetched_info else None
+                merged_policy = merge_user_policy(base_policy, policy_patch)
+                await self._apply_nsfw_policy(
+                    media_service,
+                    media_user_id,
+                    server,
+                    enable_nsfw=bool(server.nsfw_enabled),
+                    current_policy=merged_policy,
+                )
+            elif not server.nsfw_enabled:
                 await self._apply_nsfw_policy(
                     media_service, media_user_id, server, enable_nsfw=False
                 )
@@ -572,8 +597,13 @@ class AccountService:
                             - 如果不传 (Register场景)，使用空字典，底层模型会自动用默认值填充其他字段。
             all_libs: 可选，预先获取的媒体库列表，避免批量撤权时重复请求。
         """
-        # 1. 准备基础策略字典
-        policy_dict = current_policy.model_dump() if current_policy else {}
+        # 1. 准备基础策略字典（支持传入已合并的字典或外部 UserPolicy 模型）
+        if isinstance(current_policy, dict):
+            policy_dict = dict(current_policy)
+        elif current_policy is not None:
+            policy_dict = current_policy.model_dump()
+        else:
+            policy_dict = {}
 
         # 2. 修改 NSFW 相关字段
         if enable_nsfw:
@@ -1765,6 +1795,149 @@ class AccountService:
             pending.pop(server_id, None)
 
         return revoked_count, failed_count
+
+    async def sync_server_default_user_policy(self, server_id: int) -> Result:
+        """将指定服务器配置的默认 UserPolicy 同步应用至该服全部存量媒体账号
+
+        逐账号拉取外部当前策略并仅覆盖默认模板声明的允许字段，严格保留每个账号既有的
+        ``IsDisabled``（过期封禁/超流停用）、``IsAdministrator``、NSFW 媒体库授权及认证器字段。
+
+        Args:
+            server_id: 目标媒体服务器实例 ID。
+
+        Returns:
+            包含同步结果、汇总文案与 ``total_count`` / ``synced_count`` / ``skipped_count`` /
+            ``failed_count`` 明细字典的 ``Result`` 对象。
+        """
+        server = await self.server_repo.get_by_id(server_id, fresh=True)
+        if not server:
+            return Result(False, "服务器不存在。", extra_data={"not_found": True})
+        if server.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+            return Result(False, "仅 Emby/Jellyfin 媒体服务器支持同步 UserPolicy。")
+        if not server.is_enabled:
+            return Result(False, "该服务器已停用，请先启用后再同步存量用户。")
+
+        # 提前提取只读标量属性，避免后续 end_clean_read_tx() 回滚过期 ORM 对象引发 MissingGreenlet
+        server_name = str(server.name)
+        server_type = server.server_type
+
+        policy_spec = parse_server_default_user_policy(server.default_user_policy)
+        if not policy_spec.enabled:
+            return Result(False, "当前服务器未启用默认 UserPolicy 配置，无需同步。")
+
+        try:
+            policy_patch = build_default_user_policy_patch(policy_spec, server_type)
+        except ValueError as exc:
+            return Result(False, f"默认 UserPolicy 配置无效: {exc}")
+
+        client = self.media_clients.get(server_id)
+        if not client:
+            return Result(False, f"客户端未运行: {server_name}")
+
+        media_users = await self.media_repo.get_all_by_server_id(server_id)
+        targets = [(int(mu.id), str(mu.media_id)) for mu in media_users]
+        await self.media_repo.end_clean_read_tx()
+
+        total_count = len(targets)
+        if total_count == 0:
+            return Result(
+                True,
+                f"{server_name} 当前暂无存量媒体账号，无需同步。",
+                extra_data={
+                    "total_count": 0,
+                    "synced_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": 0,
+                },
+            )
+
+        synced_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for uid, _media_id in targets:
+            async with get_account_lock(uid, server_id):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, server_id, fresh=True)
+                if fresh_mu is None:
+                    skipped_count += 1
+                    continue
+
+                try:
+                    media_info = await client.get_user_info(fresh_mu.media_id)
+                except HTTPStatusError as exc:
+                    if exc.response.status_code == 404:
+                        skipped_count += 1
+                        logger.info(
+                            "同步默认 UserPolicy 时外部账号已不存在(404)，已跳过: server_id={}, user_id={}, media_id={}",
+                            server_id,
+                            uid,
+                            fresh_mu.media_id,
+                        )
+                    else:
+                        failed_count += 1
+                        logger.error(
+                            "同步默认 UserPolicy 获取外部账户失败: server_id={}, user_id={}, media_id={}, status={}",
+                            server_id,
+                            uid,
+                            fresh_mu.media_id,
+                            exc.response.status_code,
+                        )
+                    continue
+                except (HTTPError, ValueError, TypeError) as exc:
+                    failed_count += 1
+                    logger.error(
+                        "同步默认 UserPolicy 获取外部账户异常: server_id={}, user_id={}, media_id={}, err={}",
+                        server_id,
+                        uid,
+                        fresh_mu.media_id,
+                        exc,
+                    )
+                    continue
+
+                if not isinstance(media_info, User) or media_info.Policy is None:
+                    failed_count += 1
+                    logger.warning(
+                        "同步默认 UserPolicy 失败，外部账户缺少 Policy: server_id={}, user_id={}, media_id={}",
+                        server_id,
+                        uid,
+                        fresh_mu.media_id,
+                    )
+                    continue
+
+                merged_policy = merge_user_policy(media_info.Policy, policy_patch)
+                try:
+                    await client.update_policy(
+                        fresh_mu.media_id, merged_policy, is_none=True
+                    )
+                    synced_count += 1
+                except (HTTPError, ValueError, TypeError) as exc:
+                    failed_count += 1
+                    logger.error(
+                        "同步默认 UserPolicy 更新外部策略失败: server_id={}, user_id={}, media_id={}, err={}",
+                        server_id,
+                        uid,
+                        fresh_mu.media_id,
+                        exc,
+                    )
+
+        parts = [f"成功 {synced_count} 个"]
+        if skipped_count > 0:
+            parts.append(f"跳过 {skipped_count} 个（外部不存在或已清理）")
+        if failed_count > 0:
+            parts.append(f"失败 {failed_count} 个")
+        summary_msg = f"已同步 {server_name} 的默认 UserPolicy 到存量账号（总计 {total_count} 个：{'，'.join(parts)}）。"
+        overall_ok = not (synced_count == 0 and failed_count > 0)
+        return Result(
+            overall_ok,
+            summary_msg,
+            extra_data={
+                "total_count": total_count,
+                "synced_count": synced_count,
+                "skipped_count": skipped_count,
+                "failed_count": failed_count,
+            },
+        )
 
     async def forget_password(self, user_id: int, server_id: int):
         """重置密码

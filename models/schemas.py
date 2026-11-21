@@ -9,7 +9,10 @@ from core.economy_policy import (
     DEFAULT_TRAFFIC_PACK_COST_SCORE,
     DEFAULT_TRAFFIC_PACK_SIZE_GIB,
 )
+from core.user_policy import DefaultUserPolicySpec
 from repositories.config_repo import DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+
+DefaultUserPolicyDto = DefaultUserPolicySpec
 
 
 def _validate_positive_pack_size_gib(value: float | None) -> float | None:
@@ -136,6 +139,9 @@ class ServerDto(BaseModel):
     traffic_pack_points_fixed: int = Field(default=50, ge=1)
     traffic_pack_points_ratio: float = Field(default=0.5, gt=0.0)
     traffic_pack_size_gib: float = Field(default=10.0, gt=0.0)
+    default_user_policy: DefaultUserPolicyDto = Field(
+        default_factory=DefaultUserPolicyDto
+    )
     tos: str | None = None
 
     # 高级配置
@@ -172,6 +178,7 @@ class ServerCreate(BaseModel):
     traffic_pack_points_fixed: int = Field(default=50, ge=1)
     traffic_pack_points_ratio: float = Field(default=0.5, gt=0.0)
     traffic_pack_size_gib: float = Field(default=10.0, gt=0.0)
+    default_user_policy: DefaultUserPolicyDto | None = None
     qb_username: str | None = None
     qb_torrent_limit: int = 43200
     qb_server_id: int | None = None
@@ -226,6 +233,7 @@ class ServerUpdate(BaseModel):
     traffic_pack_points_fixed: int | None = Field(default=None, ge=1)
     traffic_pack_points_ratio: float | None = Field(default=None, gt=0.0)
     traffic_pack_size_gib: float | None = Field(default=None, gt=0.0)
+    default_user_policy: DefaultUserPolicyDto | None = None
     tos: str | None = None
 
     @field_validator("traffic_pack_size_gib")
@@ -634,3 +642,14 @@ class AdminActionResponse(BaseModel):
     traffic_total_remaining_bytes: int | None = None
     is_traffic_suspended: bool | None = None
     unsuspended: bool = False
+
+
+class DefaultUserPolicySyncResponse(BaseModel):
+    """管理员将单服默认 UserPolicy 同步至存量媒体账号的响应"""
+
+    success: bool
+    message: str
+    total_count: int = 0
+    synced_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0

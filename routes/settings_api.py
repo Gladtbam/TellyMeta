@@ -1,7 +1,7 @@
 import contextlib
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.radarr_client import RadarrClient
@@ -15,12 +15,18 @@ from core.dependencies import (
     get_tmdb_client,
     get_tvdb_client,
 )
+from core.user_policy import (
+    parse_server_default_user_policy,
+    serialize_server_default_user_policy,
+)
 from core.webapp_auth import validate_admin_access
 from models.orm import ServerInstance, ServerType
 from models.schemas import (
     AdminDto,
     ArrServerDto,
     BindingUpdate,
+    DefaultUserPolicyDto,
+    DefaultUserPolicySyncResponse,
     LibraryDto,
     LlmConfigUpdateDto,
     MetadataConfigUpdateDto,
@@ -65,6 +71,9 @@ def mask_server_data(server: ServerInstance) -> dict:
             for remote, local in pm_dict.items():
                 mappings_list.append({"remote": remote, "local": local})
     data["path_mappings"] = mappings_list
+    data["default_user_policy"] = parse_server_default_user_policy(
+        data.get("default_user_policy")
+    ).model_dump()
     return data
 
 
@@ -497,6 +506,22 @@ async def create_server(
         包含成功状态与提示文案的字典。
     """
     service = SettingsServices(request.app, session)
+    serialized_default_policy: str | None = None
+    if data.default_user_policy is not None:
+        if data.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+            if data.default_user_policy.enabled or data.default_user_policy.extra_json:
+                raise HTTPException(
+                    status_code=400,
+                    detail="仅 Emby/Jellyfin 媒体服务器支持配置默认 UserPolicy",
+                )
+        else:
+            try:
+                serialized_default_policy = serialize_server_default_user_policy(
+                    data.default_user_policy, data.server_type
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     result = await service.add_server(
         data.name,
         data.server_type,
@@ -519,6 +544,7 @@ async def create_server(
         traffic_pack_points_fixed=data.traffic_pack_points_fixed,
         traffic_pack_points_ratio=data.traffic_pack_points_ratio,
         traffic_pack_size_gib=data.traffic_pack_size_gib,
+        default_user_policy=serialized_default_policy,
         qb_username=data.qb_username,
         qb_torrent_limit=data.qb_torrent_limit,
         qb_server_id=data.qb_server_id,
@@ -610,6 +636,21 @@ async def update_server(
                     detail="绑定的 qBittorrent 服务器不存在或类型不匹配",
                 )
         update_dict["qb_server_id"] = data.qb_server_id
+
+    if data.default_user_policy is not None:
+        if not current_server:
+            raise HTTPException(status_code=404, detail="服务器不存在")
+        if current_server.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+            raise HTTPException(
+                status_code=400,
+                detail="仅 Emby/Jellyfin 媒体服务器支持配置默认 UserPolicy",
+            )
+        try:
+            update_dict["default_user_policy"] = serialize_server_default_user_policy(
+                data.default_user_policy, current_server.server_type
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # 路径映射 (List -> JSON)：仅当请求显式传入 path_mappings 时覆盖，避免局部 PATCH 误清空既有映射并触发客户端重载
     if "path_mappings" in data.model_fields_set and data.path_mappings is not None:
@@ -723,6 +764,55 @@ async def update_server(
             pending.pop(server_id, None)
 
     return {"success": True, "message": f"配置已保存{traffic_release_note}"}
+
+
+@router.post(
+    "/servers/{server_id}/sync_default_policy",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=DefaultUserPolicySyncResponse,
+)
+async def sync_server_default_policy(
+    request: Request,
+    server_id: int,
+    payload: DefaultUserPolicyDto | None = Body(default=None),
+    session: AsyncSession = Depends(get_db),
+):
+    """保存（可选）并将指定服务器的默认 UserPolicy 同步应用至全部存量媒体账号"""
+    repo = ServerRepository(session)
+    server = await repo.get_by_id(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="服务器不存在")
+    if server.server_type not in (ServerType.EMBY, ServerType.JELLYFIN):
+        raise HTTPException(
+            status_code=400,
+            detail="仅 Emby/Jellyfin 媒体服务器支持同步 UserPolicy",
+        )
+
+    if payload is not None:
+        try:
+            serialized = serialize_server_default_user_policy(
+                payload, server.server_type
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await repo.update_basic_info(server_id, default_user_policy=serialized)
+
+    result = await AccountService(request.app, session).sync_server_default_user_policy(
+        server_id
+    )
+    extra = result.extra_data if isinstance(result.extra_data, dict) else {}
+    if not result.success and "total_count" not in extra:
+        status = 404 if extra.get("not_found") else 400
+        raise HTTPException(status_code=status, detail=result.message)
+
+    return DefaultUserPolicySyncResponse(
+        success=result.success,
+        message=result.message,
+        total_count=int(extra.get("total_count", 0)),
+        synced_count=int(extra.get("synced_count", 0)),
+        skipped_count=int(extra.get("skipped_count", 0)),
+        failed_count=int(extra.get("failed_count", 0)),
+    )
 
 
 @router.delete(

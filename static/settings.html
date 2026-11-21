@@ -1156,6 +1156,67 @@
                             </div>
                         </div>
                     </div>
+                    <div id="srv-default-policy-section" style="margin-top:15px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
+                        <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:15px;">
+                            <span>自定义默认 UserPolicy</span>
+                            <label class="switch"><input type="checkbox" id="srv-default-policy-enabled" onchange="updateServerPolicyFields()"><span
+                                    class="slider"></span></label>
+                        </div>
+                        <div id="srv-default-policy-group" style="display:none; padding-left:10px; border-left:2px solid var(--hint-color); margin-bottom:15px;">
+                            <div class="section-hint" style="margin:0 0 10px 0;">
+                                注册新账号时自动应用以下默认策略；在弹窗底部点击「保存并同步到存量用户」可应用到现有账号（不会覆盖管理员权限、账号禁用态及 NSFW 媒体库范围）。
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许媒体播放</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-media-playback"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许视频转码</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-video-transcoding"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许音频转码</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-audio-transcoding"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许转封装 (Remux)</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-playback-remuxing"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许下载媒体</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-content-downloading"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许远程访问</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-remote-access"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>允许远程控制他人设备</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-remote-control"><span class="slider"></span></label>
+                            </div>
+                            <div class="item" style="padding:0; border:none; background:transparent; margin-bottom:12px;">
+                                <span>在登录页隐藏用户</span>
+                                <label class="switch"><input type="checkbox" id="srv-policy-hidden"><span class="slider"></span></label>
+                            </div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="form-label">远程码率上限 (Mbps, 0=不限)</label>
+                                    <input type="number" class="form-input" id="srv-policy-max-bitrate-mbps" min="0" step="any" placeholder="0">
+                                </div>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="form-label" id="srv-policy-streams-label">最大并发会话数 (0=不限)</label>
+                                    <input type="number" class="form-input" id="srv-policy-max-streams" min="0" step="1" placeholder="0">
+                                </div>
+                            </div>
+                            <details id="srv-policy-extra-details" style="margin-top:8px;">
+                                <summary style="cursor:pointer; font-size:13px; color:var(--link-color); margin-bottom:8px;">高级 JSON 覆盖（可选）</summary>
+                                <textarea class="form-input" id="srv-policy-extra-json" rows="3" placeholder='{"EnablePublicSharing": false, "EnableSyncTranscoding": false}'></textarea>
+                                <div class="section-hint" style="margin:4px 0 0 0;">
+                                    仅填写需额外覆盖的 Emby/Jellyfin UserPolicy 字段；禁止覆盖 IsAdministrator、IsDisabled、文件夹授权及认证器字段。
+                                </div>
+                            </details>
+                        </div>
+                    </div>
                     <button type="button" class="btn btn-sm" id="srv-nsfw-btn" onclick="openNsfwModal()">🔞 管理 NSFW 媒体库</button>
                     <button type="button" class="btn btn-sm" id="srv-library-btn" style="margin-top:10px" onclick="openLibraryModal()">📂
                         媒体库绑定</button>
@@ -1198,8 +1259,11 @@
                     <button type="button" class="btn btn-danger" onclick="deleteServer()">删除此服务器</button>
                 </div>
 
-                <div style="margin-top:20px;">
-                    <button type="submit" class="btn btn-primary" id="btn-save">保存配置</button>
+                <div id="server-modal-actions" style="margin-top:20px; display:flex; gap:10px;">
+                    <button type="submit" class="btn btn-primary" id="btn-save" style="flex:1; margin-top:0; display:inline-flex; align-items:center; justify-content:center; padding:14px 12px; font-size:16px;">保存配置</button>
+                    <button type="button" class="btn" id="srv-sync-default-policy-btn"
+                        style="display:none; flex:1.5; margin-top:0; background-color:var(--secondary-bg-color); border:1px solid var(--link-color); align-items:center; justify-content:center; padding:14px 10px; font-size:15px; font-weight:500; white-space:nowrap;"
+                        onclick="syncDefaultUserPolicy()">🔄 保存并同步到存量用户</button>
                 </div>
             </form>
         </div>
@@ -1778,7 +1842,31 @@
             const list = document.getElementById('server-list');
             list.innerHTML = data.length ? '' : '<div class="state-text">无服务器</div>';
             data.forEach(s => {
-                list.innerHTML += `<div class="item" onclick='openEditServer(${JSON.stringify(s)})'><div class="item-content"><span class="item-title">${s.name}</span><span class="item-subtitle">${s.server_type} • ${s.url}</span></div><span class="item-status" style="color:${s.is_enabled ? '#34c759' : '#ff3b30'}">●</span><div style="color:var(--hint-color);margin-left:8px">›</div></div>`;
+                const item = document.createElement('div');
+                item.className = 'item';
+                item.onclick = () => openEditServer(s);
+                const content = document.createElement('div');
+                content.className = 'item-content';
+                const title = document.createElement('span');
+                title.className = 'item-title';
+                title.textContent = s.name;
+                const subtitle = document.createElement('span');
+                subtitle.className = 'item-subtitle';
+                subtitle.textContent = `${s.server_type} • ${s.url}`;
+                content.appendChild(title);
+                content.appendChild(subtitle);
+                const status = document.createElement('span');
+                status.className = 'item-status';
+                status.style.color = s.is_enabled ? '#34c759' : '#ff3b30';
+                status.textContent = '●';
+                const arrow = document.createElement('div');
+                arrow.style.color = 'var(--hint-color)';
+                arrow.style.marginLeft = '8px';
+                arrow.textContent = '›';
+                item.appendChild(content);
+                item.appendChild(status);
+                item.appendChild(arrow);
+                list.appendChild(item);
             });
         }
 
@@ -1860,6 +1948,22 @@
                 setDisplay('srv-traffic-pack-fixed-group', packMode === 'fixed');
                 setDisplay('srv-traffic-pack-ratio-group', packMode === 'ratio');
             }
+
+            const defaultPolicyOn = !!document.getElementById('srv-default-policy-enabled')?.checked;
+            const srvType = document.getElementById('srv-type')?.value || '';
+            const isMedia = ['emby', 'jellyfin'].includes(srvType);
+            const canSyncPolicy = isMedia && defaultPolicyOn && currentServerId !== null;
+            setDisplay('srv-default-policy-section', isMedia);
+            setDisplay('srv-default-policy-group', isMedia && defaultPolicyOn);
+            // 编辑媒体服务器且开启自定义默认 UserPolicy 时，底部并排展示「仅保存」与「保存并同步到存量用户」
+            const saveBtn = document.getElementById('btn-save');
+            if (saveBtn) {
+                saveBtn.textContent = canSyncPolicy ? '仅保存' : '保存配置';
+            }
+            const syncBtn = document.getElementById('srv-sync-default-policy-btn');
+            if (syncBtn) {
+                syncBtn.style.display = canSyncPolicy ? 'inline-flex' : 'none';
+            }
         }
 
         /**
@@ -1892,9 +1996,47 @@
                 ? 'Emby 不支持自定义请求头，已直接在上方 Webhook URL 中附带 ?token= 鉴权参数。'
                 : '请配合下方 Header 鉴权信息使用（推荐），URL 本身不包含密钥。';
             document.getElementById('srv-key-label').textContent = isQb ? '密码 / API Key' : 'API Key';
+            const streamsLabel = document.getElementById('srv-policy-streams-label');
+            if (streamsLabel) {
+                streamsLabel.textContent = type === 'jellyfin'
+                    ? '最大并发会话数 (MaxActiveSessions, 0=不限)'
+                    : '最大并发会话数 (SimultaneousStreamLimit, 0=不限)';
+            }
             if (isQb) {
                 switchTab('basic');
             }
+            updateServerPolicyFields();
+        }
+
+        /**
+         * 将默认 UserPolicy 表单控件填充为指定配置对象或默认值。
+         * @param {object|null|undefined} policyCfg 默认策略 DTO 对象。
+         */
+        function applyDefaultUserPolicyForm(policyCfg = null) {
+            const cfg = policyCfg || {};
+            const setCheck = (id, defVal) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = cfg[defVal.key] !== undefined ? Boolean(cfg[defVal.key]) : defVal.val;
+            };
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val;
+            };
+            setCheck('srv-default-policy-enabled', { key: 'enabled', val: false });
+            setCheck('srv-policy-media-playback', { key: 'enable_media_playback', val: true });
+            setCheck('srv-policy-video-transcoding', { key: 'enable_video_transcoding', val: true });
+            setCheck('srv-policy-audio-transcoding', { key: 'enable_audio_transcoding', val: true });
+            setCheck('srv-policy-playback-remuxing', { key: 'enable_playback_remuxing', val: true });
+            setCheck('srv-policy-content-downloading', { key: 'enable_content_downloading', val: true });
+            setCheck('srv-policy-remote-access', { key: 'enable_remote_access', val: true });
+            setCheck('srv-policy-remote-control', { key: 'enable_remote_control', val: false });
+            setCheck('srv-policy-hidden', { key: 'is_hidden', val: true });
+            setVal('srv-policy-max-bitrate-mbps', cfg.max_bitrate_mbps ?? 0);
+            setVal('srv-policy-max-streams', cfg.max_concurrent_streams ?? 0);
+            const extraText = (cfg.extra_json || '').trim();
+            setVal('srv-policy-extra-json', extraText);
+            const detailsEl = document.getElementById('srv-policy-extra-details');
+            if (detailsEl) detailsEl.open = Boolean(extraText);
         }
 
         // --- Server Edit ---
@@ -1928,6 +2070,7 @@
             if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = 10;
             if (document.getElementById('srv-allow-nfo')) document.getElementById('srv-allow-nfo').checked = true;
             if (document.getElementById('path-mappings-list')) document.getElementById('path-mappings-list').innerHTML = '';
+            applyDefaultUserPolicyForm(null);
 
             fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
             fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
@@ -2030,6 +2173,7 @@
                 if (document.getElementById('srv-traffic-pack-fixed')) document.getElementById('srv-traffic-pack-fixed').value = s.traffic_pack_points_fixed ?? 50;
                 if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = s.traffic_pack_points_ratio ?? 0.5;
                 if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
+                applyDefaultUserPolicyForm(s.default_user_policy || null);
                 onRegModeChange();
                 updateServerPolicyFields();
             } else {
@@ -2186,13 +2330,50 @@
             closeModal('binding-modal'); openLibraryModal();
         }
 
-        // --- Save Server ---
         /**
-         * 提交新增或更新服务器表单，仅携带当前处于展开可见状态的子策略与定价字段，实现无损保存。
-         * @param {SubmitEvent} e 表单提交事件。
+         * 收集并校验当前服务器默认 UserPolicy 表单配置（含可选高级 JSON 语法预检）。
+         * @returns {object} 可直接提交至后端接口的 DefaultUserPolicyDto 对象。
          */
-        async function handleServerSubmit(e) {
-            e.preventDefault();
+        function collectDefaultUserPolicyPayload() {
+            const extraRaw = (document.getElementById('srv-policy-extra-json')?.value || '').trim();
+            if (extraRaw) {
+                let parsed;
+                try {
+                    parsed = JSON.parse(extraRaw);
+                } catch (err) {
+                    throw new Error(`高级 JSON 格式无效: ${err.message}`);
+                }
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('高级 JSON 覆盖必须为 JSON 对象（例如 {"EnablePublicSharing": false}）');
+                }
+            }
+            const bitrateVal = parseFloat(document.getElementById('srv-policy-max-bitrate-mbps')?.value || '0');
+            const streamsVal = parseInt(document.getElementById('srv-policy-max-streams')?.value || '0', 10);
+            return {
+                enabled: Boolean(document.getElementById('srv-default-policy-enabled')?.checked),
+                enable_media_playback: Boolean(document.getElementById('srv-policy-media-playback')?.checked),
+                enable_video_transcoding: Boolean(document.getElementById('srv-policy-video-transcoding')?.checked),
+                enable_audio_transcoding: Boolean(document.getElementById('srv-policy-audio-transcoding')?.checked),
+                enable_playback_remuxing: Boolean(document.getElementById('srv-policy-playback-remuxing')?.checked),
+                enable_content_downloading: Boolean(document.getElementById('srv-policy-content-downloading')?.checked),
+                enable_remote_access: Boolean(document.getElementById('srv-policy-remote-access')?.checked),
+                enable_remote_control: Boolean(document.getElementById('srv-policy-remote-control')?.checked),
+                is_hidden: Boolean(document.getElementById('srv-policy-hidden')?.checked),
+                max_bitrate_mbps: Number.isFinite(bitrateVal) && bitrateVal >= 0 ? bitrateVal : 0,
+                max_concurrent_streams: Number.isFinite(streamsVal) && streamsVal >= 0 ? streamsVal : 0,
+                extra_json: extraRaw
+            };
+        }
+
+        /**
+         * 校验表单并收集当前弹窗的完整服务器提交载荷，供「仅保存」与「保存并同步到存量用户」复用。
+         * @returns {{type: string, payload: object}|null} 校验通过返回类型与请求体，否则返回 null。
+         */
+        function buildServerFormPayload() {
+            const form = document.getElementById('server-form');
+            if (form && !form.reportValidity()) {
+                return null;
+            }
 
             const isSectionVisible = (id) => {
                 const el = document.getElementById(id);
@@ -2259,6 +2440,12 @@
                         }
                     }
                 }
+                try {
+                    payload.default_user_policy = collectDefaultUserPolicyPayload();
+                } catch (err) {
+                    tg.showAlert('❌ ' + err.message);
+                    return null;
+                }
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
                 payload.qb_torrent_limit = parseInt(document.getElementById('srv-qb-limit').value) || 43200;
@@ -2273,17 +2460,94 @@
                 })).filter(m => m.remote && m.local);
             }
 
-            let res = null;
-            if (currentServerId) {
-                res = await api(`/servers/${currentServerId}`, 'PATCH', payload);
-            } else {
-                payload.server_type = type;
-                res = await api('/servers', 'POST', payload);
+            return { type, payload };
+        }
+
+        /**
+         * 保存弹窗中的完整服务器配置，并将当前默认 UserPolicy 同步应用到该服务器全部存量媒体账号。
+         */
+        async function syncDefaultUserPolicy() {
+            if (!currentServerId) return;
+            const built = buildServerFormPayload();
+            if (!built) return;
+            const { payload } = built;
+            const policyPayload = payload.default_user_policy;
+            if (!policyPayload || !policyPayload.enabled) {
+                tg.showAlert('请先开启「自定义默认 UserPolicy」开关后再同步存量用户。');
+                return;
             }
-            closeModal('server-modal');
-            loadData();
-            if (res && res.message) {
-                tg.showAlert('✅ ' + res.message);
+            if (!confirm('确认保存当前完整服务器配置，并将默认 UserPolicy 同步应用到该服务器的全部存量用户吗？\n（不会覆盖各账号当前禁用状态、管理员权限及 NSFW 媒体库范围）')) {
+                return;
+            }
+
+            const saveBtn = document.getElementById('btn-save');
+            const syncBtn = document.getElementById('srv-sync-default-policy-btn');
+            const origText = syncBtn ? syncBtn.textContent : '';
+            if (saveBtn) saveBtn.disabled = true;
+            if (syncBtn) {
+                syncBtn.disabled = true;
+                syncBtn.textContent = '正在保存并同步...';
+            }
+            let savedOk = false;
+            try {
+                // 先提交完整服务器修改并等待客户端重载完成，再执行存量账号策略同步
+                const saveRes = await api(`/servers/${currentServerId}`, 'PATCH', payload);
+                savedOk = true;
+                const syncRes = await api(`/servers/${currentServerId}/sync_default_policy`, 'POST', policyPayload);
+                closeModal('server-modal');
+                await loadData();
+                const prefix = syncRes && syncRes.success ? '✅ ' : '⚠️ ';
+                const extraNote = (saveRes && saveRes.message && saveRes.message !== '配置已保存')
+                    ? `\n（${saveRes.message}）`
+                    : '';
+                tg.showAlert(prefix + (syncRes?.message || '同步完成') + extraNote);
+            } catch (err) {
+                if (savedOk) {
+                    // 服务器完整配置已落库但同步失败时，刷新页面数据并保留弹窗方便排查
+                    await loadData();
+                }
+            } finally {
+                if (saveBtn) saveBtn.disabled = false;
+                if (syncBtn) {
+                    syncBtn.disabled = false;
+                    syncBtn.textContent = origText || '🔄 保存并同步到存量用户';
+                }
+            }
+        }
+
+        // --- Save Server ---
+        /**
+         * 提交新增或更新服务器表单，仅保存配置（不批量同步存量账号 UserPolicy）。
+         * @param {SubmitEvent} e 表单提交事件。
+         */
+        async function handleServerSubmit(e) {
+            e.preventDefault();
+            const built = buildServerFormPayload();
+            if (!built) return;
+            const { type, payload } = built;
+
+            const saveBtn = document.getElementById('btn-save');
+            const syncBtn = document.getElementById('srv-sync-default-policy-btn');
+            if (saveBtn) saveBtn.disabled = true;
+            if (syncBtn) syncBtn.disabled = true;
+            try {
+                let res = null;
+                if (currentServerId) {
+                    res = await api(`/servers/${currentServerId}`, 'PATCH', payload);
+                } else {
+                    payload.server_type = type;
+                    res = await api('/servers', 'POST', payload);
+                }
+                closeModal('server-modal');
+                loadData();
+                if (res && res.message) {
+                    tg.showAlert('✅ ' + res.message);
+                }
+            } catch (err) {
+                // api() 已弹窗提示服务端错误
+            } finally {
+                if (saveBtn) saveBtn.disabled = false;
+                if (syncBtn) syncBtn.disabled = false;
             }
         }
 
