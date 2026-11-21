@@ -124,19 +124,20 @@ class EmbyClient(
     async def update_policy(
         self, user_id: str, policy: dict[str, Any], is_none: bool = False
     ) -> None:
-        """更新用户策略。
+        """更新 Emby 用户策略。
+
         Args:
-            user_id (str): Emby 用户的唯一标识符。
-            policy (dict): 用户策略字典。
-            is_none (bool): 是否包含 None 值，默认为 False。
-        Returns:
-            bool: 更新是否成功。
+            user_id: Emby 用户的唯一标识符。
+            policy: 用户策略字典。
+            is_none: 为 ``True`` 时剔除 ``None`` 字段并保留其余显式默认值；为 ``False`` 时仅序列化已设置字段。
         """
         url = f"/Users/{user_id}/Policy"
-        if is_none:
-            payload = UserPolicy(**policy).model_dump(exclude_none=True)
-        else:
-            payload = UserPolicy(**policy).model_dump(exclude_unset=True)
+        # 使用 mode="json" 保证枚举、时间等字段稳定序列化为 JSON 原生类型
+        payload = UserPolicy(**policy).model_dump(
+            exclude_none=is_none,
+            exclude_unset=not is_none,
+            mode="json",
+        )
 
         await self.post(url, json=payload)
 
