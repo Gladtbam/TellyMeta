@@ -1884,6 +1884,61 @@
         }
 
         let serverFreeRequestOverride = false;
+        let initialServerNsfwEnabled = null;
+        let initialDefaultUserPolicySignature = null;
+
+        /**
+         * 读取默认 UserPolicy 表单控件状态并生成规范化签名，用于判断管理员是否改动过默认策略。
+         * @returns {{enabled: boolean, signature: string}} 当前启用状态与配置签名。
+         */
+        function getDefaultUserPolicySnapshot() {
+            const parseNum = (id, isInt) => {
+                const raw = (document.getElementById(id)?.value ?? '').trim();
+                const parsed = isInt ? parseInt(raw, 10) : parseFloat(raw);
+                return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+            };
+            const extraRaw = (document.getElementById('srv-policy-extra-json')?.value || '').trim();
+            let normalizedExtra = extraRaw;
+            if (extraRaw) {
+                try {
+                    const parsed = JSON.parse(extraRaw);
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        // 对合法 JSON 对象按键名排序归一化，避免缩进或键顺序差异误判为已改动
+                        const sorted = {};
+                        Object.keys(parsed).sort().forEach(k => { sorted[k] = parsed[k]; });
+                        normalizedExtra = JSON.stringify(sorted);
+                    }
+                } catch (_err) {
+                    // JSON 尚未输入完整时保留原始文本参与对比
+                }
+            }
+            const state = {
+                enabled: Boolean(document.getElementById('srv-default-policy-enabled')?.checked),
+                enable_media_playback: Boolean(document.getElementById('srv-policy-media-playback')?.checked),
+                enable_video_transcoding: Boolean(document.getElementById('srv-policy-video-transcoding')?.checked),
+                enable_audio_transcoding: Boolean(document.getElementById('srv-policy-audio-transcoding')?.checked),
+                enable_playback_remuxing: Boolean(document.getElementById('srv-policy-playback-remuxing')?.checked),
+                enable_content_downloading: Boolean(document.getElementById('srv-policy-content-downloading')?.checked),
+                enable_remote_access: Boolean(document.getElementById('srv-policy-remote-access')?.checked),
+                enable_remote_control: Boolean(document.getElementById('srv-policy-remote-control')?.checked),
+                is_hidden: Boolean(document.getElementById('srv-policy-hidden')?.checked),
+                max_bitrate_mbps: parseNum('srv-policy-max-bitrate-mbps', false),
+                max_concurrent_streams: parseNum('srv-policy-max-streams', true),
+                extra_json: normalizedExtra
+            };
+            return { enabled: state.enabled, signature: JSON.stringify(state) };
+        }
+
+        /**
+         * 判断编辑模式下当前默认 UserPolicy 表单是否相对初始配置发生过改动。
+         * @returns {boolean} 已修改返回 true，未修改或新建模式返回 false。
+         */
+        function isDefaultUserPolicyDirty() {
+            if (currentServerId === null || initialDefaultUserPolicySignature === null) {
+                return false;
+            }
+            return getDefaultUserPolicySnapshot().signature !== initialDefaultUserPolicySignature;
+        }
 
         /**
          * 一键将当前服务器求片定价设为 0 积分免费求片模式。
@@ -1952,10 +2007,10 @@
             const defaultPolicyOn = !!document.getElementById('srv-default-policy-enabled')?.checked;
             const srvType = document.getElementById('srv-type')?.value || '';
             const isMedia = ['emby', 'jellyfin'].includes(srvType);
-            const canSyncPolicy = isMedia && defaultPolicyOn && currentServerId !== null;
+            const canSyncPolicy = isMedia && defaultPolicyOn && isDefaultUserPolicyDirty();
             setDisplay('srv-default-policy-section', isMedia);
             setDisplay('srv-default-policy-group', isMedia && defaultPolicyOn);
-            // 编辑媒体服务器且开启自定义默认 UserPolicy 时，底部并排展示「仅保存」与「保存并同步到存量用户」
+            // 仅在编辑媒体服务器且修改过默认 UserPolicy（总开关开启）时，底部才显示「仅保存」与「保存并同步到存量用户」
             const saveBtn = document.getElementById('btn-save');
             if (saveBtn) {
                 saveBtn.textContent = canSyncPolicy ? '仅保存' : '保存配置';
@@ -2046,6 +2101,8 @@
         function openAddServerModal() {
             currentServerId = null;
             serverFreeRequestOverride = false;
+            initialServerNsfwEnabled = null;
+            initialDefaultUserPolicySignature = null;
             document.getElementById('server-form').reset();
             document.getElementById('srv-type').disabled = false;
             document.getElementById('srv-enabled').checked = true;
@@ -2089,6 +2146,8 @@
         function openEditServer(s) {
             currentServerId = s.id;
             serverFreeRequestOverride = false;
+            initialServerNsfwEnabled = null;
+            initialDefaultUserPolicySignature = null;
             document.getElementById('srv-name').value = s.name;
             document.getElementById('srv-type').value = s.server_type;
             document.getElementById('srv-type').disabled = true;
@@ -2150,6 +2209,7 @@
                 document.getElementById('srv-code-days').value = s.code_expiry_days;
                 document.getElementById('srv-tos').value = s.tos || '';
                 document.getElementById('srv-nsfw').checked = s.nsfw_enabled;
+                initialServerNsfwEnabled = Boolean(s.nsfw_enabled);
                 if (document.getElementById('srv-subtitle-upload')) document.getElementById('srv-subtitle-upload').checked = s.allow_subtitle_upload;
                 if (document.getElementById('srv-request')) document.getElementById('srv-request').checked = Boolean(s.allow_request);
                 if (document.getElementById('srv-request-mode')) document.getElementById('srv-request-mode').value = s.request_points_mode || 'fixed';
@@ -2174,6 +2234,7 @@
                 if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = s.traffic_pack_points_ratio ?? 0.5;
                 if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
                 applyDefaultUserPolicyForm(s.default_user_policy || null);
+                initialDefaultUserPolicySignature = getDefaultUserPolicySnapshot().signature;
                 onRegModeChange();
                 updateServerPolicyFields();
             } else {
@@ -2401,7 +2462,11 @@
                 payload.registration_expiry_months = parseInt(document.getElementById('srv-reg-months').value, 10) || 1;
                 payload.code_expiry_days = parseInt(document.getElementById('srv-code-days').value) || 30;
                 payload.tos = document.getElementById('srv-tos').value;
-                payload.nsfw_enabled = document.getElementById('srv-nsfw').checked;
+                const currentNsfw = document.getElementById('srv-nsfw').checked;
+                // 仅在新增服务器或 NSFW 开关确实变化时才传递 nsfw_enabled，避免常规保存反复触发全服 NSFW 撤权
+                if (!currentServerId || currentNsfw !== initialServerNsfwEnabled) {
+                    payload.nsfw_enabled = currentNsfw;
+                }
                 payload.allow_subtitle_upload = document.getElementById('srv-subtitle-upload').checked;
                 payload.allow_request = document.getElementById('srv-request').checked;
                 if (payload.allow_request && (isSectionVisible('srv-request-pricing-fields') || serverFreeRequestOverride)) {
@@ -2440,11 +2505,13 @@
                         }
                     }
                 }
-                try {
-                    payload.default_user_policy = collectDefaultUserPolicyPayload();
-                } catch (err) {
-                    tg.showAlert('❌ ' + err.message);
-                    return null;
+                if (!currentServerId || isDefaultUserPolicyDirty()) {
+                    try {
+                        payload.default_user_policy = collectDefaultUserPolicyPayload();
+                    } catch (err) {
+                        tg.showAlert('❌ ' + err.message);
+                        return null;
+                    }
                 }
             } else if (type === 'qbittorrent') {
                 payload.qb_username = document.getElementById('srv-qb-username').value.trim() || null;
@@ -2471,7 +2538,15 @@
             const built = buildServerFormPayload();
             if (!built) return;
             const { payload } = built;
-            const policyPayload = payload.default_user_policy;
+            let policyPayload = payload.default_user_policy;
+            if (!policyPayload) {
+                try {
+                    policyPayload = collectDefaultUserPolicyPayload();
+                } catch (err) {
+                    tg.showAlert('❌ ' + err.message);
+                    return;
+                }
+            }
             if (!policyPayload || !policyPayload.enabled) {
                 tg.showAlert('请先开启「自定义默认 UserPolicy」开关后再同步存量用户。');
                 return;
@@ -2682,6 +2757,13 @@
                 }
                 tg.showAlert('❌ ' + (e.message || '切换失败'));
             }
+        }
+
+        // 监听默认 UserPolicy 区域内的开关、数值及高级 JSON 变动，实时刷新底部「仅保存」与「保存并同步到存量用户」显隐
+        const defaultPolicySectionEl = document.getElementById('srv-default-policy-section');
+        if (defaultPolicySectionEl) {
+            defaultPolicySectionEl.addEventListener('change', updateServerPolicyFields);
+            defaultPolicySectionEl.addEventListener('input', updateServerPolicyFields);
         }
 
         loadData();

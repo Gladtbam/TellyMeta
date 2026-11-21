@@ -581,8 +581,11 @@ async def update_server(
     service = SettingsServices(request.app, session)
     repo = ServerRepository(session)
 
-    # 状态切换
+    # 状态切换（提前记录变更前 NSFW 开关，防止未改动 NSFW 时每次保存都触发全服撤权）
     current_server = await repo.get_by_id(server_id)
+    previous_nsfw_enabled = (
+        bool(current_server.nsfw_enabled) if current_server is not None else None
+    )
 
     if (
         current_server
@@ -737,9 +740,16 @@ async def update_server(
             if server and server.is_enabled:
                 await service._reload_server_client(server)
 
-    if data.nsfw_enabled is not None:
-        await repo.update_nsfw_config(server_id, enabled=data.nsfw_enabled)
-        if not data.nsfw_enabled:
+    # 仅在 NSFW 开关实际发生变化时才执行库配置更新与存量账户撤权，避免常规保存反复触发全服撤权
+    nsfw_changed = (
+        data.nsfw_enabled is not None
+        and previous_nsfw_enabled is not None
+        and bool(data.nsfw_enabled) != previous_nsfw_enabled
+    )
+    if nsfw_changed:
+        target_nsfw = bool(data.nsfw_enabled)
+        await repo.update_nsfw_config(server_id, enabled=target_nsfw)
+        if not target_nsfw:
             account_service = AccountService(request.app, session)
             revoked_count, failed_count = await account_service.revoke_server_nsfw(
                 server_id
