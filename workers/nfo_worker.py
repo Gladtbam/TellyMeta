@@ -2,7 +2,9 @@ import asyncio
 import contextlib
 import os
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 
 import aiofiles
 import aiofiles.os as aio_os
@@ -12,7 +14,6 @@ from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
-from core.template_manager import template_manager
 from models.radarr import MovieResource
 from models.radarr_webhook import (
     RadarrWebhookAddedPayload,
@@ -74,8 +75,115 @@ def _validate_nfo_target_path(file_path: Path) -> Path:
     return file_path
 
 
+# XML 1.0 禁止出现的控制字符（保留 \t、\n、\r）
+_XML_INVALID_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+# NFO 元素声明表：(字段类型, 上下文字段名, XML 标签名或 uniqueid type)
+_NFO_SPECS: dict[str, tuple[str, tuple[tuple[str, str, str], ...]]] = {
+    "movie": (
+        "movie",
+        (
+            ("text", "title", "title"),
+            ("text", "original_title", "originaltitle"),
+            ("text", "rating", "rating"),
+            ("text", "year", "year"),
+            ("text", "plot", "plot"),
+            ("list", "genres", "genre"),
+            ("list", "tags", "tag"),
+            ("text", "premiered", "premiered"),
+            ("text", "runtime", "runtime"),
+            ("uniqueid", "tmdb_id", "tmdb"),
+            ("uniqueid", "imdb_id", "imdb"),
+        ),
+    ),
+    "episode": (
+        "episodedetails",
+        (
+            ("text", "title", "title"),
+            ("text", "original_title", "originaltitle"),
+            ("text_zero", "season_number", "season"),
+            ("text_zero", "episode_number", "episode"),
+            ("text", "plot", "plot"),
+            ("text", "aired_date", "aired"),
+            ("uniqueid", "tvdb_id", "tvdb"),
+            ("uniqueid", "tmdb_id", "tmdb"),
+            ("uniqueid", "imdb_id", "imdb"),
+        ),
+    ),
+    "tvshow": (
+        "tvshow",
+        (
+            ("text", "title", "title"),
+            ("text", "original_title", "originaltitle"),
+            ("text", "sort_title", "sorttitle"),
+            ("text", "rating", "rating"),
+            ("text", "plot", "plot"),
+            ("text", "mpaa", "mpaa"),
+            ("text", "premiered", "premiered"),
+            ("text", "studio", "studio"),
+            ("list", "genres", "genre"),
+            ("uniqueid", "tmdb_id", "tmdb"),
+            ("uniqueid", "tvdb_id", "tvdb"),
+            ("uniqueid", "imdb_id", "imdb"),
+        ),
+    ),
+}
+
+
+def _clean_xml_text(value: Any) -> str:
+    """剔除 XML 1.0 非法控制字符，确保 ElementTree 输出始终可解析。"""
+    return _XML_INVALID_CHARS_RE.sub("", str(value))
+
+
+def _render_nfo_xml(template_name: str, context: dict[str, Any]) -> str | None:
+    """使用标准库 ElementTree 构建并缩进格式化 NFO XML 文档。
+
+    Args:
+        template_name: NFO 类型或兼容的模板文件名（支持 ``movie`` / ``movie.nfo.j2`` 等）。
+        context: 元数据上下文字典。
+
+    Returns:
+        带 UTF-8 声明与 4 空格缩进的 XML 字符串；未知模板类型返回 ``None``。
+    """
+    kind = template_name.removesuffix(".j2").removesuffix(".nfo").strip().lower()
+    spec = _NFO_SPECS.get(kind)
+    if spec is None:
+        return None
+
+    root_tag, fields = spec
+    root = ET.Element(root_tag)
+
+    for field_kind, ctx_key, tag_or_type in fields:
+        value = context.get(ctx_key)
+        if field_kind == "text":
+            if value:
+                el = ET.SubElement(root, tag_or_type)
+                el.text = _clean_xml_text(value)
+        elif field_kind == "text_zero":
+            # 季号与集号允许为 0（如 S00E00 特别篇），不能按布尔假值过滤
+            if value is not None and value != "":
+                el = ET.SubElement(root, tag_or_type)
+                el.text = _clean_xml_text(value)
+        elif field_kind == "list":
+            if value:
+                for item in value:
+                    if item:
+                        el = ET.SubElement(root, tag_or_type)
+                        el.text = _clean_xml_text(item)
+        elif field_kind == "uniqueid" and value:
+            el = ET.SubElement(root, "uniqueid", {"type": tag_or_type})
+            el.text = _clean_xml_text(value)
+
+    ET.indent(root, space="    ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + ET.tostring(root, encoding="unicode")
+        + "\n"
+    )
+
+
 async def _generate_and_save_nfo(
-    template_name: str, context: dict, file_path: Path
+    template_name: str, context: dict[str, Any], file_path: Path
 ) -> bool:
     """通用 NFO 生成与安全保存逻辑：先校验目标路径为 .nfo，再通过同目录临时文件原子写入"""
     try:
@@ -84,7 +192,7 @@ async def _generate_and_save_nfo(
         logger.error("拒绝写入 NFO，已保护原媒体文件不被损坏: {}", e)
         return False
 
-    nfo_content = await template_manager.render(template_name, context)
+    nfo_content = _render_nfo_xml(template_name, context)
     if not nfo_content:
         logger.error("{} 模板渲染返回空，跳过文件创建", template_name)
         return False
@@ -223,7 +331,7 @@ async def create_series_nfo_from_resource(
         "tmdb_id": series.tmdbId,
     }
 
-    await _generate_and_save_nfo("tvshow.nfo.j2", context, nfo_path)
+    await _generate_and_save_nfo("tvshow", context, nfo_path)
 
 
 async def create_episode_nfo_from_resource(
@@ -243,7 +351,7 @@ async def create_episode_nfo_from_resource(
         return
 
     context = await _get_episode_context(tmdb, tvdb, series.tmdbId or 0, episode)
-    await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
+    await _generate_and_save_nfo("episode", context, nfo_path)
 
 
 async def rebuild_sonarr_metadata_task(
@@ -313,7 +421,7 @@ async def create_episode_nfo(
     nfo_path = Path(payload.episodeFile.path).with_suffix(".nfo")
 
     context = await _get_episode_context(tmdb, tvdb, payload.series.tmdbId, episode)
-    await _generate_and_save_nfo("episode.nfo.j2", context, nfo_path)
+    await _generate_and_save_nfo("episode", context, nfo_path)
 
 
 async def handle_series_add_metadata(
@@ -372,7 +480,11 @@ async def create_movie_nfo(
     context = {
         "title": movie_info.title if movie_info else None,
         "original_title": movie_info.original_title if movie_info else None,
-        "year": movie_info.release_date.split("-")[0] if movie_info else None,
+        "year": (
+            movie_info.release_date.split("-")[0]
+            if movie_info and movie_info.release_date
+            else None
+        ),
         "premiered": movie_info.release_date if movie_info else None,
         "runtime": movie_info.runtime if movie_info else None,
         "plot": movie_info.overview if movie_info else None,
@@ -380,7 +492,7 @@ async def create_movie_nfo(
         "imdb_id": movie_info.imdb_id if movie_info else None,
         "tmdb_id": tmdb_id,
     }
-    await _generate_and_save_nfo("movie.nfo.j2", context, nfo_path)
+    await _generate_and_save_nfo("movie", context, nfo_path)
 
 
 def _iter_video_files(folder_path: Path) -> list[Path]:

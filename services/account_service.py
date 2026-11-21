@@ -1,6 +1,4 @@
-import base64
 import ipaddress
-import json
 import math
 import re
 import socket
@@ -13,7 +11,6 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from httpx2 import AsyncClient, HTTPError, HTTPStatusError, RequestError
-from jinja2.sandbox import SandboxedEnvironment
 from loguru import logger
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -31,6 +28,7 @@ from core.economy_policy import (
     sync_traffic_alert_flags,
 )
 from core.media_utils import get_account_lock
+from core.safe_expr import evaluate_safe_expression
 from core.scheduler_jobs import (
     clear_traffic_unsuspend_job,
     parse_lifecycle_job_account,
@@ -273,26 +271,15 @@ class AccountService:
                 response = await client.get(target_url)
 
                 if server.registration_external_parser:
-                    env = SandboxedEnvironment()
                     context = {
                         "response": response,
                         "r": response,
-                        "json": json,
-                        "base64": base64,
-                        "re": re,
-                        "len": len,
-                        "int": int,
-                        "str": str,
-                        "bool": bool,
-                        "list": list,
-                        "dict": dict,
                     }
                     try:
-                        # 执行自定义解析代码
-                        expr = env.compile_expression(
-                            server.registration_external_parser
+                        # 使用 AST 白名单求值器安全解析外部响应表达式
+                        is_valid = evaluate_safe_expression(
+                            server.registration_external_parser, context
                         )
-                        is_valid = expr(**context)
                         if is_valid:
                             return Result(True, "验证通过")
                         return Result(False, "验证失败 (解析未通过)。")
@@ -302,6 +289,9 @@ class AccountService:
                         ValueError,
                         SyntaxError,
                         AttributeError,
+                        LookupError,
+                        ZeroDivisionError,
+                        re.error,
                     ) as e:
                         logger.error(t"外部验证解析代码执行错误: {e}")
                         return Result(False, f"验证解析出错: {e}")
