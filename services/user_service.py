@@ -15,23 +15,38 @@ from core.config import get_settings
 from core.economy_policy import (
     DEFAULT_TRAFFIC_PACK_COST_SCORE,
     DEFAULT_TRAFFIC_PACK_SIZE_GIB,
+    LUCKY_REWARD_SPEC_MAP,
+    LuckyRewardCategory,
+    LuckyRewardKind,
+    LuckyRewardSpec,
+    TrafficBalance,
+    build_eligible_lucky_rewards,
+    calculate_lucky_points_reward,
     calculate_request_points_cost,
     calculate_traffic_balances,
     calculate_traffic_pack_points_cost,
     calculate_traffic_pack_unit_bytes,
     evaluate_request_access,
     evaluate_traffic_pack_access,
+    expiry_target_tier,
     is_auto_renew_open,
     is_traffic_effective,
+    is_traffic_quota_limited,
     is_watch_time_effective,
+    select_priority_bucket,
+    sync_traffic_alert_flags,
+    traffic_target_tier,
 )
 from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
+    clear_traffic_unsuspend_job,
     remove_account_lifecycle_jobs,
     schedule_account_lifecycle_jobs,
+    schedule_traffic_unsuspend_retry,
 )
 from core.telegram_message import TelegramMessage
-from models.orm import RegistrationMode, ServerType, TelegramUser
+from models.nginx import format_traffic_bytes
+from models.orm import RegistrationMode, ServerInstance, ServerType, TelegramUser
 from repositories.code_repo import CodeRepository
 from repositories.config_repo import (
     DEFAULT_TRAFFIC_PACK_UNIT_BYTES,
@@ -45,6 +60,7 @@ from services.media_service import (
     compute_external_disabled_state,
     sync_external_disabled_state,
 )
+from services.traffic_service import flush_app_traffic
 from services.watch_time_service import evaluate_watch_time_renewal
 
 settings = get_settings()
@@ -59,6 +75,22 @@ class Result:
     private_message: str | int | None = None
     keyboard: Any | None = None
     extra_data: Any | None = None
+
+
+@dataclass(slots=True)
+class _LuckyCheckinContext:
+    """单次幸运签到上下文快照（含纯标量标识及过滤后的候选服务器/账号）"""
+
+    user_id: int
+    username: str | Literal[False] | None
+    is_consecutive: bool
+    points_cfg: dict[str, Any]
+    signup_servers: list[ServerInstance]
+    renew_code_targets: list[tuple[int, int, datetime, bool, str]]
+    extend_targets: list[tuple[int, int, datetime, bool, str]]
+    traffic_targets: list[tuple[int, int, bool, TrafficBalance, str]]
+    now: datetime
+    renew_advance_days: int
 
 
 class UserService:
@@ -76,7 +108,9 @@ class UserService:
         self.media_repo = MediaRepository(session)
         self.code_repo = CodeRepository(session)
         self.server_repo = ServerRepository(session)
-        self.media_clients: dict[int, MediaService] = app.state.media_clients or {}
+        self.media_clients: dict[int, MediaService] = (
+            getattr(getattr(app, "state", None), "media_clients", None) or {}
+        )
 
     async def perform_checkin(
         self, user_id: int, username: str | Literal[False] | None
@@ -142,189 +176,451 @@ class UserService:
                     msg += f"\n(基础 {base_score} + 连签 {bonus})"
                 return Result(success=True, message=msg)
             return Result(success=False, message="签到失败，请稍后再试。")
-        return await self._perform_lucky_checkin(user, username, is_consecutive)
+        return await self._perform_lucky_checkin(
+            user, username, is_consecutive, points_cfg=points_cfg
+        )
+
+    async def _collect_lucky_checkin_context(
+        self,
+        *,
+        user_id: int,
+        username: str | Literal[False] | None,
+        is_consecutive: bool,
+        target_pairs: list[tuple[int, int]],
+        points_cfg: dict[str, Any],
+    ) -> _LuckyCheckinContext:
+        """收集幸运签到抽奖所需的服务器能力状态与用户各账号资格快照。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            username: 用于展示的用户名或显示名。
+            is_consecutive: 本次是否处于连续签到周期。
+            target_pairs: 提前提取的用户媒体账号主键对列表 ``[(user_id, server_id), ...]``。
+            points_cfg: 积分与签到规则配置字典。
+
+        Returns:
+            过滤与刷新后供奖池构建及奖励发放使用的 ``_LuckyCheckinContext``。
+        """
+        now = datetime.now()
+        enabled_servers = await self.server_repo.get_all_enabled()
+        enabled_media_servers: dict[int, ServerInstance] = {
+            int(s.id): s
+            for s in enabled_servers
+            if s.id is not None
+            and s.server_type in (ServerType.EMBY, ServerType.JELLYFIN)
+        }
+        registered_server_ids = {sid for _, sid in target_pairs}
+        # 注册码仅面向用户尚未注册且处于 DEFAULT（积分/激活码）模式的已连接媒体服务器
+        signup_servers = [
+            srv
+            for sid, srv in enabled_media_servers.items()
+            if sid in self.media_clients
+            and srv.registration_mode == RegistrationMode.DEFAULT
+            and sid not in registered_server_ids
+        ]
+
+        global_traffic_on = await self.config_repo.is_traffic_enabled()
+        policy_cfg = await self.config_repo.get_policy_config()
+        renew_advance_days = int(policy_cfg["account_renew_advance_days"])
+
+        has_potential_traffic = any(
+            is_traffic_quota_limited(global_traffic_on, enabled_media_servers.get(sid))
+            for _, sid in target_pairs
+        )
+        # 在评估账号流量余额及占用梯队前先刷盘内存缓冲，确保用量判断准确
+        if has_potential_traffic:
+            await flush_app_traffic(self.app)
+
+        renew_code_targets: list[tuple[int, int, datetime, bool, str]] = []
+        extend_targets: list[tuple[int, int, datetime, bool, str]] = []
+        traffic_targets: list[tuple[int, int, bool, TrafficBalance, str]] = []
+
+        for uid, sid in target_pairs:
+            srv = enabled_media_servers.get(sid)
+            if srv is None:
+                continue
+            mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+            if mu is None:
+                continue
+            srv_name = str(srv.name)
+            if sid in self.media_clients:
+                renew_code_targets.append(
+                    (uid, sid, mu.expires_at, bool(mu.is_banned), srv_name)
+                )
+            # 若账号仅因过期封禁且需外部解封，必须保证所属服务器客户端已连接才纳入直接延寿候选
+            needs_external_unban = bool(
+                mu.is_banned or mu.delete_at is not None
+            ) and not bool(mu.is_traffic_suspended)
+            if not needs_external_unban or sid in self.media_clients:
+                extend_targets.append(
+                    (uid, sid, mu.expires_at, bool(mu.is_banned), srv_name)
+                )
+            if is_traffic_quota_limited(global_traffic_on, srv):
+                bal = calculate_traffic_balances(
+                    srv.traffic_quota_bytes,
+                    mu.cycle_traffic_adjustment_bytes,
+                    mu.cycle_traffic_bytes,
+                    mu.traffic_pack_bytes,
+                )
+                traffic_targets.append(
+                    (uid, sid, bool(mu.is_traffic_suspended), bal, srv_name)
+                )
+
+        return _LuckyCheckinContext(
+            user_id=user_id,
+            username=username,
+            is_consecutive=is_consecutive,
+            points_cfg=points_cfg,
+            signup_servers=signup_servers,
+            renew_code_targets=renew_code_targets,
+            extend_targets=extend_targets,
+            traffic_targets=traffic_targets,
+            now=now,
+            renew_advance_days=renew_advance_days,
+        )
+
+    async def _grant_lucky_points_reward(
+        self, ctx: _LuckyCheckinContext, spec: LuckyRewardSpec
+    ) -> Result:
+        """发放幸运签到多档位积分奖励（读取配置的签到区间与连签奖励）。"""
+        breakdown = calculate_lucky_points_reward(
+            spec,
+            checkin_min=int(ctx.points_cfg["points_checkin_min"]),
+            checkin_max=int(ctx.points_cfg["points_checkin_max"]),
+            consecutive_bonus=int(ctx.points_cfg["points_checkin_consecutive_bonus"]),
+            is_consecutive=ctx.is_consecutive,
+            randint_fn=randint,
+        )
+        await self.telegram_repo.update_checkin(
+            ctx.user_id, breakdown.total, is_consecutive=ctx.is_consecutive
+        )
+        header_map = {
+            LuckyRewardKind.POINTS_DOUBLE: "🎉 **幸运签到·积分翻倍！**",
+            LuckyRewardKind.POINTS_TRIPLE: "🔥 **幸运签到·三倍暴击！**",
+            LuckyRewardKind.POINTS_JACKPOT: "👑 **幸运签到·超级积分福袋！**",
+        }
+        header = header_map.get(spec.kind, "🎉 **幸运签到！**")
+        uid = ctx.user_id
+        uname = ctx.username
+        msg = TelegramMessage.render_markdown(
+            t"{header:raw} [{uname}](tg://user?id={uid})获得了 **{breakdown.total}** 积分。"
+        )
+        detail = (
+            f"奖池 {breakdown.base_total}"
+            if spec.kind == LuckyRewardKind.POINTS_JACKPOT
+            else f"基础 {breakdown.base_roll} × {breakdown.multiplier}"
+        )
+        if ctx.is_consecutive and breakdown.bonus > 0:
+            detail += f" + 连签 {breakdown.bonus}"
+        msg += f"\n({detail})"
+        return Result(success=True, message=msg)
+
+    async def _grant_lucky_code_reward(
+        self, ctx: _LuckyCheckinContext, spec: LuckyRewardSpec
+    ) -> Result | None:
+        """发放独立区分的注册码或续期码奖励；无可用目标服务器时返回 ``None`` 交由上层兜底。"""
+        if spec.code_type == "signup":
+            if not ctx.signup_servers:
+                return None
+            target_server = choice(ctx.signup_servers)
+            code_type: Literal["signup", "renew"] = "signup"
+            title = "注册码大奖"
+            code_name = "注册码"
+        else:
+            if not ctx.renew_code_targets:
+                return None
+            bucket = select_priority_bucket(
+                ctx.renew_code_targets,
+                lambda item: expiry_target_tier(
+                    item[2], item[3], now=ctx.now, advance_days=ctx.renew_advance_days
+                ),
+            )
+            chosen_sid = choice(bucket)[1]
+            target_server = await self.server_repo.get_by_id(chosen_sid, fresh=True)
+            if target_server is None or not target_server.is_enabled:
+                return None
+            code_type = "renew"
+            title = "续期码大奖"
+            code_name = "续期码"
+
+        if target_server.id is None:
+            return None
+
+        server_name = str(target_server.name)
+        code = await self.code_repo.create(
+            code_type, target_server.code_expiry_days, target_server.id
+        )
+        await self.telegram_repo.update_checkin(
+            ctx.user_id, 0, is_consecutive=ctx.is_consecutive
+        )
+        uid = ctx.user_id
+        uname = ctx.username
+        exp_str = code.expires_at.strftime("%Y-%m-%d")
+        return Result(
+            success=True,
+            message=TelegramMessage.render_markdown(
+                t"🎉 **幸运签到·{title}！** [{uname}](tg://user?id={uid})抽中 **{server_name}** 的 **{code_name}**，已通过私信发送给您。"
+            ),
+            private_message=TelegramMessage.render_markdown(t"""\
+                🎁 幸运签到·{code_name}奖励！
+                服务器: {server_name}
+                类型: {code_name}
+                代码: `{code.code}`
+                有效期至: {exp_str}
+                请妥善保管！"""),
+        )
+
+    async def _grant_lucky_extend_reward(
+        self, ctx: _LuckyCheckinContext, spec: LuckyRewardSpec
+    ) -> Result | None:
+        """随机选取 1 个媒体账号（优先快到期/已过期）直接延长有效期并遵守 ADR-0002。"""
+        remaining = list(ctx.extend_targets)
+        while remaining:
+            bucket = select_priority_bucket(
+                remaining,
+                lambda item: expiry_target_tier(
+                    item[2], item[3], now=ctx.now, advance_days=ctx.renew_advance_days
+                ),
+            )
+            picked = choice(bucket)
+            remaining.remove(picked)
+            uid, sid, _, _, _ = picked
+
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                if fresh_mu is None or fresh_srv is None or not fresh_srv.is_enabled:
+                    continue
+
+                server_name = str(fresh_srv.name)
+                # 仅当清除过期封禁且账号不同时处于超流停用时才解封外部账户（遵循 ADR-0002）
+                keep_disabled = compute_external_disabled_state(
+                    is_banned=False,
+                    is_traffic_suspended=bool(fresh_mu.is_traffic_suspended),
+                )
+                if (
+                    fresh_mu.is_banned or fresh_mu.delete_at is not None
+                ) and not keep_disabled:
+                    outcome = await sync_external_disabled_state(
+                        self.media_clients.get(sid),
+                        media_id=fresh_mu.media_id,
+                        target_disabled=False,
+                        log_context="签到续期恢复媒体账号",
+                        user_id=uid,
+                        server_id=sid,
+                    )
+                    if not outcome.ok:
+                        continue
+
+                updated_mu = await self.media_repo.extend_expiry(
+                    fresh_mu, spec.extend_days
+                )
+                schedule_account_lifecycle_jobs(
+                    getattr(getattr(self.app, "state", None), "scheduler", None),
+                    updated_mu,
+                )
+                exp_str = updated_mu.expires_at.strftime("%Y-%m-%d %H:%M")
+                is_traffic_suspended = bool(updated_mu.is_traffic_suspended)
+
+            await self.telegram_repo.update_checkin(
+                ctx.user_id, 0, is_consecutive=ctx.is_consecutive
+            )
+            uname = ctx.username
+            msg = TelegramMessage.render_markdown(
+                t"🎉 **幸运签到·{spec.label}！** [{uname}](tg://user?id={uid})的媒体账号 ({server_name}) 已自动延长 **{spec.extend_days}** 天有效期至 `{exp_str}`！"
+            )
+            if is_traffic_suspended:
+                msg += "\n（提示：该账号当前仍处于超流停用状态，恢复流量额度后即可正常播放）"
+            return Result(success=True, message=msg)
+        return None
+
+    async def _grant_lucky_traffic_reward(
+        self, ctx: _LuckyCheckinContext, spec: LuckyRewardSpec
+    ) -> Result | None:
+        """随机选取 1 个有限流媒体账号（优先已停用/高占用）发放当期流量包并安全解封。"""
+        remaining = list(ctx.traffic_targets)
+        scheduler = getattr(getattr(self.app, "state", None), "scheduler", None)
+        while remaining:
+            bucket = select_priority_bucket(
+                remaining,
+                lambda item: traffic_target_tier(item[2], item[3]),
+            )
+            picked = choice(bucket)
+            remaining.remove(picked)
+            uid, sid, _, _, _ = picked
+
+            async with get_account_lock(uid, sid):
+                await self.media_repo.end_clean_read_tx()
+                fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
+                fresh_srv = await self.server_repo.get_by_id(sid, fresh=True)
+                global_traffic_on = await self.config_repo.is_traffic_enabled()
+                if fresh_mu is None or not is_traffic_quota_limited(
+                    global_traffic_on, fresh_srv
+                ):
+                    continue
+                assert fresh_srv is not None
+
+                unit_bytes = calculate_traffic_pack_unit_bytes(fresh_srv)
+                added_bytes = max(1, round(unit_bytes * spec.traffic_pack_ratio))
+                fresh_mu.traffic_pack_bytes = (
+                    max(0, int(fresh_mu.traffic_pack_bytes or 0)) + added_bytes
+                )
+                bal = calculate_traffic_balances(
+                    fresh_srv.traffic_quota_bytes,
+                    fresh_mu.cycle_traffic_adjustment_bytes,
+                    fresh_mu.cycle_traffic_bytes,
+                    fresh_mu.traffic_pack_bytes,
+                )
+                sync_traffic_alert_flags(fresh_mu, bal)
+
+                was_suspended = bool(fresh_mu.is_traffic_suspended)
+                still_banned = bool(fresh_mu.is_banned)
+                unsuspended = False
+                retry_scheduled = False
+                if was_suspended and (bal.total_remaining_bytes or 0) > 0:
+                    target_disabled = compute_external_disabled_state(
+                        is_banned=still_banned,
+                        is_traffic_suspended=False,
+                    )
+                    if not target_disabled:
+                        outcome = await sync_external_disabled_state(
+                            self.media_clients.get(sid),
+                            media_id=fresh_mu.media_id,
+                            target_disabled=False,
+                            treat_404_as_synced=True,
+                            log_context="幸运签到流量包解除超流停用",
+                            user_id=uid,
+                            server_id=sid,
+                        )
+                        if outcome.ok:
+                            fresh_mu.is_traffic_suspended = False
+                            clear_traffic_unsuspend_job(scheduler, uid, sid)
+                            unsuspended = True
+                        else:
+                            retry_scheduled = True
+                            schedule_traffic_unsuspend_retry(
+                                scheduler,
+                                uid,
+                                sid,
+                                run_date=datetime.now() + timedelta(minutes=15),
+                            )
+                    else:
+                        # 账号同时处于过期封禁时仅清除超流标记，严禁外部解封（ADR-0002）
+                        fresh_mu.is_traffic_suspended = False
+                        clear_traffic_unsuspend_job(scheduler, uid, sid)
+
+                try:
+                    await self.media_repo.session.commit()
+                    await self.media_repo.session.refresh(fresh_mu)
+                except SQLAlchemyError as exc:
+                    logger.warning(
+                        "幸运签到发放当期流量包提交失败，尝试回退其他候选: user_id={}, server_id={}, err={}",
+                        uid,
+                        sid,
+                        exc,
+                    )
+                    await self.media_repo.session.rollback()
+                    continue
+
+                server_name = str(fresh_srv.name)
+                pack_total_bytes = int(fresh_mu.traffic_pack_bytes)
+                next_reset_at = fresh_mu.next_reset_at
+
+            await self.telegram_repo.update_checkin(
+                ctx.user_id, 0, is_consecutive=ctx.is_consecutive
+            )
+            added_str = format_traffic_bytes(added_bytes)
+            pack_total_str = format_traffic_bytes(pack_total_bytes)
+            reset_clause = (
+                f"将于 {next_reset_at.strftime('%Y-%m-%d %H:%M')} 账期重置时清零"
+                if next_reset_at is not None
+                else "将于本周期重置时清零"
+            )
+            uname = ctx.username
+            msg = TelegramMessage.render_markdown(
+                t"🎉 **幸运签到·{spec.label}！** [{uname}](tg://user?id={uid})的媒体账号 ({server_name}) 获得 **{added_str}** 当期流量包（当前流量包余额 {pack_total_str}，{reset_clause}）！"
+            )
+            if unsuspended:
+                msg += "\n✅ 已为您自动解除超流停用，播放权限已恢复！"
+            elif still_banned:
+                msg += "\n（提示：该账号仍处于过期封禁状态，续期后即可恢复播放）"
+            elif retry_scheduled:
+                msg += (
+                    "\n（提示：外部解封暂时失败，已登记自动重试任务）"
+                    if scheduler is not None
+                    else "\n（提示：外部解封暂时失败，请稍后重试或联系管理员处理）"
+                )
+            return Result(success=True, message=msg)
+        return None
 
     async def _perform_lucky_checkin(
         self,
         user: TelegramUser,
         username: str | Literal[False] | None,
         is_consecutive: bool,
+        *,
+        points_cfg: dict[str, Any] | None = None,
     ) -> Result:
-        """执行幸运签到抽奖并发放随机注册码/续期码、账户续期或双倍积分奖励
+        """执行幸运签到动态抽奖，区分并按资格过滤多档积分、注册/续期码、账号延寿与当期流量包。
 
-        抽中直接续期奖励时按账号锁串行延长关联媒体账号有效期，并在解除过期封禁前
-        遵循组合状态（过期封禁 OR 超流停用）判定是否真正解封外部媒体账号；
-        若奖励无法兑现则回退为固定签到积分。
+        基于全局开关、服务器生效态与用户当前账号绑定情况动态构建奖池；
+        多服场景下按优先级梯队随机选取 1 个目标媒体账号发放延寿或当期流量包，
+        并严格遵守 ADR-0002（超流停用与过期封禁隔离）及 ADR-0004（流量包当期清零）。
 
         Args:
             user: 当前签到的 Telegram 用户 ORM 对象。
             username: 用于展示的用户名或显示名；无用户名时为 ``None``/``False``。
             is_consecutive: 本次签到是否计入连续签到周期。
+            points_cfg: 可选的已加载积分配置字典；缺省时自动从仓储读取。
 
         Returns:
-            包含签到群消息文案及可选中奖私聊文案的 ``Result`` 对象。
+            包含签到群消息文案及可选激活码私聊文案的 ``Result`` 对象。
         """
-        # 提前提取纯标量 ID 与关联账号主键，避免后续循环内提交/回滚事务导致 ORM 属性过期
+        # 提前提取纯标量 ID 与关联账号主键，避免后续刷新/提交事务导致 ORM 属性过期
         user_id = int(user.id)
         target_pairs = [
             (int(mu.id), int(mu.server_id)) for mu in (user.media_users or [])
         ]
-        options = ["fullcode", "halfcode", "weekcode", "daycode", "double"]
-        probability = [0.01, 0.02, 0.12, 0.15, 0.7]
-        result = choices(options, probability)[0]
-
-        current_renew_score = await self.telegram_repo.get_renew_score()
-
-        if result == "fullcode":
-            # 获取所有已启用的服务器
-            enabled_servers = await self.server_repo.get_all_enabled()
-
-            # 筛选符合条件的服务器：
-            candidate_servers = [
-                s
-                for s in enabled_servers
-                if s.id in self.media_clients
-                and s.server_type in (ServerType.EMBY, ServerType.JELLYFIN)
-                and s.registration_mode == RegistrationMode.DEFAULT
-            ]
-
-            if not candidate_servers:
-                await self.telegram_repo.update_checkin(
-                    user_id, 5, is_consecutive=is_consecutive
-                )
-                return Result(
-                    success=True,
-                    message=TelegramMessage.render_markdown(
-                        t"签到成功！[{username}](tg://user?id={user_id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
-                    ),
-                )
-
-            target_server = choice(candidate_servers)
-            if not target_server.id:
-                await self.telegram_repo.update_checkin(
-                    user_id, 5, is_consecutive=is_consecutive
-                )
-                return Result(
-                    success=True,
-                    message=TelegramMessage.render_markdown(
-                        t"签到成功！[{username}](tg://user?id={user_id})获得 **5** 积分 (暂无符合发放奖励条件的服务器)。"
-                    ),
-                )
-
-            code_type = choice(["renew", "signup"])
-            code_name = "续期码" if code_type == "renew" else "注册码"
-
-            code = await self.code_repo.create(
-                code_type, target_server.code_expiry_days, target_server.id
-            )
-            await self.telegram_repo.update_checkin(
-                user_id, 0, is_consecutive=is_consecutive
-            )
-
-            return Result(
-                success=True,
-                message=TelegramMessage.render_markdown(
-                    t"🎉 **恭喜[{username}](tg://user?id={user_id})抽中大奖！** {target_server.name} 的 {code_name}已通过私信发送给您。"
-                ),
-                private_message=TelegramMessage.render_markdown(t"""\
-                    🎁 签到大奖！
-                    服务器: {target_server.name}
-                    类型: {code_name}
-                    代码: `{code.code}`
-                    请妥善保管！"""),
-            )
-
-        if result in ["halfcode", "weekcode", "daycode"]:
-            days = {"halfcode": 15, "weekcode": 7, "daycode": 1}[result]
-
-            if target_pairs:
-                extended_servers = []
-                for uid, sid in target_pairs:
-                    async with get_account_lock(uid, sid):
-                        await self.media_repo.end_clean_read_tx()
-                        fresh_mu = await self.media_repo.get_by_id(uid, sid, fresh=True)
-                        if fresh_mu is None:
-                            continue
-                        client = self.media_clients.get(sid)
-                        # 仅当清除过期封禁且账号不同时处于超流停用时才解封外部账户（遵循 ADR-0002）
-                        keep_disabled = compute_external_disabled_state(
-                            is_banned=False,
-                            is_traffic_suspended=bool(fresh_mu.is_traffic_suspended),
-                        )
-                        if (
-                            client is not None
-                            and (fresh_mu.is_banned or fresh_mu.delete_at is not None)
-                            and not keep_disabled
-                        ):
-                            await sync_external_disabled_state(
-                                client,
-                                media_id=fresh_mu.media_id,
-                                target_disabled=False,
-                                log_context="签到续期恢复媒体账号",
-                                user_id=user_id,
-                                server_id=sid,
-                            )
-
-                        updated_mu = await self.media_repo.extend_expiry(fresh_mu, days)
-                        schedule_account_lifecycle_jobs(
-                            getattr(
-                                getattr(self.app, "state", None), "scheduler", None
-                            ),
-                            updated_mu,
-                        )
-
-                    server = await self.server_repo.get_by_id(sid)
-                    extended_servers.append(server.name if server else str(sid))
-
-                await self.telegram_repo.update_checkin(
-                    user_id, 0, is_consecutive=is_consecutive
-                )
-                server_str = ", ".join(extended_servers)
-                return Result(
-                    success=True,
-                    message=TelegramMessage.render_markdown(
-                        t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 您的媒体账号 ({server_str}) 已自动延长 **{days}** 天有效期！"
-                    ),
-                )
-
-            score = int(current_renew_score / 30 * days)
-            await self.telegram_repo.update_checkin(
-                user_id, score, is_consecutive=is_consecutive
-            )
-            return Result(
-                success=True,
-                message=TelegramMessage.render_markdown(
-                    t"🎉 **恭喜[{username}](tg://user?id={user_id})中奖！** 获得 {days} 天时长奖励，因未绑定账户自动折算为 **{score}** 积分！"
-                ),
-            )
-
-        # 检查连签 (lucky 同样享受连签加成，但如果是 flip/code 类奖励则不加积分)
-        bonus = 2 if is_consecutive else 0
-
-        if result == "double":
-            base = abs(randint(2, 4)) * 2
-            total = base + bonus
-            await self.telegram_repo.update_checkin(
-                user_id, total, is_consecutive=is_consecutive
-            )
-            msg = TelegramMessage.render_markdown(
-                t"🎉 **恭喜！** [{username}](tg://user?id={user_id})签到积分翻倍，您获得了 **{total}** 积分。"
-            )
-            if is_consecutive:
-                msg += f"\n(基础 {base} + 连签 {bonus})"
-            return Result(success=True, message=msg)
-
-        # 保底逻辑
-        total = 1 + bonus
-        await self.telegram_repo.update_checkin(
-            user_id, total, is_consecutive=is_consecutive
+        resolved_cfg = points_cfg or await self.config_repo.get_points_config()
+        ctx = await self._collect_lucky_checkin_context(
+            user_id=user_id,
+            username=username,
+            is_consecutive=is_consecutive,
+            target_pairs=target_pairs,
+            points_cfg=resolved_cfg,
         )
-        msg = TelegramMessage.render_markdown(
-            t"签到成功！[{username}](tg://user?id={user_id})获得了保底 **{total}** 积分。"
+        eligible_specs = build_eligible_lucky_rewards(
+            has_signup_servers=bool(ctx.signup_servers),
+            has_renew_code_servers=bool(ctx.renew_code_targets),
+            has_extend_accounts=bool(ctx.extend_targets),
+            has_traffic_accounts=bool(ctx.traffic_targets),
         )
-        if is_consecutive:
-            msg += f"\n(基础 1 + 连签 {bonus})"
-        return Result(success=True, message=msg)
+        candidate_kinds = [spec.kind for spec in eligible_specs]
+        candidate_weights = [spec.weight for spec in eligible_specs]
+        raw_choice = choices(candidate_kinds, candidate_weights)[0]
+        try:
+            chosen_kind = LuckyRewardKind(raw_choice)
+        except ValueError:
+            chosen_kind = LuckyRewardKind.POINTS_DOUBLE
+        chosen_spec = LUCKY_REWARD_SPEC_MAP[chosen_kind]
+
+        result: Result | None = None
+        if chosen_spec.category == LuckyRewardCategory.CODE:
+            result = await self._grant_lucky_code_reward(ctx, chosen_spec)
+        elif chosen_spec.category == LuckyRewardCategory.EXTEND:
+            result = await self._grant_lucky_extend_reward(ctx, chosen_spec)
+        elif chosen_spec.category == LuckyRewardCategory.TRAFFIC:
+            result = await self._grant_lucky_traffic_reward(ctx, chosen_spec)
+        elif chosen_spec.category == LuckyRewardCategory.POINTS:
+            result = await self._grant_lucky_points_reward(ctx, chosen_spec)
+
+        if result is not None:
+            return result
+        # 并发竞态导致选中奖品已失效时，安全兜底为双倍积分
+        return await self._grant_lucky_points_reward(
+            ctx, LUCKY_REWARD_SPEC_MAP[LuckyRewardKind.POINTS_DOUBLE]
+        )
 
     async def get_user_info_data(self, user_id: int) -> dict:
         """获取指定 Telegram 用户的结构化个人与媒体账号概览数据

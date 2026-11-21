@@ -41,12 +41,27 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TrafficService",
+    "flush_app_traffic",
     "format_traffic_bytes",
     "get_or_create_traffic_service",
     "invalidate_traffic_server_cache",
     "record_traffic_webhook_session",
     "sync_traffic_listener",
 ]
+
+
+async def flush_app_traffic(app: FastAPI | Any | None) -> None:
+    """在执行账期重置、切换流量开关、调额或幸运签到发放流量前尽力刷盘内存流量缓冲
+
+    Args:
+        app: FastAPI 或等价应用状态宿主，用于读取 ``app.state.traffic_service``。
+
+    副作用：触发 ``TrafficService.flush()`` 将待提交流量落库，可预期异常会被安全忽略。
+    """
+    traffic_service = getattr(getattr(app, "state", None), "traffic_service", None)
+    if traffic_service is not None and hasattr(traffic_service, "flush"):
+        with contextlib.suppress(SQLAlchemyError, OSError, RuntimeError, ValueError):
+            await traffic_service.flush()
 
 
 _CROSS_BIND_KEYS: dict[str, tuple[str, ...]] = {

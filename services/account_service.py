@@ -1,5 +1,4 @@
 import base64
-import contextlib
 import ipaddress
 import json
 import math
@@ -29,6 +28,7 @@ from core.economy_policy import (
     calculate_traffic_pack_unit_bytes,
     evaluate_traffic_pack_access,
     is_auto_renew_open,
+    sync_traffic_alert_flags,
 )
 from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
@@ -58,6 +58,7 @@ from services.media_service import (
     sync_external_disabled_state,
 )
 from services.notification_service import NotificationService
+from services.traffic_service import flush_app_traffic
 from services.user_service import Result
 from services.watch_time_service import evaluate_watch_time_renewal
 
@@ -1282,26 +1283,8 @@ class AccountService:
     def _sync_traffic_alert_flags_locked(
         media_user: MediaUser, bal: TrafficBalance
     ) -> None:
-        """依据最新有效配额与剩余余额刷新 80%/100% 配额预警去重标记。
-
-        Args:
-            media_user: 已持有账号锁的媒体账号 ORM 对象。
-            bal: 按当前配额与调额计算的 ``TrafficBalance`` 快照。
-
-        Side Effects:
-            当账号退出超流状态或余量回升至阈值以上时，就地重置 ``media_user.traffic_alert_80_sent``
-            与 ``media_user.traffic_alert_100_sent`` 标记；不执行数据库提交。
-        """
-        if not bal.is_limited:
-            media_user.traffic_alert_80_sent = False
-            media_user.traffic_alert_100_sent = False
-            return
-        total_remaining = bal.total_remaining_bytes or 0
-        total_pool = bal.total_pool_bytes or 0
-        if total_remaining > 0:
-            media_user.traffic_alert_100_sent = False
-        if total_pool > 0 and total_remaining * 5 > total_pool:
-            media_user.traffic_alert_80_sent = False
+        """依据最新有效配额与剩余余额刷新 80%/100% 配额预警去重标记。"""
+        sync_traffic_alert_flags(media_user, bal)
 
     @staticmethod
     def _should_release_suspension_locked(
@@ -2304,18 +2287,8 @@ class AccountService:
             )
 
     async def flush_pending_traffic(self) -> None:
-        """在执行账期重置、切换流量开关或管理员调额前尽力将内存中的在途流量增量刷盘。
-
-        副作用：尝试触发 ``TrafficService.flush()`` 落库，可预期持久化异常会被抑制以保护上层状态切换。
-        """
-        traffic_service = getattr(
-            getattr(self.app, "state", None), "traffic_service", None
-        )
-        if traffic_service is not None and hasattr(traffic_service, "flush"):
-            with contextlib.suppress(
-                SQLAlchemyError, OSError, RuntimeError, ValueError
-            ):
-                await traffic_service.flush()
+        """在执行账期重置、切换流量开关或管理员调额前尽力将内存中的在途流量增量刷盘。"""
+        await flush_app_traffic(self.app)
 
     async def _clear_or_sync_traffic_suspension_locked(
         self,

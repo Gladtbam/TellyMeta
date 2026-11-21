@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import StrEnum
+from random import randint
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from models.orm import ServerInstance
+    from models.orm import MediaUser, ServerInstance
 
 BYTES_PER_GIB = 1024**3
 DEFAULT_TRAFFIC_PACK_COST_SCORE = 50
@@ -363,3 +367,311 @@ def evaluate_traffic_pack_access(
     if not server.allow_traffic_pack:
         return False, "该服务器未开启流量包购买功能。"
     return True, ""
+
+
+def sync_traffic_alert_flags(media_user: MediaUser, bal: TrafficBalance) -> None:
+    """依据最新有效配额与剩余余额就地刷新 80%/100% 配额预警去重标记。
+
+    Args:
+        media_user: 已持有账号锁的媒体账号 ORM 对象。
+        bal: 按当前配额与流量包计算的 ``TrafficBalance`` 快照。
+
+    副作用：当账号脱离不限流外的耗尽/预警线时清空对应预警标记；不执行数据库提交。
+    """
+    if not bal.is_limited:
+        media_user.traffic_alert_80_sent = False
+        media_user.traffic_alert_100_sent = False
+        return
+    total_remaining = bal.total_remaining_bytes or 0
+    total_pool = bal.total_pool_bytes or 0
+    if total_remaining > 0:
+        media_user.traffic_alert_100_sent = False
+    if total_pool > 0 and total_remaining * 5 > total_pool:
+        media_user.traffic_alert_80_sent = False
+
+
+class LuckyRewardCategory(StrEnum):
+    """幸运签到奖励大类枚举"""
+
+    POINTS = "points"
+    CODE = "code"
+    EXTEND = "extend"
+    TRAFFIC = "traffic"
+
+
+class LuckyRewardKind(StrEnum):
+    """幸运签到精细化奖励档位标识枚举"""
+
+    POINTS_DOUBLE = "points_double"
+    POINTS_TRIPLE = "points_triple"
+    POINTS_JACKPOT = "points_jackpot"
+    CODE_SIGNUP = "code_signup"
+    CODE_RENEW = "code_renew"
+    EXTEND_1D = "extend_1d"
+    EXTEND_3D = "extend_3d"
+    EXTEND_7D = "extend_7d"
+    EXTEND_15D = "extend_15d"
+    EXTEND_30D = "extend_30d"
+    TRAFFIC_SMALL = "traffic_small"
+    TRAFFIC_MEDIUM = "traffic_medium"
+    TRAFFIC_LARGE = "traffic_large"
+
+
+@dataclass(frozen=True, slots=True)
+class LuckyRewardSpec:
+    """单个幸运签到奖励档位的结构化定义（权重、类别及发放参数）"""
+
+    kind: LuckyRewardKind
+    category: LuckyRewardCategory
+    label: str
+    weight: int
+    points_multiplier: int = 0
+    extend_days: int = 0
+    code_type: Literal["signup", "renew"] | None = None
+    traffic_pack_ratio: float = 0.0
+
+
+LUCKY_REWARD_SPECS: tuple[LuckyRewardSpec, ...] = (
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.POINTS_DOUBLE,
+        category=LuckyRewardCategory.POINTS,
+        label="双倍幸运积分",
+        weight=42,
+        points_multiplier=2,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.POINTS_TRIPLE,
+        category=LuckyRewardCategory.POINTS,
+        label="三倍暴击积分",
+        weight=16,
+        points_multiplier=3,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.POINTS_JACKPOT,
+        category=LuckyRewardCategory.POINTS,
+        label="超级积分福袋",
+        weight=4,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.CODE_SIGNUP,
+        category=LuckyRewardCategory.CODE,
+        label="注册码大奖",
+        weight=3,
+        code_type="signup",
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.CODE_RENEW,
+        category=LuckyRewardCategory.CODE,
+        label="续期码大奖",
+        weight=4,
+        code_type="renew",
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.EXTEND_1D,
+        category=LuckyRewardCategory.EXTEND,
+        label="1天延寿",
+        weight=12,
+        extend_days=1,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.EXTEND_3D,
+        category=LuckyRewardCategory.EXTEND,
+        label="3天延寿",
+        weight=8,
+        extend_days=3,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.EXTEND_7D,
+        category=LuckyRewardCategory.EXTEND,
+        label="7天延寿",
+        weight=5,
+        extend_days=7,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.EXTEND_15D,
+        category=LuckyRewardCategory.EXTEND,
+        label="15天延寿",
+        weight=2,
+        extend_days=15,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.EXTEND_30D,
+        category=LuckyRewardCategory.EXTEND,
+        label="30天延寿",
+        weight=1,
+        extend_days=30,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.TRAFFIC_SMALL,
+        category=LuckyRewardCategory.TRAFFIC,
+        label="轻量当期流量包",
+        weight=8,
+        traffic_pack_ratio=0.2,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.TRAFFIC_MEDIUM,
+        category=LuckyRewardCategory.TRAFFIC,
+        label="标准当期流量包",
+        weight=4,
+        traffic_pack_ratio=0.5,
+    ),
+    LuckyRewardSpec(
+        kind=LuckyRewardKind.TRAFFIC_LARGE,
+        category=LuckyRewardCategory.TRAFFIC,
+        label="豪华当期流量包",
+        weight=2,
+        traffic_pack_ratio=1.0,
+    ),
+)
+
+LUCKY_REWARD_SPEC_MAP: dict[LuckyRewardKind, LuckyRewardSpec] = {
+    spec.kind: spec for spec in LUCKY_REWARD_SPECS
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LuckyPointsBreakdown:
+    """幸运签到积分奖励数值及明细拆解"""
+
+    total: int
+    base_roll: int
+    multiplier: int
+    base_total: int
+    bonus: int
+
+
+def build_eligible_lucky_rewards(
+    *,
+    has_signup_servers: bool,
+    has_renew_code_servers: bool,
+    has_extend_accounts: bool,
+    has_traffic_accounts: bool,
+) -> list[LuckyRewardSpec]:
+    """按系统开关生效态与用户当前账号状态动态过滤幸运签到可用奖池。
+
+    积分档位始终入池以保证奖池非空；注册码、续期码、账号延寿与当期流量包
+    仅在对应前置条件成立时才进入抽奖池。
+
+    Args:
+        has_signup_servers: 是否存在用户尚未注册的可用 ``DEFAULT`` 媒体服务器。
+        has_renew_code_servers: 用户是否持有至少一个可发放续期码的已连接媒体账号。
+        has_extend_accounts: 用户是否持有至少一个支持直接延长有效期的有效媒体账号。
+        has_traffic_accounts: 用户是否持有至少一个启用有限流量配额的有效媒体账号。
+
+    Returns:
+        满足当前资格条件的 ``LuckyRewardSpec`` 列表（至少包含全部积分档位）。
+    """
+    eligible: list[LuckyRewardSpec] = []
+    for spec in LUCKY_REWARD_SPECS:
+        if spec.category == LuckyRewardCategory.POINTS:
+            eligible.append(spec)
+        elif spec.kind == LuckyRewardKind.CODE_SIGNUP:
+            if has_signup_servers:
+                eligible.append(spec)
+        elif spec.kind == LuckyRewardKind.CODE_RENEW:
+            if has_renew_code_servers:
+                eligible.append(spec)
+        elif spec.category == LuckyRewardCategory.EXTEND:
+            if has_extend_accounts:
+                eligible.append(spec)
+        elif spec.category == LuckyRewardCategory.TRAFFIC and has_traffic_accounts:
+            eligible.append(spec)
+    return eligible
+
+
+def calculate_lucky_points_reward(
+    spec: LuckyRewardSpec,
+    *,
+    checkin_min: int,
+    checkin_max: int,
+    consecutive_bonus: int,
+    is_consecutive: bool,
+    randint_fn: Callable[[int, int], int] = randint,
+) -> LuckyPointsBreakdown:
+    """根据后台配置的签到基础区间与连签奖励计算幸运签到积分奖励。
+
+    Args:
+        spec: 目标积分奖励档位定义（双倍、三倍或超级福袋）。
+        checkin_min: 系统配置的每日签到最小基础积分。
+        checkin_max: 系统配置的每日签到最大基础积分。
+        consecutive_bonus: 系统配置的连续签到额外奖励积分。
+        is_consecutive: 本次是否处于连续签到周期。
+        randint_fn: 随机整数生成函数（支持注入以方便确定性测试）。
+
+    Returns:
+        包含总积分、基础随机值、倍率及连签加成的 ``LuckyPointsBreakdown``。
+    """
+    low = max(0, int(checkin_min))
+    high = max(low, int(checkin_max))
+    bonus = max(0, int(consecutive_bonus)) if is_consecutive else 0
+
+    if spec.kind == LuckyRewardKind.POINTS_JACKPOT:
+        # 超级福袋严格高于三倍暴击上限（3 * high），按配置的上限 4x-6x 浮动
+        base_total = randint_fn(high * 4, high * 6)
+        return LuckyPointsBreakdown(
+            total=base_total + bonus,
+            base_roll=base_total,
+            multiplier=0,
+            base_total=base_total,
+            bonus=bonus,
+        )
+
+    multiplier = max(1, int(spec.points_multiplier))
+    roll = randint_fn(low, high)
+    base_total = roll * multiplier
+    return LuckyPointsBreakdown(
+        total=base_total + bonus,
+        base_roll=roll,
+        multiplier=multiplier,
+        base_total=base_total,
+        bonus=bonus,
+    )
+
+
+def select_priority_bucket[T](
+    items: Sequence[T], tier_fn: Callable[[T], int]
+) -> list[T]:
+    """从候选列表中提取优先级数值最小（即最高优先级）的一组元素。
+
+    Args:
+        items: 候选对象序列。
+        tier_fn: 将单个候选对象映射为整型优先级（越小越优先）的函数。
+
+    Returns:
+        全部处于最高优先级梯队的候选对象列表；输入为空时返回空列表。
+    """
+    if not items:
+        return []
+    paired = [(item, tier_fn(item)) for item in items]
+    best_tier = min(tier for _, tier in paired)
+    return [item for item, tier in paired if tier == best_tier]
+
+
+def expiry_target_tier(
+    expires_at: datetime,
+    is_banned: bool,
+    *,
+    now: datetime,
+    advance_days: int,
+) -> int:
+    """评估延寿/续期码目标账号的紧急程度梯队（0=已过期/封禁，1=临近到期，2=常规有效）。"""
+    if is_banned or expires_at <= now:
+        return 0
+    soon_window = timedelta(days=max(7, int(advance_days)))
+    if expires_at <= now + soon_window:
+        return 1
+    return 2
+
+
+def traffic_target_tier(is_traffic_suspended: bool, bal: TrafficBalance) -> int:
+    """评估当期流量包奖励目标账号的需求梯队（0=已停用/耗尽，1=高占用>=80%，2=中占用>=50%，3=其他）。"""
+    if is_traffic_suspended or (
+        bal.total_remaining_bytes is not None and bal.total_remaining_bytes <= 0
+    ):
+        return 0
+    if bal.total_pool_bytes and bal.total_remaining_bytes is not None:
+        if bal.total_remaining_bytes * 5 <= bal.total_pool_bytes:
+            return 1
+        if bal.total_remaining_bytes * 2 <= bal.total_pool_bytes:
+            return 2
+    return 3
