@@ -282,6 +282,7 @@ def _build_user_info_dto(
                 anchor_day=item.get("anchor_day"),
                 next_reset_at=item.get("next_reset_at"),
                 auto_renew=bool(item.get("auto_renew", False)),
+                auto_renew_open=bool(item.get("auto_renew_open", False)),
                 enable_watch_time_renewal=bool(
                     item.get("enable_watch_time_renewal", False)
                 ),
@@ -783,7 +784,7 @@ async def toggle_account_auto_renew(
     user_id: int = Depends(require_owned_media_account),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """切换或设置指定媒体账号的自动保活开关
+    """切换或设置指定媒体账号的自动续期开关
 
     Args:
         request: FastAPI 请求对象

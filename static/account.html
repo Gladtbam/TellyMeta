@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="watch_time.css?v=20261120">
-    <script src="watch_time.js?v=20261120"></script>
+    <script src="watch_time.js?v=20261121"></script>
     <title>账户管理</title>
     <style>
         :root {
@@ -278,7 +278,7 @@
         }
 
         /**
-         * 渲染媒体账号详情、观看度百分比进度条、流量包余额与自动保活开关区域。
+         * 渲染媒体账号详情、观看度百分比进度条、流量包余额与自动续期开关区域。
          * @param {object} acc 媒体账号 DTO 对象。
          */
         function renderAccountInfo(acc) {
@@ -344,11 +344,11 @@
                 </div>`
                 : '';
 
-            const autoRenewRow = acc.watch_time_renewal_open
+            const autoRenewRow = (isAutoRenewOpen(acc) || acc.auto_renew)
                 ? `
                 <div class="item">
                     <div class="item-content">
-                        <span class="item-title" style="font-size:15px;">自动保活</span>
+                        <span class="item-title" style="font-size:15px;">自动续期</span>
                         <span class="item-subtitle" style="font-size:12px;">${autoRenewHint}</span>
                     </div>
                     <label class="switch">
@@ -427,7 +427,7 @@
         }
 
         /**
-         * 切换当前媒体账号的自动保活开关并同步本地缓存状态。
+         * 切换当前媒体账号的自动续期开关并同步本地缓存状态。
          * @param {HTMLInputElement} checkbox 触发切换的复选框元素。
          */
         async function toggleAutoRenew(checkbox) {

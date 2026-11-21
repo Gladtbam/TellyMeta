@@ -245,7 +245,7 @@ class MediaUser(Base):
     watch_time_remainder_ms: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
     )
-    # 用户可控自动保活开关（默认关闭，仅手动开启且时长达标时触发）
+    # 用户可控自动续期开关（默认关闭；开启后到达有效期时按服务器准许条件自动续期）
     auto_renew: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )

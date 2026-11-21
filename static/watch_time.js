@@ -93,24 +93,49 @@ function renderWatchProgressRow(acc, showStatusNote = true) {
 }
 
 /**
- * 格式化自动保活开关副标题说明，避免开放状态判断在多个页面重复实现。
+ * 判断媒体账号所在服务器是否至少开放一种自动续期条件（时长保活或积分续期）。
  * @param {object|null|undefined} acc 媒体账号 DTO 对象。
- * @param {boolean} detailed 是否使用账号详情页的完整说明文案。
- * @returns {string} 自动保活提示文案。
+ * @returns {boolean} 可开启自动续期返回 true，否则返回 false。
  */
-function formatAutoRenewHint(acc, detailed = false) {
-    if (acc && acc.watch_time_renewal_open) {
-        return detailed
-            ? '到期前若本周期观看度达 100% 将自动免费续期'
-            : '临近到期且观看度达 100% 时自动免费续期';
+function isAutoRenewOpen(acc) {
+    if (!acc) return false;
+    if (acc.auto_renew_open !== undefined && acc.auto_renew_open !== null) {
+        return Boolean(acc.auto_renew_open);
     }
-    return detailed
-        ? '当前服务器未开放保活续期（开启后暂不生效）'
-        : '当前服务器未开放保活续期';
+    return Boolean(acc.watch_time_renewal_open || acc.can_points_renew);
 }
 
 /**
- * 统一处理 Mini App 账号自动保活开关切换、错误回滚与结果提示。
+ * 格式化自动续期开关副标题说明，避免开放状态判断在多个页面重复实现。
+ * @param {object|null|undefined} acc 媒体账号 DTO 对象。
+ * @param {boolean} detailed 是否使用账号详情页的完整说明文案。
+ * @returns {string} 自动续期提示文案。
+ */
+function formatAutoRenewHint(acc, detailed = false) {
+    const watchOpen = Boolean(acc && acc.watch_time_renewal_open);
+    const pointsOpen = Boolean(acc && acc.can_points_renew);
+    if (watchOpen && pointsOpen) {
+        return detailed
+            ? '到达有效期时优先按观看度 100% 免费续期，未达标时自动消耗积分续期'
+            : '到期时优先时长免分续期，未达标则自动扣分续期';
+    }
+    if (watchOpen) {
+        return detailed
+            ? '到达有效期时若本周期观看度达 100% 将自动免费续期'
+            : '到期时观看度达 100% 自动免费续期';
+    }
+    if (pointsOpen) {
+        return detailed
+            ? '到达有效期时将自动消耗积分续期（积分不足则过期封禁）'
+            : '到期时自动消耗积分续期';
+    }
+    return detailed
+        ? '当前服务器未开放可自动触发的续期条件（开启后暂不生效）'
+        : '当前服务器未开放可自动触发的续期条件';
+}
+
+/**
+ * 统一处理 Mini App 账号自动续期开关切换、错误回滚与结果提示。
  * @param {number|string} serverId 服务器 ID。
  * @param {object} tg Telegram WebApp 对象。
  * @param {HTMLInputElement|null} checkbox 触发切换的复选框元素。
@@ -129,14 +154,14 @@ async function handleAutoRenewToggle(serverId, tg, checkbox, onSuccess = null) {
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
-            throw new Error(data.detail || data.message || '切换自动保活失败');
+            throw new Error(data.detail || data.message || '切换自动续期失败');
         }
         const finalState = typeof data.new_state === 'boolean' ? data.new_state : targetState;
         if (onSuccess) onSuccess(finalState, data);
-        tg.showAlert(data.message || (finalState ? '已开启自动保活' : '已关闭自动保活'));
+        tg.showAlert(data.message || (finalState ? '已开启自动续期' : '已关闭自动续期'));
     } catch (e) {
         if (checkbox) checkbox.checked = !targetState;
-        tg.showAlert(e.message || '切换自动保活失败');
+        tg.showAlert(e.message || '切换自动续期失败');
     }
 }
 

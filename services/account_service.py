@@ -28,6 +28,7 @@ from core.economy_policy import (
     calculate_traffic_pack_points_cost,
     calculate_traffic_pack_unit_bytes,
     evaluate_traffic_pack_access,
+    is_auto_renew_open,
 )
 from core.media_utils import get_account_lock
 from core.scheduler_jobs import (
@@ -100,12 +101,14 @@ class _RenewChannel(StrEnum):
 
 @dataclass(slots=True, frozen=True)
 class AutoRenewOutcome:
-    """自动保活单账号执行结果，显式区分成功与外部临时可重试故障"""
+    """自动续期单账号执行结果，显式区分成功、续期通道、扣分与外部临时可重试故障"""
 
     renewed: bool
     message: str
     retryable_error: bool = False
     expires_at: datetime | None = None
+    channel: _RenewChannel | None = None
+    cost_score: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,6 +124,8 @@ class _PreExpiryReminderContext:
     watch_eligible: bool
     watch_status_text: str
     points_renew_enabled: bool = True
+    points_renew_score: int = 0
+    user_score: int = 0
 
 
 # 到期准点复核允许的调度器短时唤醒漂移容差（防止毫秒级唤醒晚于 expires_at 误触发重锚与清空当期流量）
@@ -891,8 +896,10 @@ class AccountService:
         server_name: str,
         media_name: str,
         expires_at: datetime,
+        renew_channel: _RenewChannel = _RenewChannel.WATCH_TIME,
+        cost_score: int = 0,
     ) -> bool:
-        """向用户发送自动保活成功 Bot 私聊通知
+        """向用户发送自动续期成功 Bot 私聊通知
 
         副作用：尝试通过 Telegram 发送私聊消息；发送失败仅记录告警日志，绝不回滚已完成续期。
 
@@ -901,6 +908,8 @@ class AccountService:
             server_name: 媒体服务器名称
             media_name: 媒体账号用户名
             expires_at: 续期后的新到期时间
+            renew_channel: 本次生效的自动续期通道（时长保活或积分）
+            cost_score: 本次消耗的积分数（时长通道为 0）
 
         Returns:
             私聊通知送达成功返回 ``True``，未配置客户端或发送失败返回 ``False``
@@ -909,12 +918,15 @@ class AccountService:
             return False
         exp_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
         points_enabled = ConfigRepository.is_points_enabled_from_cache()
-        if points_enabled:
-            cost_line = "消耗积分: <code>0</code>（当前观看度已达 100%）"
+        if renew_channel == _RenewChannel.WATCH_TIME:
+            if points_enabled:
+                cost_line = "消耗积分: <code>0</code>（观看度已达 100%，免分保活续期）"
+            else:
+                cost_line = "续期方式: <code>观看度已达 100% 自动免费续期</code>"
         else:
-            cost_line = "续期方式: <code>保活自动免费续期（当前观看度已达 100%）</code>"
+            cost_line = f"消耗积分: <code>{cost_score}</code>（积分自动续期）"
         msg = TelegramMessage.render_html(t"""\
-            ✅ <b>自动保活续期成功</b>
+            ✅ <b>自动续期成功</b>
 
             服务器: <code>{server_name}</code>
             媒体账号: <code>{media_name}</code>
@@ -925,14 +937,14 @@ class AccountService:
             ok = await NotificationService(self.app).send_text_to_user(user_id, msg)
             if not ok:
                 logger.warning(
-                    "自动保活私聊通知送达失败（不影响已完成续期）: user_id={}, server={}",
+                    "自动续期私聊通知送达失败（不影响已完成续期）: user_id={}, server={}",
                     user_id,
                     server_name,
                 )
             return ok
         except (HTTPError, ValueError, TypeError, OSError) as e:
             logger.warning(
-                "自动保活私聊通知发送异常（不影响已完成续期）: user_id={}, server={}, err={}",
+                "自动续期私聊通知发送异常（不影响已完成续期）: user_id={}, server={}, err={}",
                 user_id,
                 server_name,
                 e,
@@ -947,7 +959,7 @@ class AccountService:
         now: datetime,
         effective_cycle_now: datetime,
     ) -> tuple[MediaUser, bool]:
-        """在续期或自动保活推进周期前，先结清已到点的月度流量重置
+        """在续期或自动续期推进周期前，先结清已到点的月度流量重置
 
         当 ``expires_at == next_reset_at`` 同刻触发续期，或过期补续时原账期重置点已过，
         先执行该期流量重置与安全解封，避免 ``extend_anchored_cycle`` 将重置时间推进到下月
@@ -979,26 +991,27 @@ class AccountService:
         user_id: int,
         server_id: int,
         *,
-        pre_expiry_window: timedelta = timedelta(hours=24),
-        anchor_rescue_grace: timedelta = timedelta(0),
+        anchor_rescue_grace: timedelta = EXPIRY_RESCUE_JITTER_GRACE,
     ) -> AutoRenewOutcome:
-        """尝试对单个媒体账号执行临近到期窗口下的时长自动保活
+        """尝试在媒体账号到达有效期时，按服务器当前准许的条件执行自动续期
 
-        仅当用户已手动开启 ``auto_renew``、未封禁、对应服务器开启保活且门槛大于 0、
-        当前周期有效播放时长达标且已进入临近到期窗口时免积分续期并推送私聊通知（绝不扣减或增发积分）。
+        仅当用户已开启 ``auto_renew``、未处于过期封禁、且已到达有效期（``expires_at <= now``）
+        时执行：优先判定服务器时长保活资格（达标则 0 积分免费续期）；若未开放或未达标且全局积分续期
+        生效，则原子校验并扣减 ``renew_score`` 后自动续期。外部核验成功前绝不扣分。
 
         Args:
             user_id: Telegram 用户 ID
             server_id: 目标媒体服务器 ID
-            pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）
-            anchor_rescue_grace: 到期边界自动保活抢救允许的调度唤醒容差；在
+            anchor_rescue_grace: 到期边界自动续期允许的调度唤醒容差；在
                 ``expires_at <= now <= expires_at + anchor_rescue_grace`` 范围内仍按
                 ``expires_at`` 顺推自然月，避免极短唤醒延迟误重锚 ``anchor_day``。
 
         Returns:
-            结构化 ``AutoRenewOutcome``，包含续期成功标志及临时通信异常 ``retryable_error`` 标志
+            结构化 ``AutoRenewOutcome``，包含续期成功标志、通道、消耗积分及临时通信异常 ``retryable_error`` 标志
         """
         await self.flush_pending_traffic()
+        dm_payload: dict[str, Any] | None = None
+        outcome: AutoRenewOutcome
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -1007,7 +1020,11 @@ class AccountService:
             if media_user.is_banned:
                 return AutoRenewOutcome(False, "媒体账号已处于过期封禁状态")
             if not media_user.auto_renew:
-                return AutoRenewOutcome(False, "用户未开启自动保活")
+                return AutoRenewOutcome(False, "用户未开启自动续期")
+
+            now = self._now()
+            if media_user.expires_at > now:
+                return AutoRenewOutcome(False, "账号尚未到达有效期")
 
             server = await self.server_repo.get_by_id(server_id, fresh=True)
             if not server or not server.is_enabled:
@@ -1018,17 +1035,45 @@ class AccountService:
                 media_user,
                 global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
             )
-            if not wt_status.is_eligible:
-                return AutoRenewOutcome(False, wt_status.status_text)
+            (
+                points_renew_open,
+                points_renew_reason,
+            ) = await self.config_repo.check_points_feature(
+                ConfigRepository.KEY_ENABLE_POINTS_RENEW
+            )
 
-            now = self._now()
-            if media_user.expires_at > now + pre_expiry_window:
-                return AutoRenewOutcome(False, "尚未进入临近到期自动保活窗口")
+            renew_score = 0
+            if wt_status.is_eligible:
+                renew_channel = _RenewChannel.WATCH_TIME
+            elif points_renew_open:
+                renew_channel = _RenewChannel.SCORE
+                tg_user = await self.telegram_repo.get_or_create(user_id)
+                renew_score = max(0, int(await self.telegram_repo.get_renew_score()))
+                if tg_user.score < renew_score:
+                    return AutoRenewOutcome(
+                        False,
+                        f"自动续期积分不足，需要 {renew_score} 积分（当前 {tg_user.score}）",
+                    )
+            else:
+                reason = (
+                    wt_status.status_text if wt_status.is_open else points_renew_reason
+                )
+                return AutoRenewOutcome(False, f"未满足自动续期条件：{reason}")
 
             client = self.media_clients.get(server_id)
             if not client:
                 return AutoRenewOutcome(
                     False, f"客户端未运行: {server.name}", retryable_error=True
+                )
+
+            media_info, is_retryable = await self._fetch_external_user(
+                client, media_user.media_id
+            )
+            if media_info is None:
+                return AutoRenewOutcome(
+                    False,
+                    "自动续期获取外部媒体账号失败",
+                    retryable_error=is_retryable,
                 )
 
             effective_cycle_now = now
@@ -1042,7 +1087,9 @@ class AccountService:
                 # 保留原 anchor_day（例如 31 日）并避免误清空尚在进行中的流量周期
                 effective_cycle_now = media_user.expires_at
 
-            # 若 expires_at == next_reset_at 同刻抢救保活，先结清当期流量重置并按需解除超流停用
+            # 若 expires_at == next_reset_at 同刻到期自动续期，先结清当期流量重置并按需解除超流停用
+            was_traffic_suspended = bool(media_user.is_traffic_suspended)
+            was_banned = bool(media_user.is_banned)
             (
                 media_user,
                 retry_unsuspend,
@@ -1052,27 +1099,39 @@ class AccountService:
                 now=now,
                 effective_cycle_now=effective_cycle_now,
             )
-
-            media_info, is_retryable = await self._fetch_external_user(
-                client, media_user.media_id
+            just_unsuspended_externally = (
+                was_traffic_suspended
+                and not was_banned
+                and not media_user.is_traffic_suspended
             )
-            if media_info is None:
-                return AutoRenewOutcome(
-                    False,
-                    "自动保活获取外部媒体账号失败",
-                    retryable_error=is_retryable,
-                )
 
-            restore_err = await self._restore_external_if_disabled(
-                client=client,
-                media_info=media_info,
-                media_user=media_user,
-                action_label="自动保活",
-            )
-            if restore_err is not None:
-                return AutoRenewOutcome(
-                    False, "自动保活恢复外部媒体账号状态失败", retryable_error=True
+            if not just_unsuspended_externally:
+                restore_err = await self._restore_external_if_disabled(
+                    client=client,
+                    media_info=media_info,
+                    media_user=media_user,
+                    action_label="自动续期",
                 )
+                if restore_err is not None:
+                    return AutoRenewOutcome(
+                        False, "自动续期恢复外部媒体账号状态失败", retryable_error=True
+                    )
+
+            # 确认外部账号正常后再原子扣除积分，防止外部 500 故障或跨服并发时出现误扣/负分
+            if renew_channel == _RenewChannel.SCORE and renew_score > 0:
+                deducted = await self.telegram_repo.deduct_score_if_sufficient(
+                    user_id, renew_score
+                )
+                if not deducted:
+                    return AutoRenewOutcome(
+                        False, f"自动续期失败，积分余额不足 {renew_score}"
+                    )
+                reloaded = await self.media_repo.get_by_id(
+                    user_id, server_id, fresh=True
+                )
+                if reloaded is None:
+                    return AutoRenewOutcome(False, "媒体账号不存在")
+                media_user = reloaded
 
             media_user = await self.media_repo.extend_anchored_cycle(
                 media_user,
@@ -1085,7 +1144,7 @@ class AccountService:
                 media_user,
                 now=now,
             )
-            if retry_unsuspend:
+            if retry_unsuspend and server.is_enabled:
                 schedule_traffic_unsuspend_retry(
                     scheduler,
                     user_id,
@@ -1093,47 +1152,57 @@ class AccountService:
                     run_date=now + timedelta(minutes=15),
                 )
 
-            await self._send_auto_renew_dm(
-                user_id=user_id,
-                server_name=server.name,
-                media_name=media_user.media_name,
-                expires_at=media_user.expires_at,
+            server_name = str(server.name)
+            media_name = str(media_user.media_name)
+            new_expires_at = media_user.expires_at
+            dm_payload = {
+                "user_id": user_id,
+                "server_name": server_name,
+                "media_name": media_name,
+                "expires_at": new_expires_at,
+                "renew_channel": renew_channel,
+                "cost_score": renew_score,
+            }
+            exp_str = new_expires_at.strftime("%Y-%m-%d %H:%M:%S")
+            channel_desc = (
+                "有效播放时长"
+                if renew_channel == _RenewChannel.WATCH_TIME
+                else f"消耗 {renew_score} 积分"
             )
-
-            exp_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
             logger.info(
-                "自动保活续期成功: user_id={}, server_id={}, expires_at={}",
+                "自动续期成功: user_id={}, server_id={}, channel={}, cost={}, expires_at={}",
                 user_id,
                 server_id,
+                renew_channel.value,
+                renew_score,
                 exp_str,
             )
-            return AutoRenewOutcome(
+            outcome = AutoRenewOutcome(
                 True,
-                f"已通过有效播放时长自动保活续期至 {exp_str}",
-                expires_at=media_user.expires_at,
+                f"已通过{channel_desc}自动续期至 {exp_str}",
+                expires_at=new_expires_at,
+                channel=renew_channel,
+                cost_score=renew_score,
             )
 
-    async def process_auto_renewals(
-        self,
-        *,
-        pre_expiry_window: timedelta = timedelta(hours=24),
-    ) -> int:
-        """批量扫描临近到期窗口内符合自动保活条件的媒体账号并执行免积分续期
+        if dm_payload is not None:
+            await self._send_auto_renew_dm(**dm_payload)
+        return outcome
 
-        Args:
-            pre_expiry_window: 临近到期判定窗口（默认到期前 24 小时）
+    async def process_auto_renewals(self) -> int:
+        """批量扫描已到达有效期且开启自动续期的媒体账号并按服务器准许条件续期
 
         Returns:
-            本次成功完成自动保活续期的账号数量
+            本次成功完成自动续期的账号数量
         """
-        deadline = self._now() + pre_expiry_window
+        deadline = self._now()
         candidates = await self.media_repo.find_auto_renew_candidates(deadline)
         # 仅提取主键标量，使逐账号进入锁内执行 end_clean_read_tx() + fresh=True 重查时不受此前 ORM 实例或读快照牵连
         target_pairs = [(mu.id, mu.server_id) for mu in candidates]
         renewed_count = 0
         for uid, sid in target_pairs:
             outcome = await self.try_auto_renew_account(
-                uid, sid, pre_expiry_window=pre_expiry_window
+                uid, sid, anchor_rescue_grace=EXPIRY_RESCUE_JITTER_GRACE
             )
             if outcome.renewed:
                 renewed_count += 1
@@ -1142,7 +1211,7 @@ class AccountService:
     async def toggle_auto_renew(
         self, user_id: int, server_id: int, enabled: bool | None = None
     ) -> Result:
-        """切换或设置指定媒体账号的用户可控自动保活开关
+        """切换或设置指定媒体账号的用户可控自动续期开关
 
         Args:
             user_id: Telegram 用户 ID
@@ -1156,30 +1225,56 @@ class AccountService:
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
             if media_user is None:
-                return Result(False, "您尚未注册，请先注册后再设置自动保活。")
+                return Result(False, "您尚未注册，请先注册后再设置自动续期。")
 
             server = await self.server_repo.get_by_id(server_id, fresh=True)
             if not server:
                 return Result(False, "服务器配置已失效。")
 
+            target_state = (not media_user.auto_renew) if enabled is None else enabled
             wt_status = evaluate_watch_time_renewal(
                 server,
                 media_user,
                 global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
             )
-            if not wt_status.is_open:
+            points_renew_open = await self.config_repo.is_points_feature_enabled(
+                ConfigRepository.KEY_ENABLE_POINTS_RENEW
+            )
+            auto_open = is_auto_renew_open(
+                server,
+                watch_time_renewal_open=wt_status.is_open,
+                points_renew_open=points_renew_open,
+            )
+
+            # 仅开启时要求服务器至少开放一种自动续期条件；关闭开关始终放行，以便历史用户可随时退订
+            if target_state and not auto_open:
+                if not server.is_enabled:
+                    return Result(False, "当前服务器已停用，暂不支持开启自动续期。")
+                if ConfigRepository.is_points_enabled_from_cache():
+                    return Result(
+                        False,
+                        "当前服务器未开放可自动触发的续期条件（时长保活与积分续期均未生效）。",
+                    )
                 return Result(
                     False,
-                    "当前服务器未开放时长保活续期（请确认全局及单服时长统计与保活开关均已开启）。",
+                    "当前服务器未开放可自动触发的续期条件（请先开启有效播放时长保活续期）。",
                 )
 
-            target_state = (not media_user.auto_renew) if enabled is None else enabled
             media_user = await self.media_repo.set_auto_renew(media_user, target_state)
 
-            if target_state:
-                msg = "已开启自动保活：临近到期且本周期有效播放时长达标时将自动免积分续期。"
+            if not target_state:
+                msg = "已关闭自动续期。"
+            elif wt_status.is_open and points_renew_open:
+                msg = "已开启自动续期：到达有效期时将优先尝试时长免分续期，未达标时自动消耗积分续期。"
+            elif wt_status.is_open:
+                msg = (
+                    "已开启自动续期：到达有效期且本周期观看度达 100% 时将自动免积分续期。"
+                    if ConfigRepository.is_points_enabled_from_cache()
+                    else "已开启自动续期：到达有效期且本周期观看度达 100% 时将自动免费续期。"
+                )
             else:
-                msg = "已关闭自动保活。"
+                renew_score = max(0, int(await self.telegram_repo.get_renew_score()))
+                msg = f"已开启自动续期：到达有效期时将自动消耗 {renew_score} 积分续期。"
 
             return Result(True, msg, extra_data={"auto_renew": target_state})
 
@@ -2536,10 +2631,9 @@ class AccountService:
                 is_banned = bool(fresh_mu.is_banned)
                 expires_at = fresh_mu.expires_at
                 delete_at = fresh_mu.delete_at
-                auto_renew = bool(fresh_mu.auto_renew)
                 srv_enabled = bool(fresh_srv is not None and fresh_srv.is_enabled)
 
-            # 停用服务器已断开外部客户端连接，禁止发外部删号/封禁/保活请求，仅保留数据并在末段移除其调度节点
+            # 停用服务器已断开外部客户端连接，禁止发外部删号/封禁/自动续期请求，仅保留数据并在末段移除其调度节点
             if not srv_enabled:
                 remove_account_lifecycle_jobs(scheduler, uid, sid)
                 continue
@@ -2550,20 +2644,12 @@ class AccountService:
                     summary["deleted"] += 1
                     continue
             elif not is_banned and expires_at <= now:
+                # 已到期的账号由 ban_expired_account 先复核自动续期（达标时长/积分），不满足再封禁
                 ban_res = await self.ban_expired_account(uid, sid)
                 if ban_res == "renewed":
                     summary["auto_renewed"] += 1
                 elif ban_res == "banned":
                     summary["banned"] += 1
-            elif (
-                not is_banned
-                and auto_renew
-                and (expires_at - timedelta(hours=24)) <= now
-            ):
-                # 临近窗口内仅主动补救可自动保活账号；未开启或未达标者仅补齐 expiry_ban 而不重复推送提醒
-                auto_res = await self.try_auto_renew_account(uid, sid)
-                if auto_res.renewed:
-                    summary["auto_renewed"] += 1
 
             async with get_account_lock(uid, sid):
                 await self.media_repo.end_clean_read_tx()
@@ -2668,18 +2754,45 @@ class AccountService:
 
         exp_str = ctx.expires_at.strftime("%Y-%m-%d %H:%M:%S")
         paid_methods = "积分或激活码" if ctx.points_renew_enabled else "激活码"
-        if ctx.watch_open and ctx.watch_eligible:
-            hint_line = (
-                "当前观看度已达 100%，可前往 Mini App 免费续期"
-                if not ctx.auto_renew
-                else "当前观看度已达 100%，请确认账号状态。"
-            )
+        if ctx.auto_renew:
+            if ctx.watch_open and ctx.watch_eligible:
+                hint_line = (
+                    "已开启自动续期：当前观看度已达 100%，到期时将自动免积分续期。"
+                    if ctx.points_renew_enabled
+                    else "已开启自动续期：当前观看度已达 100%，到期时将自动免费续期。"
+                )
+            elif ctx.watch_open:
+                if ctx.points_renew_enabled:
+                    if ctx.user_score >= ctx.points_renew_score:
+                        hint_line = (
+                            f"已开启自动续期：当前{ctx.watch_status_text}；若到期前观看度达 100% 将免费续期，"
+                            f"否则将自动消耗 {ctx.points_renew_score} 积分续期（当前积分 {ctx.user_score}，充足）。"
+                        )
+                    else:
+                        hint_line = (
+                            f"已开启自动续期：当前{ctx.watch_status_text}，且积分不足"
+                            f"（需 {ctx.points_renew_score} 积分，当前 {ctx.user_score}）；"
+                            "请在到期前继续观影达标、补充积分或使用激活码续期，以免过期封禁。"
+                        )
+                else:
+                    hint_line = f"已开启自动续期：当前{ctx.watch_status_text}，请在到期前继续观影达 100%（到期后自动免费续期）或使用激活码手动续期。"
+            elif ctx.points_renew_enabled:
+                if ctx.user_score >= ctx.points_renew_score:
+                    hint_line = (
+                        f"已开启自动续期：到期时将自动消耗 {ctx.points_renew_score} 积分续期"
+                        f"（当前积分 {ctx.user_score}，充足）。"
+                    )
+                else:
+                    hint_line = (
+                        f"已开启自动续期，但当前积分不足（需 {ctx.points_renew_score} 积分，当前 {ctx.user_score}），"
+                        "请在到期前补充积分或使用激活码续期，以免过期封禁。"
+                    )
+            else:
+                hint_line = "已开启自动续期，但当前服务器暂未开放可自动触发的续期条件，请及时使用激活码手动续期，以免过期封禁。"
+        elif ctx.watch_open and ctx.watch_eligible:
+            hint_line = "当前观看度已达 100%，可前往 Mini App 免费续期。"
         elif ctx.watch_open:
-            hint_line = (
-                f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用{paid_methods}续期。"
-                if ctx.auto_renew
-                else f"保活进度: {ctx.watch_status_text}，可使用{paid_methods}或在达标后免费续期。"
-            )
+            hint_line = f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用{paid_methods}续期。"
         else:
             hint_line = f"请前往 Mini App 使用{paid_methods}及时续期，以免过期封禁。"
 
@@ -2711,16 +2824,17 @@ class AccountService:
         *,
         pre_expiry_window: timedelta = timedelta(hours=24),
     ) -> Literal[
-        "auto_renewed",
         "reminded",
-        "retryable_error",
         "not_due",
         "already_expired",
         "banned",
         "missing",
         "server_disabled",
     ]:
-        """处理单个媒体账号临近到期节点检查：达标且开启自动保活则免分续期，否则发到期提醒
+        """处理单个媒体账号临近到期节点检查：仅评估并推送当前续期条件与到期提醒
+
+        到达有效期的实际自动续期统一推迟至 ``expires_at`` 到期节点（由 ``ban_expired_account``
+        前置复核或过期扫描触发），确保用户能在到期前充分利用剩余时间达成免分观影条件。
 
         Args:
             user_id: Telegram 用户 ID。
@@ -2730,14 +2844,6 @@ class AccountService:
         Returns:
             执行结果状态字面量，便于单次任务调度器与测试观测结果分流。
         """
-        auto_outcome = await self.try_auto_renew_account(
-            user_id, server_id, pre_expiry_window=pre_expiry_window
-        )
-        if auto_outcome.renewed:
-            return "auto_renewed"
-        if auto_outcome.retryable_error:
-            return "retryable_error"
-
         reminder_ctx: _PreExpiryReminderContext | None = None
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
@@ -2772,16 +2878,28 @@ class AccountService:
             points_renew_enabled = await self.config_repo.is_points_feature_enabled(
                 ConfigRepository.KEY_ENABLE_POINTS_RENEW
             )
+            auto_renew_flag = bool(fresh_mu.auto_renew)
+            points_renew_score = 0
+            user_score = 0
+            if points_renew_enabled and auto_renew_flag:
+                points_renew_score = max(
+                    0, int(await self.telegram_repo.get_renew_score())
+                )
+                tg_user = await self.telegram_repo.get_by_id(user_id)
+                user_score = int(tg_user.score) if tg_user is not None else 0
+
             reminder_ctx = _PreExpiryReminderContext(
                 user_id=user_id,
                 server_name=fresh_srv.name,
                 media_name=fresh_mu.media_name,
                 expires_at=fresh_mu.expires_at,
-                auto_renew=bool(fresh_mu.auto_renew),
+                auto_renew=auto_renew_flag,
                 watch_open=wt_status.is_open,
                 watch_eligible=wt_status.is_eligible,
                 watch_status_text=wt_status.status_text,
                 points_renew_enabled=points_renew_enabled,
+                points_renew_score=points_renew_score,
+                user_score=user_score,
             )
 
         # 释放非重入账号锁后再发起 Telegram 私聊网络 IO，防止长耗时网络阻塞同账号其他操作
@@ -2795,12 +2913,12 @@ class AccountService:
         *,
         check_auto_renew: bool = True,
     ) -> Literal["renewed", "banned", "skipped", "retryable_error"]:
-        """对单个到期媒体账号执行到期前自动保活复核与过期封禁落库及宽限删号调度
+        """对单个到期媒体账号执行到期自动续期复核与过期封禁落库及宽限删号调度
 
         Args:
             user_id: Telegram 用户 ID。
             server_id: 目标媒体服务器 ID。
-            check_auto_renew: 是否在封禁前复核一次自动保活资格（默认 ``True``）。
+            check_auto_renew: 是否在封禁前复核一次自动续期资格（默认 ``True``）。
 
         Returns:
             ``"renewed"``、``"banned"``、``"skipped"`` 或 ``"retryable_error"``。
@@ -2828,14 +2946,14 @@ class AccountService:
             )
             if auto_outcome.renewed:
                 logger.info(
-                    "到期封禁前复核触发自动保活成功，跳过封禁媒体账号: {} Server: {}",
+                    "到期封禁前复核触发自动续期成功，跳过封禁媒体账号: {} Server: {}",
                     user_id,
                     server_id,
                 )
                 return "renewed"
             if auto_outcome.retryable_error:
                 logger.warning(
-                    "自动保活媒体账号外部核验临时失败，本次跳过封禁等待重试: {} Server: {}",
+                    "自动续期媒体账号外部核验临时失败，本次跳过封禁等待重试: {} Server: {}",
                     user_id,
                     server_id,
                 )

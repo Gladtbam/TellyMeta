@@ -85,6 +85,30 @@ def is_watch_time_renewal_open(
     return bool(server.enable_watch_time_renewal) and threshold_seconds > 0
 
 
+def is_auto_renew_open(
+    server: ServerInstance | None,
+    *,
+    watch_time_renewal_open: bool,
+    points_renew_open: bool,
+) -> bool:
+    """判断指定服务器当前是否开放“自动续期”能力
+
+    只要目标服务器已启用且存在至少一种可自动触发的续期条件
+    （单服时长保活续期或全局积分续期），即允许用户为该服账号开启自动续期。
+
+    Args:
+        server: 目标媒体服务器实例。
+        watch_time_renewal_open: 当前服务器是否有效开放时长保活续期。
+        points_renew_open: 当前系统是否有效开放积分续期。
+
+    Returns:
+        服务器已启用且任一续期条件生效时返回 ``True``，否则返回 ``False``。
+    """
+    if server is None or not server.is_enabled:
+        return False
+    return bool(watch_time_renewal_open or points_renew_open)
+
+
 def is_traffic_effective(
     global_traffic_enabled: bool,
     server: ServerInstance | None,

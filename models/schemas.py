@@ -477,7 +477,7 @@ class RequestSubmitDto(BaseModel):
 
 
 class AutoRenewToggleDto(BaseModel):
-    """媒体账号自动保活开关切换请求体"""
+    """媒体账号自动续期开关切换请求体"""
 
     enabled: bool | None = None
 
@@ -506,6 +506,7 @@ class MediaAccountDto(BaseModel):
     anchor_day: int | None = None
     next_reset_at: datetime | None = None
     auto_renew: bool = False
+    auto_renew_open: bool = False
     enable_watch_time_renewal: bool = False
     watch_time_renewal_threshold_seconds: int = 0
     watch_time_renewal_open: bool = False

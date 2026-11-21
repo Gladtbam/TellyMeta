@@ -21,6 +21,7 @@ from core.economy_policy import (
     calculate_traffic_pack_unit_bytes,
     evaluate_request_access,
     evaluate_traffic_pack_access,
+    is_auto_renew_open,
     is_traffic_effective,
     is_watch_time_effective,
 )
@@ -481,6 +482,11 @@ class UserService:
                         "anchor_day": anchor_day,
                         "next_reset_at": next_reset_at,
                         "auto_renew": bool(mu.auto_renew),
+                        "auto_renew_open": is_auto_renew_open(
+                            server,
+                            watch_time_renewal_open=wt_status.is_open,
+                            points_renew_open=enable_points_renew,
+                        ),
                         "enable_watch_time_renewal": (
                             bool(server.enable_watch_time_renewal) if server else False
                         ),

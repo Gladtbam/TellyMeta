@@ -150,18 +150,23 @@ class MediaRepository:
     async def find_auto_renew_candidates(
         self, deadline: datetime
     ) -> Sequence[MediaUser]:
-        """查找在临近到期截止时间前满足自动保活初步条件的媒体账号列表
+        """查找已到达截止时间且满足自动续期前置条件的媒体账号列表
 
-        严格受全局 ``watch_time:enable`` 与服务器 ``enable_watch_time`` 逐级一票否决限制，
-        关闭任一时长采集开关时返回空列表。
+        若全局有效播放时长与全局积分续期均关闭，直接快速返回空列表；
+        否则返回已开启自动续期、未处于过期封禁、所属服务器启用且已到达 ``deadline`` 的账号，
+        由服务层加锁复核其具体准许的续期条件（时长保活或积分续期）。
 
         Args:
-            deadline: 临近到期截止时间点（通常为 ``now + pre_expiry_window``）
+            deadline: 到期判定截止时间点（通常为当前时间 ``now``）
 
         Returns:
-            开启自动保活、未封禁、所属服务器启用采集与保活且观看时长已达门槛的账号列表
+            待自动续期复核的媒体账号列表
         """
-        if not ConfigRepository.is_watch_time_enabled_from_cache():
+        watch_open = ConfigRepository.is_watch_time_enabled_from_cache()
+        points_open = ConfigRepository.is_points_feature_enabled_from_cache(
+            ConfigRepository.KEY_ENABLE_POINTS_RENEW
+        )
+        if not watch_open and not points_open:
             return []
         stmt = (
             select(MediaUser)
@@ -171,11 +176,6 @@ class MediaRepository:
                 MediaUser.is_banned.is_(False),
                 MediaUser.expires_at <= deadline,
                 ServerInstance.is_enabled.is_(True),
-                ServerInstance.enable_watch_time.is_(True),
-                ServerInstance.enable_watch_time_renewal.is_(True),
-                ServerInstance.watch_time_renewal_threshold_seconds > 0,
-                MediaUser.cycle_watch_time_seconds
-                >= ServerInstance.watch_time_renewal_threshold_seconds,
             )
         )
         result = await self.session.execute(stmt)

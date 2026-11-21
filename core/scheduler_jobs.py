@@ -381,7 +381,7 @@ async def run_account_traffic_unsuspend(user_id: int, server_id: int) -> None:
 
 
 async def run_account_pre_expiry_check(user_id: int, server_id: int) -> None:
-    """顶层可序列化单次任务：临近到期节点复核自动保活或发送续期提醒。
+    """顶层可序列化单次任务：临近到期节点发送续期提醒与当前条件状态。
 
     Args:
         user_id: Telegram 用户 ID。
@@ -398,7 +398,7 @@ async def run_account_pre_expiry_check(user_id: int, server_id: int) -> None:
 
 
 async def run_account_expiry_ban(user_id: int, server_id: int) -> None:
-    """顶层可序列化单次任务：到期准点复核自动保活，未续期则执行过期封禁并调度宽限删号。
+    """顶层可序列化单次任务：到期准点复核自动续期条件，未续期则执行过期封禁并调度宽限删号。
 
     Args:
         user_id: Telegram 用户 ID。
@@ -522,8 +522,8 @@ def apply_ops_schedules(scheduler, ops_cfg: dict[str, Any] | None = None) -> Non
 async def ban_expired_users() -> None:
     """每日兜底巡检：封禁漏网过期媒体账号（降级保留，主路径由每账号 expiry_ban 准点驱动）
 
-    检查所有过期媒体账号的订阅状态，封禁前先复核是否已开启自动保活且时长达标；
-    未达标或未开启时，在账号串行锁内二次核验最新到期状态，随后先在媒体服务器上禁用已过期账号，
+    检查所有过期媒体账号的订阅状态，封禁前先复核是否已开启自动续期并满足服务器准许条件；
+    未满足或未开启时，在账号串行锁内二次核验最新到期状态，随后先在媒体服务器上禁用已过期账号，
     再标记本地封禁状态、设置宽限期删除时间并补全 grace_delete 调度。
     """
     from main import app  # 避免循环导入
@@ -561,8 +561,8 @@ async def ban_expired_users() -> None:
             await session.close()
 
 
-# 主路径已由每账号单次 add_job（pre_expiry_check/expiry_ban）精准驱动，
-# 本任务降级保留为停机/异常恢复后的每日兜底自动保活巡检（遵循 ADR-0003）
+# 主路径已由每账号单次 add_job（expiry_ban）精准驱动，
+# 本任务降级保留为停机/异常恢复后的每日兜底自动续期巡检（遵循 ADR-0003）
 @scheduled_job(
     "cron",
     hour=0,
@@ -571,7 +571,7 @@ async def ban_expired_users() -> None:
     replace_existing=True,
 )
 async def auto_renew_watch_time_users() -> None:
-    """每日兜底巡检：补查临近到期窗口内开启自动保活且时长达标的媒体账号并自动免分续期"""
+    """每日兜底巡检：补查已到达有效期且开启自动续期的媒体账号并按服务器准许条件自动续期"""
     from main import app  # 避免循环导入
     from services.account_service import AccountService
 
@@ -580,9 +580,9 @@ async def auto_renew_watch_time_users() -> None:
             account_service = AccountService(app, session)
             renewed_count = await account_service.process_auto_renewals()
             if renewed_count > 0:
-                logger.info("本次自动保活续期完成账号数: {}", renewed_count)
+                logger.info("本次兜底自动续期完成账号数: {}", renewed_count)
         except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.exception("执行自动保活续期任务时出错: {}", e)
+            logger.exception("执行兜底自动续期任务时出错: {}", e)
             await session.rollback()
         finally:
             await session.close()
@@ -876,7 +876,7 @@ async def recover_and_calibrate_account_lifecycles(app: FastAPI) -> dict[str, in
     """应用启动恢复校准全部媒体账号生命周期调度节点并补救停机遗漏状态。
 
     包括为存量老账号平滑回填锚定周期与缺省 ``delete_at``、清理残留孤立任务、
-    补跑停机错过的账期重置/到期封禁/宽限删号/临近窗口自动保活，并补全所有未来单次节点任务。
+    补跑停机错过的账期重置/到期自动续期与封禁/宽限删号，并补全所有未来单次节点任务。
 
     Args:
         app: FastAPI 应用实例。
