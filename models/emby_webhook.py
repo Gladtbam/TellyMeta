@@ -1,13 +1,13 @@
 """
 Emby Webhook Pydantic Models
 
-基于 Emby.Webhooks.dll (v1.0.37.0) 和 MediaBrowser.Controller (v4.9.1.90) 反编译生成的 Pydantic 模型。
+基于 Emby.Webhooks.dll (v1.0.39.0)、MediaBrowser.Controller.dll (v4.10.2.0) 与 MediaBrowser.Model.dll (v4.10.2.0) 反编译生成的 Pydantic 模型。
 用于解析 Emby Server 通过 Webhook 插件发送的 JSON 通知数据。
 
 使用 Literal + Discriminated Union 实现类型安全的事件处理。
 每个事件类型有自己的模型，字段根据实际情况定义为必需或可选。
 
-Python 3.11+ 兼容
+Python 3.15+ 兼容
 """
 
 from datetime import datetime
@@ -165,6 +165,9 @@ class TranscodeReason(StrEnum):
     SUBTITLE_CODEC_NOT_SUPPORTED = "SubtitleCodecNotSupported"
     DIRECT_PLAY_ERROR = "DirectPlayError"
     VIDEO_RANGE_NOT_SUPPORTED = "VideoRangeNotSupported"
+    SUBTITLE_CONTENT_OPTIONS_ENABLED = "SubtitleContentOptionsEnabled"
+    EXTERNAL_AUDIO_NOT_SUPPORTED = "ExternalAudioNotSupported"
+    AUDIO_DELAY_NOT_SUPPORTED = "AudioDelayNotSupported"
 
 
 class DayOfWeek(IntEnum):
@@ -238,24 +241,29 @@ class NotificationRecordingInfo(EmbyBaseModel):
 
 
 class MediaStream(EmbyBaseModel):
-    """媒体流信息"""
+    """媒体流信息（MediaBrowser.Model.Entities.MediaStream）"""
 
     codec: str | None = Field(default=None, alias="Codec")
     codec_tag: str | None = Field(default=None, alias="CodecTag")
     language: str | None = Field(default=None, alias="Language")
+    display_language: str | None = Field(default=None, alias="DisplayLanguage")
     color_transfer: str | None = Field(default=None, alias="ColorTransfer")
     color_primaries: str | None = Field(default=None, alias="ColorPrimaries")
     color_space: str | None = Field(default=None, alias="ColorSpace")
+    video_range: str | None = Field(default=None, alias="VideoRange")
     title: str | None = Field(default=None, alias="Title")
     display_title: str | None = Field(default=None, alias="DisplayTitle")
     is_interlaced: bool = Field(default=False, alias="IsInterlaced")
     channel_layout: str | None = Field(default=None, alias="ChannelLayout")
     bit_rate: int | None = Field(default=None, alias="BitRate")
     bit_depth: int | None = Field(default=None, alias="BitDepth")
+    ref_frames: int | None = Field(default=None, alias="RefFrames")
+    rotation: int | None = Field(default=None, alias="Rotation")
     channels: int | None = Field(default=None, alias="Channels")
     sample_rate: int | None = Field(default=None, alias="SampleRate")
     is_default: bool = Field(default=False, alias="IsDefault")
     is_forced: bool = Field(default=False, alias="IsForced")
+    is_hearing_impaired: bool = Field(default=False, alias="IsHearingImpaired")
     height: int | None = Field(default=None, alias="Height")
     width: int | None = Field(default=None, alias="Width")
     average_frame_rate: float | None = Field(default=None, alias="AverageFrameRate")
@@ -265,16 +273,29 @@ class MediaStream(EmbyBaseModel):
     aspect_ratio: str | None = Field(default=None, alias="AspectRatio")
     index: int = Field(default=0, alias="Index")
     is_external: bool = Field(default=False, alias="IsExternal")
+    is_anamorphic: bool | None = Field(default=None, alias="IsAnamorphic")
+    extended_video_type: str | None = Field(default=None, alias="ExtendedVideoType")
+    extended_video_sub_type: str | None = Field(
+        default=None, alias="ExtendedVideoSubType"
+    )
+    extended_video_sub_type_description: str | None = Field(
+        default=None, alias="ExtendedVideoSubTypeDescription"
+    )
+    subtitle_location_type: str | None = Field(
+        default=None, alias="SubtitleLocationType"
+    )
     path: str | None = Field(default=None, alias="Path")
     pixel_format: str | None = Field(default=None, alias="PixelFormat")
     level: float | None = Field(default=None, alias="Level")
 
 
 class ChapterInfo(EmbyBaseModel):
-    """章节信息"""
+    """章节信息（MediaBrowser.Model.Entities.ChapterInfo）"""
 
     start_position_ticks: int = Field(default=0, alias="StartPositionTicks")
     name: str | None = Field(default=None, alias="Name")
+    marker_type: str | None = Field(default=None, alias="MarkerType")
+    chapter_index: int | None = Field(default=None, alias="ChapterIndex")
     image_path: str | None = Field(default=None, alias="ImagePath")
     image_tag: str | None = Field(default=None, alias="ImageTag")
 
@@ -311,12 +332,14 @@ class MediaSourceInfo(EmbyBaseModel):
 
 
 class NotificationPlaybackInfo(EmbyBaseModel):
-    """通知播放信息"""
+    """通知播放信息（Emby.Notifications.NotificationPlaybackInfo）"""
 
     played_to_completion: bool | None = Field(default=None, alias="PlayedToCompletion")
     position_ticks: int | None = Field(default=None, alias="PositionTicks")
     playlist_index: int | None = Field(default=None, alias="PlaylistIndex")
     playlist_length: int | None = Field(default=None, alias="PlaylistLength")
+    playlist_item_id: str | None = Field(default=None, alias="PlaylistItemId")
+    next_media_type: str | None = Field(default=None, alias="NextMediaType")
     play_session_id: str | None = Field(default=None, alias="PlaySessionId")
     media_source: MediaSourceInfo | None = Field(default=None, alias="MediaSource")
 
@@ -340,18 +363,19 @@ class TranscodingInfo(EmbyBaseModel):
     transcode_reasons: list[TranscodeReason] = Field(
         default_factory=list, alias="TranscodeReasons"
     )
-    # Emby 4.10.x 实测补充字段：码率细分、转码进度、编解码器硬件状态与管线步骤明细
+    # Emby 4.10.x 实测及 Emby.SDK 补充字段：码率细分、转码进度（double?）、硬件加速与管线步骤明细
     sub_protocol: str | None = Field(default=None, alias="SubProtocol")
     audio_bitrate: int | None = Field(default=None, alias="AudioBitrate")
     video_bitrate: int | None = Field(default=None, alias="VideoBitrate")
-    transcoding_position_ticks: int | None = Field(
+    transcoding_position_ticks: float | None = Field(
         default=None, alias="TranscodingPositionTicks"
     )
-    transcoding_start_position_ticks: int | None = Field(
+    transcoding_start_position_ticks: float | None = Field(
         default=None, alias="TranscodingStartPositionTicks"
     )
     current_cpu_usage: float | None = Field(default=None, alias="CurrentCpuUsage")
     average_cpu_usage: float | None = Field(default=None, alias="AverageCpuUsage")
+    current_throttle: int | None = Field(default=None, alias="CurrentThrottle")
     video_decoder: str | None = Field(default=None, alias="VideoDecoder")
     video_decoder_is_hardware: bool | None = Field(
         default=None, alias="VideoDecoderIsHardware"
@@ -359,12 +383,18 @@ class TranscodingInfo(EmbyBaseModel):
     video_decoder_media_type: str | None = Field(
         default=None, alias="VideoDecoderMediaType"
     )
+    video_decoder_hw_accel: str | None = Field(
+        default=None, alias="VideoDecoderHwAccel"
+    )
     video_encoder: str | None = Field(default=None, alias="VideoEncoder")
     video_encoder_is_hardware: bool | None = Field(
         default=None, alias="VideoEncoderIsHardware"
     )
     video_encoder_media_type: str | None = Field(
         default=None, alias="VideoEncoderMediaType"
+    )
+    video_encoder_hw_accel: str | None = Field(
+        default=None, alias="VideoEncoderHwAccel"
     )
     video_pipeline_info: list[dict[str, Any]] = Field(
         default_factory=list, alias="VideoPipelineInfo"
@@ -380,12 +410,13 @@ class TranscodingInfo(EmbyBaseModel):
 
 
 class DeviceInfo(EmbyBaseModel):
-    """设备信息"""
+    """设备信息（MediaBrowser.Model.Devices.DeviceInfo）"""
 
-    name: str = Field(alias="Name")
+    name: str | None = Field(default=None, alias="Name")
     id: str | None = Field(
         default=None, alias="Id"
     )  # 在 authenticationfailed 事件中不存在
+    reported_device_id: str | None = Field(default=None, alias="ReportedDeviceId")
     app_name: str | None = Field(default=None, alias="AppName")
     app_version: str | None = Field(default=None, alias="AppVersion")
     last_user_name: str | None = Field(default=None, alias="LastUserName")
@@ -396,64 +427,25 @@ class DeviceInfo(EmbyBaseModel):
 
 
 # ============================================================================
-# LiveTV 相关模型 (LiveTV Models)
-# ============================================================================
-
-
-class BaseTimerInfoDto(EmbyBaseModel):
-    """基础定时器信息"""
-
-    id: str | None = Field(default=None, alias="Id")
-    channel_id: str | None = Field(default=None, alias="ChannelId")
-    channel_name: str | None = Field(default=None, alias="ChannelName")
-    program_id: str | None = Field(default=None, alias="ProgramId")
-    name: str | None = Field(default=None, alias="Name")
-    overview: str | None = Field(default=None, alias="Overview")
-    start_date: datetime | None = Field(default=None, alias="StartDate")
-    end_date: datetime | None = Field(default=None, alias="EndDate")
-    priority: int = Field(default=0, alias="Priority")
-    pre_padding_seconds: int = Field(default=0, alias="PrePaddingSeconds")
-    post_padding_seconds: int = Field(default=0, alias="PostPaddingSeconds")
-    keep_until: KeepUntil | None = Field(default=None, alias="KeepUntil")
-
-
-class TimerInfoDto(BaseTimerInfoDto):
-    """定时器信息"""
-
-    status: RecordingStatus | None = Field(default=None, alias="Status")
-    series_timer_id: str | None = Field(default=None, alias="SeriesTimerId")
-    run_time_ticks: int | None = Field(default=None, alias="RunTimeTicks")
-    timer_type: TimerType | None = Field(default=None, alias="TimerType")
-
-
-class SeriesTimerInfoDto(BaseTimerInfoDto):
-    """系列定时器信息"""
-
-    record_any_time: bool = Field(default=False, alias="RecordAnyTime")
-    record_any_channel: bool = Field(default=False, alias="RecordAnyChannel")
-    keep_up_to: int = Field(default=0, alias="KeepUpTo")
-    record_new_only: bool = Field(default=False, alias="RecordNewOnly")
-    days: list[DayOfWeek] = Field(default_factory=list, alias="Days")
-    timer_type: TimerType | None = Field(default=None, alias="TimerType")
-
-
-# ============================================================================
 # 插件和更新模型 (Plugin & Update Models)
 # ============================================================================
 
 
 class PluginInfo(EmbyBaseModel):
-    """插件信息"""
+    """插件信息（MediaBrowser.Model.Plugins.PluginInfo）"""
 
     name: str = Field(alias="Name")
     version: str = Field(alias="Version")
     id: str = Field(alias="Id")
+    configuration_file_name: str | None = Field(
+        default=None, alias="ConfigurationFileName"
+    )
     description: str | None = Field(default=None, alias="Description")
     image_tag: str | None = Field(default=None, alias="ImageTag")
 
 
 class PackageVersionInfo(EmbyBaseModel):
-    """包版本信息"""
+    """包版本信息（MediaBrowser.Model.Updates.PackageVersionInfo）"""
 
     name: str | None = Field(default=None, alias="name")
     guid: str | None = Field(default=None, alias="guid")
@@ -462,7 +454,12 @@ class PackageVersionInfo(EmbyBaseModel):
         default=None, alias="classification"
     )
     description: str | None = Field(default=None, alias="description")
+    required_version_str: str | None = Field(default=None, alias="requiredVersionStr")
     source_url: str | None = Field(default=None, alias="sourceUrl")
+    checksum: str | None = Field(default=None, alias="checksum")
+    target_filename: str | None = Field(default=None, alias="targetFilename")
+    info_url: str | None = Field(default=None, alias="infoUrl")
+    runtimes: str | None = Field(default=None, alias="runtimes")
     timestamp: datetime | None = Field(default=None, alias="timestamp")
 
 
@@ -503,13 +500,19 @@ class BaseItemPerson(EmbyBaseModel):
 
 
 class UserItemDataDto(EmbyBaseModel):
-    """用户项目数据"""
+    """用户项目数据（MediaBrowser.Model.Dto.UserItemDataDto）"""
 
+    rating: float | None = Field(default=None, alias="Rating")
+    played_percentage: float | None = Field(default=None, alias="PlayedPercentage")
+    unplayed_item_count: int | None = Field(default=None, alias="UnplayedItemCount")
     playback_position_ticks: int = Field(default=0, alias="PlaybackPositionTicks")
     play_count: int = Field(default=0, alias="PlayCount")
     is_favorite: bool = Field(default=False, alias="IsFavorite")
     played: bool = Field(default=False, alias="Played")
     last_played_date: datetime | None = Field(default=None, alias="LastPlayedDate")
+    key: str | None = Field(default=None, alias="Key")
+    item_id: str | None = Field(default=None, alias="ItemId")
+    server_id: str | None = Field(default=None, alias="ServerId")
 
 
 class BaseItemDto(EmbyBaseModel):
@@ -531,7 +534,7 @@ class BaseItemDto(EmbyBaseModel):
     container: str | None = Field(default=None, alias="Container")
     sort_name: str | None = Field(default=None, alias="SortName")
     premiere_date: datetime | None = Field(default=None, alias="PremiereDate")
-    path: str = Field(alias="Path")
+    path: str | None = Field(default=None, alias="Path")
     official_rating: str | None = Field(default=None, alias="OfficialRating")
     overview: str | None = Field(default=None, alias="Overview")
     taglines: list[str] = Field(default_factory=list, alias="Taglines")
@@ -707,6 +710,83 @@ class BaseItemDto(EmbyBaseModel):
 
 # 处理循环引用
 BaseItemDto.model_rebuild()
+
+
+# ============================================================================
+# LiveTV 相关模型 (LiveTV Models)
+# ============================================================================
+
+
+class BaseTimerInfoDto(EmbyBaseModel):
+    """基础定时器信息（MediaBrowser.Model.LiveTv.BaseTimerInfoDto）"""
+
+    id: str | None = Field(default=None, alias="Id")
+    type: str | None = Field(default=None, alias="Type")
+    server_id: str | None = Field(default=None, alias="ServerId")
+    channel_id: str | None = Field(default=None, alias="ChannelId")
+    channel_name: str | None = Field(default=None, alias="ChannelName")
+    channel_number: str | None = Field(default=None, alias="ChannelNumber")
+    channel_primary_image_tag: str | None = Field(
+        default=None, alias="ChannelPrimaryImageTag"
+    )
+    program_id: str | None = Field(default=None, alias="ProgramId")
+    name: str | None = Field(default=None, alias="Name")
+    overview: str | None = Field(default=None, alias="Overview")
+    parent_folder_id: str | None = Field(default=None, alias="ParentFolderId")
+    start_date: datetime | None = Field(default=None, alias="StartDate")
+    end_date: datetime | None = Field(default=None, alias="EndDate")
+    priority: int = Field(default=0, alias="Priority")
+    pre_padding_seconds: int = Field(default=0, alias="PrePaddingSeconds")
+    post_padding_seconds: int = Field(default=0, alias="PostPaddingSeconds")
+    is_pre_padding_required: bool = Field(default=False, alias="IsPrePaddingRequired")
+    parent_backdrop_item_id: str | None = Field(
+        default=None, alias="ParentBackdropItemId"
+    )
+    parent_backdrop_image_tags: list[str] = Field(
+        default_factory=list, alias="ParentBackdropImageTags"
+    )
+    is_post_padding_required: bool = Field(default=False, alias="IsPostPaddingRequired")
+    keep_until: KeepUntil | None = Field(default=None, alias="KeepUntil")
+
+
+class TimerInfoDto(BaseTimerInfoDto):
+    """定时器信息（MediaBrowser.Model.LiveTv.TimerInfoDto）"""
+
+    status: RecordingStatus | None = Field(default=None, alias="Status")
+    series_timer_id: str | None = Field(default=None, alias="SeriesTimerId")
+    run_time_ticks: int | None = Field(default=None, alias="RunTimeTicks")
+    program_info: BaseItemDto | None = Field(default=None, alias="ProgramInfo")
+    timer_type: TimerType | None = Field(default=None, alias="TimerType")
+
+
+class SeriesTimerInfoDto(BaseTimerInfoDto):
+    """系列定时器信息（MediaBrowser.Model.LiveTv.SeriesTimerInfoDto）"""
+
+    record_any_time: bool = Field(default=False, alias="RecordAnyTime")
+    record_any_channel: bool = Field(default=False, alias="RecordAnyChannel")
+    keep_up_to: int = Field(default=0, alias="KeepUpTo")
+    max_recording_seconds: int = Field(default=0, alias="MaxRecordingSeconds")
+    record_new_only: bool = Field(default=False, alias="RecordNewOnly")
+    skip_episodes_in_library: bool = Field(default=False, alias="SkipEpisodesInLibrary")
+    match_existing_items_with_any_library: bool = Field(
+        default=False, alias="MatchExistingItemsWithAnyLibrary"
+    )
+    days: list[DayOfWeek] = Field(default_factory=list, alias="Days")
+    channel_ids: list[str] = Field(default_factory=list, alias="ChannelIds")
+    image_tags: dict[str, str] = Field(default_factory=dict, alias="ImageTags")
+    keywords: list[dict[str, Any]] = Field(default_factory=list, alias="Keywords")
+    parent_primary_image_item_id: str | None = Field(
+        default=None, alias="ParentPrimaryImageItemId"
+    )
+    parent_primary_image_tag: str | None = Field(
+        default=None, alias="ParentPrimaryImageTag"
+    )
+    parent_thumb_item_id: str | None = Field(default=None, alias="ParentThumbItemId")
+    parent_thumb_image_tag: str | None = Field(
+        default=None, alias="ParentThumbImageTag"
+    )
+    series_id: str | None = Field(default=None, alias="SeriesId")
+    timer_type: TimerType | None = Field(default=None, alias="TimerType")
 
 
 # ============================================================================
@@ -1018,10 +1098,9 @@ class TaskFailedEvent(BaseWebhookEvent):
 # ============================================================================
 
 
-class GenericWebhookEvent(BaseWebhookEvent):
-    """通用事件 - 用于未定义的事件类型"""
+class _GenericNotificationBase(BaseWebhookEvent):
+    """包含 InternalNotificationRequest 全部可选载荷字段的内部基类"""
 
-    event: str = Field(alias="Event")
     item: BaseItemDto | None = Field(default=None, alias="Item")
     user: NotificationUserDto | None = Field(default=None, alias="User")
     session: NotificationSessionInfo | None = Field(default=None, alias="Session")
@@ -1044,6 +1123,18 @@ class GenericWebhookEvent(BaseWebhookEvent):
         default=None, alias="PackageVersionInfo"
     )
     program_info: BaseItemDto | None = Field(default=None, alias="ProgramInfo")
+
+
+class GenericWebhookEvent(_GenericNotificationBase):
+    """通用事件 - 用于未定义的事件类型"""
+
+    event: str = Field(alias="Event")
+
+
+class ExternalNotificationEvent(_GenericNotificationBase):
+    """external.externalnotification 事件 - 外部自定义通知（NotificationCategory.ExternalNotificationEventId）"""
+
+    event: Literal["external.externalnotification"] = Field(alias="Event")
 
 
 # ============================================================================
@@ -1093,7 +1184,9 @@ EmbyPayload = Annotated[
     # 任务事件
     | TaskCompletedEvent
     | ScheduledTasksCompletedEvent
-    | TaskFailedEvent,
+    | TaskFailedEvent
+    # 外部事件
+    | ExternalNotificationEvent,
     Field(discriminator="event"),
 ]
 
@@ -1112,6 +1205,7 @@ __all__ = [
     "DeviceInfo",
     "EmbyBaseModel",
     "EmbyPayload",
+    "ExternalNotificationEvent",
     "ExternalUrl",
     "GenericWebhookEvent",
     "ImageType",

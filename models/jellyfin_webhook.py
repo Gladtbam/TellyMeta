@@ -1,3 +1,5 @@
+"""Jellyfin Webhook 回调数据模型（基于 jellyfin-plugin-webhook 源码维护，兼容 Python 3.15 与 extra='allow'）。"""
+
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -5,8 +7,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# 1. 枚举命名符合 Python 规范 (UPPER_CASE)
 class NotificationType(StrEnum):
+    """Jellyfin Webhook 支持的通知事件类型（对应上游 ``NotificationType``）。"""
+
     ITEM_ADDED = "ItemAdded"
     ITEM_DELETED = "ItemDeleted"
     PLAYBACK_START = "PlaybackStart"
@@ -33,14 +36,14 @@ class NotificationType(StrEnum):
     GENERIC = "Generic"
 
 
-# 2. 基础模型与 Mixins
-# 使用 populate_by_name=True 允许通过 alias (PascalCase) 解析，但在 Python 中使用 snake_case
-
-
-class BasePayload(BaseModel):
-    """所有通知必然包含的基础字段"""
+class JellyfinWebhookModel(BaseModel):
+    """Jellyfin Webhook 模型公共基类，确保所有主模型与 Mixin 均支持 ``extra='allow'``。"""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+
+class BasePayload(JellyfinWebhookModel):
+    """所有通知必然包含的基础字段（对应 ``DataObjectHelpers.GetBaseDataObject``）。"""
 
     server_id: str = Field(alias="ServerId")
     server_name: str = Field(alias="ServerName")
@@ -49,23 +52,23 @@ class BasePayload(BaseModel):
     # NotificationType 由具体的子类通过 Literal 定义，此处不声明以利用 Discriminator
 
 
-class UserDataMixin(BaseModel):
-    """对应 AddUserData，C# 中这些是必填的"""
+class UserDataMixin(JellyfinWebhookModel):
+    """对应 ``DataObjectHelpers.AddUserData``，包含用户基础信息。"""
 
-    notification_username: str = Field(alias="NotificationUsername")
-    user_id: str = Field(alias="UserId")
+    notification_username: str = Field(default="", alias="NotificationUsername")
+    user_id: str = Field(default="", alias="UserId")
     last_login_date: datetime | None = Field(default=None, alias="LastLoginDate")
     last_activity_date: datetime | None = Field(default=None, alias="LastActivityDate")
 
 
-class ItemInfoMixin(BaseModel):
-    """对应 AddBaseItemData，核心字段必填，属性字段可选"""
+class ItemInfoMixin(JellyfinWebhookModel):
+    """对应 ``DataObjectHelpers.AddBaseItemData``；动态键 ``Provider_*`` 与流明细通过 ``extra='allow'`` 透传。"""
 
+    timestamp: datetime | None = Field(default=None, alias="Timestamp")
+    utc_timestamp: datetime | None = Field(default=None, alias="UtcTimestamp")
     item_id: str = Field(alias="ItemId")
     item_type: str = Field(alias="ItemType")
     name: str = Field(alias="Name")
-
-    # 以下字段在 C# 中是 Nullable 或条件判断的，因此保持 Optional
     run_time_ticks: int | None = Field(default=None, alias="RunTimeTicks")
     run_time: str | None = Field(default=None, alias="RunTime")
     year: int | None = Field(default=None, alias="Year")
@@ -75,63 +78,73 @@ class ItemInfoMixin(BaseModel):
     tagline: str | None = Field(default=None, alias="Tagline")
     aspect_ratio: str | None = Field(default=None, alias="AspectRatio")
 
-    # Series/Episode 特定字段
+    # 剧集 / 季专属信息
     series_name: str | None = Field(default=None, alias="SeriesName")
     series_id: str | None = Field(default=None, alias="SeriesId")
     season_id: str | None = Field(default=None, alias="SeasonId")
+    series_premiere_date: str | None = Field(default=None, alias="SeriesPremiereDate")
     season_number: int | None = Field(default=None, alias="SeasonNumber")
     season_number_00: str | None = Field(default=None, alias="SeasonNumber00")
+    season_number_000: str | None = Field(default=None, alias="SeasonNumber000")
     episode_number: int | None = Field(default=None, alias="EpisodeNumber")
     episode_number_00: str | None = Field(default=None, alias="EpisodeNumber00")
+    episode_number_000: str | None = Field(default=None, alias="EpisodeNumber000")
+    episode_number_end: int | None = Field(default=None, alias="EpisodeNumberEnd")
+    episode_number_end_00: str | None = Field(default=None, alias="EpisodeNumberEnd00")
+    episode_number_end_000: str | None = Field(
+        default=None, alias="EpisodeNumberEnd000"
+    )
+    air_time: str | None = Field(default=None, alias="AirTime")
 
-    # Music 特定字段
+    # 音乐专属信息
     album: str | None = Field(default=None, alias="Album")
     artist: str | None = Field(default=None, alias="Artist")
 
 
-class SessionInfoMixin(BaseModel):
-    """对应 AddSessionInfoData"""
+class SessionInfoMixin(JellyfinWebhookModel):
+    """对应 ``DataObjectHelpers.AddSessionInfoData``，注意仅 Session 非空时全量下发。"""
 
-    device_name: str = Field(alias="DeviceName")
+    device_name: str = Field(default="", alias="DeviceName")
     device_id: str | None = Field(default=None, alias="DeviceId")
-    client_name: str | None = Field(default=None, alias="Client")  # C# key is "Client"
+    client_name: str | None = Field(default=None, alias="Client")
     remote_end_point: str | None = Field(default=None, alias="RemoteEndPoint")
     session_id: str | None = Field(default=None, alias="Id")
+    last_playback_check_in: datetime | None = Field(
+        default=None, alias="LastPlaybackCheckIn"
+    )
 
 
-class PlaybackInfoMixin(BaseModel):
-    """对应 AddPlaybackProgressData"""
+class PlaybackInfoMixin(JellyfinWebhookModel):
+    """对应 ``DataObjectHelpers.AddPlaybackProgressData``。"""
 
     playback_position_ticks: int = Field(alias="PlaybackPositionTicks")
     playback_position: str = Field(alias="PlaybackPosition")
     is_paused: bool = Field(alias="IsPaused")
-    device_id: str | None = Field(
-        default=None, alias="DeviceId"
-    )  # 覆盖 Session 中的定义
-    client_name_pb: str | None = Field(
-        default=None, alias="ClientName"
-    )  # C# key is "ClientName" here
-
-    # 可选
+    is_automated: bool | None = Field(default=None, alias="IsAutomated")
+    # PlaybackProgress 与 SessionInfo 可能同时写入 DeviceId
+    device_id: str | None = Field(default=None, alias="DeviceId")
+    # 对应 AddPlaybackProgressData 写入的 ClientName
+    client_name_pb: str | None = Field(default=None, alias="ClientName")
     play_method: str | None = Field(default=None, alias="PlayMethod")
     media_source_id: str | None = Field(default=None, alias="MediaSourceId")
 
 
-class PluginInfoMixin(BaseModel):
-    """对应 AddPluginInstallationInfo"""
+class PluginInfoMixin(JellyfinWebhookModel):
+    """对应 ``DataObjectHelpers.AddPluginInstallationInfo``。"""
 
     plugin_id: str = Field(alias="PluginId")
     plugin_name: str = Field(alias="PluginName")
     plugin_version: str = Field(alias="PluginVersion")
     plugin_changelog: str | None = Field(default=None, alias="PluginChangelog")
     plugin_source_url: str | None = Field(default=None, alias="PluginSourceUrl")
+    plugin_checksum: str | None = Field(default=None, alias="PluginChecksum")
 
 
-# 3. 具体事件定义 (移除 | None，因为类型已确定)
+# --- 具体的事件模型定义 ---
 
 
 class ItemEvent(BasePayload, ItemInfoMixin):
-    """项目添加/删除"""
+    """媒体库变更及字幕事件（ItemAdded / ItemDeleted / SubtitleDownloadFailure）。"""
 
     notification_type: Literal[
         NotificationType.ITEM_ADDED,
@@ -143,20 +156,19 @@ class ItemEvent(BasePayload, ItemInfoMixin):
 class PlaybackEvent(
     BasePayload, ItemInfoMixin, UserDataMixin, SessionInfoMixin, PlaybackInfoMixin
 ):
-    """播放相关"""
+    """播放事件（PlaybackStart / PlaybackProgress / PlaybackStop）。"""
 
     notification_type: Literal[
         NotificationType.PLAYBACK_START,
         NotificationType.PLAYBACK_PROGRESS,
         NotificationType.PLAYBACK_STOP,
     ] = Field(alias="NotificationType")
-
-    # PlaybackStop 特有
+    # 仅 PlaybackStop 携带
     played_to_completion: bool | None = Field(default=None, alias="PlayedToCompletion")
 
 
 class UserEvent(BasePayload, UserDataMixin):
-    """用户账号变更"""
+    """用户生命周期与密码事件。"""
 
     notification_type: Literal[
         NotificationType.USER_CREATED,
@@ -168,33 +180,43 @@ class UserEvent(BasePayload, UserDataMixin):
 
 
 class UserDataSavedEvent(BasePayload, ItemInfoMixin, UserDataMixin):
-    """用户数据保存（如标记已播放、收藏）"""
+    """用户数据保存事件（对应 ``UserDataSavedNotifierEntryPoint``）。"""
 
     notification_type: Literal[NotificationType.USER_DATA_SAVED] = Field(
         alias="NotificationType"
     )
     save_reason: str | None = Field(default=None, alias="SaveReason")
+    likes: bool | None = Field(default=None, alias="Likes")
+    rating: float | None = Field(default=None, alias="Rating")
+    playback_position_ticks: int | None = Field(
+        default=None, alias="PlaybackPositionTicks"
+    )
+    playback_position: str | None = Field(default=None, alias="PlaybackPosition")
+    play_count: int | None = Field(default=None, alias="PlayCount")
     is_favorite: bool | None = Field(default=None, alias="Favorite")
     played: bool | None = Field(default=None, alias="Played")
-    rating: float | None = Field(default=None, alias="Rating")
+    audio_stream_index: int | None = Field(default=None, alias="AudioStreamIndex")
+    subtitle_stream_index: int | None = Field(default=None, alias="SubtitleStreamIndex")
+    last_played_date: datetime | None = Field(default=None, alias="LastPlayedDate")
 
 
 class AuthenticationEvent(BasePayload, UserDataMixin, SessionInfoMixin):
-    """认证事件"""
+    """认证成功/失败与会话启动事件（对应 Auth 及 SessionStart Notifier）。"""
 
     notification_type: Literal[
         NotificationType.AUTHENTICATION_SUCCESS,
         NotificationType.AUTHENTICATION_FAILURE,
         NotificationType.SESSION_START,
     ] = Field(alias="NotificationType")
-
-    # Auth Failure 特有
+    # AuthenticationFailure 会追加 App / Username / AppVersion / ClientName
     app: str | None = Field(default=None, alias="App")
     app_version: str | None = Field(default=None, alias="AppVersion")
+    username: str | None = Field(default=None, alias="Username")
+    client_name_pb: str | None = Field(default=None, alias="ClientName")
 
 
 class PluginEvent(BasePayload, PluginInfoMixin):
-    """插件操作"""
+    """插件安装、更新及异常事件。"""
 
     notification_type: Literal[
         NotificationType.PLUGIN_INSTALLED,
@@ -203,12 +225,15 @@ class PluginEvent(BasePayload, PluginInfoMixin):
         NotificationType.PLUGIN_INSTALLATION_FAILED,
         NotificationType.PLUGIN_INSTALLATION_CANCELLED,
     ] = Field(alias="NotificationType")
-
+    # PluginInstallationFailed 通过 AddExceptionInfo 写入
     exception_message: str | None = Field(default=None, alias="ExceptionMessage")
+    exception_message_inner: str | None = Field(
+        default=None, alias="ExceptionMessageInner"
+    )
 
 
 class PluginUninstalledEvent(BasePayload):
-    """插件卸载 (字段与其他插件事件略有不同)"""
+    """插件卸载事件（``PluginUninstalledNotifier`` 使用独立字段集合）。"""
 
     notification_type: Literal[NotificationType.PLUGIN_UNINSTALLED] = Field(
         alias="NotificationType"
@@ -216,11 +241,12 @@ class PluginUninstalledEvent(BasePayload):
     plugin_name: str = Field(alias="PluginName")
     plugin_version: str = Field(alias="PluginVersion")
     plugin_id: str = Field(alias="PluginId")
+    plugin_description: str | None = Field(default=None, alias="PluginDescription")
     plugin_status: str | None = Field(default=None, alias="PluginStatus")
 
 
 class SystemEvent(BasePayload):
-    """系统级事件"""
+    """系统事件（目前仅 PendingRestart）。"""
 
     notification_type: Literal[NotificationType.PENDING_RESTART] = Field(
         alias="NotificationType"
@@ -228,21 +254,30 @@ class SystemEvent(BasePayload):
 
 
 class TaskEvent(BasePayload):
-    """任务完成"""
+    """计划任务完成事件（对应 ``TaskCompletedNotifier``）。"""
 
     notification_type: Literal[NotificationType.TASK_COMPLETED] = Field(
         alias="NotificationType"
     )
     task_id: str = Field(alias="TaskId")
     task_name: str = Field(alias="TaskName")
+    task_description: str | None = Field(default=None, alias="TaskDescription")
+    task_category: str | None = Field(default=None, alias="TaskCategory")
     task_state: str = Field(alias="TaskState")
+    result_id: str | None = Field(default=None, alias="ResultId")
+    result_key: str | None = Field(default=None, alias="ResultKey")
+    result_name: str | None = Field(default=None, alias="ResultName")
     result_status: str | None = Field(default=None, alias="ResultStatus")
     start_time: datetime | None = Field(default=None, alias="StartTime")
     end_time: datetime | None = Field(default=None, alias="EndTime")
+    result_error_message: str | None = Field(default=None, alias="ResultErrorMessage")
+    result_long_error_message: str | None = Field(
+        default=None, alias="ResultLongErrorMessage"
+    )
 
 
 class GenericEvent(BasePayload):
-    """兜底"""
+    """自定义或测试类通用事件。"""
 
     notification_type: Literal[NotificationType.GENERIC] = Field(
         alias="NotificationType"
@@ -251,8 +286,8 @@ class GenericEvent(BasePayload):
     description: str | None = Field(default=None, alias="Description")
 
 
-# 4. 联合类型 (使用 | 语法)
-# FastAPI 会根据 NotificationType 的值自动匹配到具体的类
+# --- 联合类型（Union）与 Discriminator ---
+
 JellyfinPayload = Annotated[
     ItemEvent
     | PlaybackEvent

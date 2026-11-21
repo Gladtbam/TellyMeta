@@ -1,82 +1,97 @@
-"""Sonarr Webhook 回调数据模型（手写维护，与 OpenAPI REST 模型解耦）。"""
+"""Sonarr Webhook 回调数据模型（基于上游 Sonarr Webhook 源码维护，兼容 Python 3.15 与 extra='allow'）。"""
 
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
-from core.config import genre_mapping
 from models.radarr_webhook import (
+    ArrWebhookBaseModel,
     CustomFormatInfoDto,
+    DownloadStatusMessage,
     Languages,
     MediaCover,
     MediaInfoDto,
     WebhookBase,
+    normalize_genres,
 )
 
 
-class SonarrSeries(BaseModel):
-    """Sonarr Webhook 剧集模型。"""
+class SonarrSeries(ArrWebhookBaseModel):
+    """Sonarr Webhook 剧集信息（对应 ``WebhookSeries``）。"""
 
     id: int
     title: str
-    year: int
-    titleSlug: str
+    titleSlug: str | None = None
     path: str
-    tvMazeId: int
-    tvdbId: int
-    tmdbId: int
-    imdbId: str
-    type: str
+    tvdbId: int = 0
+    tvMazeId: int = 0
+    tmdbId: int = 0
+    imdbId: str | None = None
+    malIds: list[int] = Field(default_factory=list)
+    aniListIds: list[int] = Field(default_factory=list)
+    # SeriesTypes 枚举：standard / daily / anime
+    type: str = "standard"
+    year: int = 0
+    # 上游 WebhookSeries 不直接下发 overview，保留可选字段以兼容 NFO Worker 及旧负载
     overview: str | None = None
     genres: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
     images: list[MediaCover] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
     originalLanguage: Languages | None = None
+    originalCountry: str | None = None
 
     @field_validator("genres", mode="before")
     @classmethod
     def validate_genres(cls, value: Any) -> Any:
         """按全局类型映射表转换剧集类型名称。"""
-        if not isinstance(value, list):
-            return value
-        return [genre_mapping.get(genre, genre) for genre in value]
+        return normalize_genres(value)
 
 
-class SonarrEpisode(BaseModel):
-    """Sonarr Webhook 单集模型。"""
+class SonarrEpisode(ArrWebhookBaseModel):
+    """Sonarr Webhook 单集信息（对应 ``WebhookEpisode``）。"""
 
     id: int
-    seasonNumber: int
     episodeNumber: int
-    title: str
+    seasonNumber: int
+    title: str | None = None
     overview: str | None = None
-    airDate: date
+    airDate: date | None = None
     airDateUtc: datetime | None = None
-    seriesId: int
-    tvdbId: int
+    seriesId: int = 0
+    tvdbId: int = 0
     finaleType: str | None = None
 
+    @field_validator("airDate", mode="before")
+    @classmethod
+    def _empty_air_date_to_none(cls, value: Any) -> Any:
+        """将未排期剧集可能传入的空字符串 ``""`` 归一化为 ``None``。"""
+        if value == "":
+            return None
+        return value
 
-class FileInfoDto(BaseModel):
-    """Sonarr Webhook 剧集文件模型。"""
+
+class FileInfoDto(ArrWebhookBaseModel):
+    """Sonarr 剧集文件信息（对应 ``WebhookEpisodeFile``）。"""
 
     id: int
     relativePath: str
     path: str
     quality: str
     qualityVersion: int
-    releaseGroup: str
+    # 无发布组名或手工导入时可能为 null/省略
+    releaseGroup: str | None = None
     sceneName: str | None = None
     size: int
     dateAdded: datetime
     languages: list[Languages] = Field(default_factory=list)
     mediaInfo: MediaInfoDto | None = None
     sourcePath: str | None = None
+    recycleBinPath: str | None = None
 
 
-class SonarrRelease(BaseModel):
-    """Sonarr 发布版本信息。"""
+class SonarrRelease(ArrWebhookBaseModel):
+    """Sonarr 种子/发布信息（合并 ``WebhookRelease`` 与 ``WebhookGrabbedRelease``）。"""
 
     quality: str | None = None
     qualityVersion: int | None = None
@@ -87,19 +102,20 @@ class SonarrRelease(BaseModel):
     customFormatScore: int | None = None
     customFormats: list[str] = Field(default_factory=list)
     languages: list[Languages] = Field(default_factory=list)
+    # ReleaseType 枚举：unknown / singleEpisode / multiEpisode / seasonPack / multiSeasonPack
     releaseType: str | None = None
     indexerFlags: list[str] = Field(default_factory=list)
 
 
-class RenamedEpisodeFiles(BaseModel):
-    """重命名剧集文件记录。"""
+class RenamedEpisodeFiles(FileInfoDto):
+    """重命名剧集文件记录（对应继承自 ``WebhookEpisodeFile`` 的 ``WebhookRenamedEpisodeFile``）。"""
 
     previousRelativePath: str
     previousPath: str
 
 
-class DownloadInfo(BaseModel):
-    """下载任务摘要信息。"""
+class DownloadInfo(ArrWebhookBaseModel):
+    """下载客户端任务摘要信息（对应 ``WebhookDownloadClientItem``）。"""
 
     quality: str
     qualityVersion: int
@@ -109,57 +125,59 @@ class DownloadInfo(BaseModel):
 
 
 class SonarrWebhookGrabPayload(WebhookBase[Literal["Grab"]]):
-    """Sonarr Grab 事件载荷。"""
+    """Sonarr Grab 事件（对应 ``WebhookGrabPayload``）。"""
 
     eventType: Literal["Grab"]
     series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     release: SonarrRelease
-    downloadClient: str
-    downloadClientType: str
-    downloadId: str
-    customFormatInfo: CustomFormatInfoDto
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str | None = None
+    customFormatInfo: CustomFormatInfoDto | None = None
 
 
 class SonarrWebhookDownloadPayload(WebhookBase[Literal["Download"]]):
-    """Sonarr Download / Import 事件载荷。"""
+    """Sonarr Download / ImportComplete 事件（合并 ``WebhookImportPayload`` 与 ``WebhookImportCompletePayload``）。"""
 
     eventType: Literal["Download"]
     series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
+    # 单文件入库使用 episodeFile，整包完成入库（ImportComplete）使用 episodeFiles
     episodeFile: FileInfoDto | None = None
     episodeFiles: list[FileInfoDto] = Field(default_factory=list)
-    release: SonarrRelease
+    release: SonarrRelease | None = None
     isUpgrade: bool | None = None
     downloadClient: str | None = None
     downloadClientType: str | None = None
     downloadId: str | None = None
     customFormatInfo: CustomFormatInfoDto | None = None
     deletedFiles: list[FileInfoDto] = Field(default_factory=list)
-
+    fileCount: int | None = None
     sourcePath: str | None = None
     destinationPath: str | None = None
 
 
 class SonarrWebhookEpisodeDeletePayload(WebhookBase[Literal["EpisodeFileDelete"]]):
-    """Sonarr EpisodeFileDelete 事件载荷。"""
+    """Sonarr 剧集文件删除事件（对应 ``WebhookEpisodeDeletePayload``）。"""
 
     eventType: Literal["EpisodeFileDelete"]
     series: SonarrSeries
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     episodeFile: FileInfoDto
+    # DeleteMediaFileReason 枚举：missingFromDisk / manual / upgrade / noLinkedEpisodes / manualOverride
     deleteReason: str
 
 
 class SonarrWebhookSeriesAddPayload(WebhookBase[Literal["SeriesAdd"]]):
-    """Sonarr SeriesAdd 事件载荷。"""
+    """Sonarr 剧集添加事件（对应 ``WebhookSeriesAddPayload``）。"""
 
     eventType: Literal["SeriesAdd"]
     series: SonarrSeries
 
 
 class SonarrWebhookSeriesDeletePayload(WebhookBase[Literal["SeriesDelete"]]):
-    """Sonarr SeriesDelete 事件载荷。"""
+    """Sonarr 剧集删除事件（对应 ``WebhookSeriesDeletePayload``）。"""
 
     eventType: Literal["SeriesDelete"]
     series: SonarrSeries
@@ -167,7 +185,7 @@ class SonarrWebhookSeriesDeletePayload(WebhookBase[Literal["SeriesDelete"]]):
 
 
 class SonarrWebhookRenamePayload(WebhookBase[Literal["Rename"]]):
-    """Sonarr Rename 事件载荷。"""
+    """Sonarr 重命名事件（对应 ``WebhookRenamePayload``）。"""
 
     eventType: Literal["Rename"]
     series: SonarrSeries
@@ -175,9 +193,10 @@ class SonarrWebhookRenamePayload(WebhookBase[Literal["Rename"]]):
 
 
 class SonarrWebhookHealthPayload(WebhookBase[Literal["Health", "HealthRestored"]]):
-    """Sonarr Health / HealthRestored 事件载荷。"""
+    """Sonarr 健康检查及恢复事件（对应 ``WebhookHealthPayload``）。"""
 
     eventType: Literal["Health", "HealthRestored"]
+    # HealthCheckResult 枚举：ok / notice / warning / error
     level: str
     message: str
     type: str
@@ -185,7 +204,7 @@ class SonarrWebhookHealthPayload(WebhookBase[Literal["Health", "HealthRestored"]
 
 
 class SonarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpdate"]]):
-    """Sonarr ApplicationUpdate 事件载荷。"""
+    """Sonarr 应用更新事件（对应 ``WebhookApplicationUpdatePayload``）。"""
 
     eventType: Literal["ApplicationUpdate"]
     message: str
@@ -196,23 +215,32 @@ class SonarrWebhookApplicationUpdatePayload(WebhookBase[Literal["ApplicationUpda
 class SonarrWebhookManualInteractionPayload(
     WebhookBase[Literal["ManualInteractionRequired"]]
 ):
-    """Sonarr ManualInteractionRequired 事件载荷。"""
+    """Sonarr 需要人工干预事件（对应 ``WebhookManualInteractionPayload``）。"""
 
     eventType: Literal["ManualInteractionRequired"]
-    series: SonarrSeries | None = None  # 未知剧集时为 None
+    series: SonarrSeries | None = None
     episodes: list[SonarrEpisode] = Field(default_factory=list)
     downloadInfo: DownloadInfo
     downloadClient: str | None = None
     downloadClientType: str | None = None
-    downloadId: str
-    downloadStatus: str
-    customFormatInfo: CustomFormatInfoDto
+    downloadId: str | None = None
+    downloadStatus: str | None = None
+    downloadStatusMessages: list[DownloadStatusMessage] = Field(default_factory=list)
+    customFormatInfo: CustomFormatInfoDto | None = None
+    release: SonarrRelease | None = None
 
 
 class SonarrWebhookTestPayload(WebhookBase[Literal["Test"]]):
-    """Sonarr Test 事件载荷。"""
+    """Sonarr Webhook 测试事件（上游复用 ``WebhookGrabPayload`` 发送测试样例）。"""
 
     eventType: Literal["Test"]
+    series: SonarrSeries | None = None
+    episodes: list[SonarrEpisode] = Field(default_factory=list)
+    release: SonarrRelease | None = None
+    downloadClient: str | None = None
+    downloadClientType: str | None = None
+    downloadId: str | None = None
+    customFormatInfo: CustomFormatInfoDto | None = None
 
 
 SonarrPayload = Annotated[
