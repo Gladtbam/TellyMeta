@@ -2521,6 +2521,92 @@ def _format_request_cost_line(
     return TelegramMessage.render_html(t"{label}: <code>{reserved_cost}</code> 积分")
 
 
+_REQUEST_TOPIC_STAGE_META: dict[str, tuple[str, str, str, str]] = {
+    "approved": ("✅", "求片已批准", "💰 <b>已结算</b>", "#已批准"),
+    "rejected": ("❌", "求片已拒绝", "💰 <b>已退还</b>", "#已拒绝"),
+    "failed": ("❌", "求片添加失败", "💰 <b>已退还</b>", "#添加失败"),
+    "expired": ("⏰", "求片已超时自动取消", "💰 <b>已退还</b>", "#已超时"),
+    "canceled": ("🚫", "求片已由申请人撤销", "💰 <b>已退还</b>", "#已撤销"),
+    "completed": ("🎉", "求片已入库就绪", "💰 <b>已结算</b>", "#已入库"),
+}
+
+
+def render_request_topic_card_status(
+    *,
+    stage: Literal[
+        "approved", "rejected", "failed", "expired", "canceled", "completed"
+    ],
+    request_id: int,
+    user_id: int,
+    server_name: str,
+    media_title: str,
+    media_type: str,
+    media_id: int | str,
+    reserved_cost: int = 0,
+    approver_name: str | None = None,
+    detail_text: str | None = None,
+    user_name: str | None = None,
+    economy: EffectiveEconomyContext | None = None,
+) -> str:
+    """渲染求片状态终结/入库后回写原管理员审核卡片的 Telegram HTML 文本。
+
+    Args:
+        stage: 目标状态阶段（``approved`` / ``rejected`` / ``failed`` / ``expired`` / ``canceled`` / ``completed``）。
+        request_id: 求片记录 ID。
+        user_id: 申请人 Telegram 用户 ID。
+        server_name: 目标媒体服务器名称。
+        media_title: 媒体标题。
+        media_type: 媒体外部标识类型（如 ``tmdb`` / ``tvdb``）。
+        media_id: 媒体外部标识 ID。
+        reserved_cost: 提交时预留积分数量。
+        approver_name: 可选审核管理员名称。
+        detail_text: 可选失败/拒绝/超时说明详情。
+        user_name: 可选申请人展示名称，默认使用用户 ID 字符串。
+        economy: 遵循 ADR-0004 的有效经济开关快照。
+
+    Returns:
+        已完成 HTML 转义并收敛多余空行的 Telegram HTML 字符串。
+    """
+    emoji, header, cost_label, tag = _REQUEST_TOPIC_STAGE_META[stage]
+    effective_economy = economy or EffectiveEconomyContext()
+    display_user = (user_name or "").strip() or str(user_id)
+    id_line = (
+        TelegramMessage.render_html(t"{media_type.upper()}: <code>{media_id}</code>")
+        if str(media_id).strip()
+        else ""
+    )
+    approver_line = (
+        TelegramMessage.render_html(t"👮 <b>审核人</b>: <code>{approver_name}</code>")
+        if approver_name and approver_name.strip()
+        else ""
+    )
+    detail_line = (
+        TelegramMessage.render_html(
+            t"📝 <b>说明</b>: {_truncate_text(detail_text, 240)}"
+        )
+        if detail_text and detail_text.strip()
+        else ""
+    )
+    cost_line = _format_request_cost_line(
+        cost_label, max(0, int(reserved_cost)), effective_economy
+    )
+    return TelegramMessage.render_html(
+        t"""\
+        {emoji} <b>{header}</b> (#{request_id})
+
+        👤 <b>申请人</b>: <a href="tg://user?id={user_id}">{display_user}</a>
+        🎬 <b>标题</b>: <b>{media_title}</b>
+        🖥️ <b>服务器</b>: <code>{server_name}</code>
+        {id_line:raw}
+        {approver_line:raw}
+        {detail_line:raw}
+        {cost_line:raw}
+
+        #求片 {tag}""",
+        collapse_blank_lines=True,
+    )
+
+
 def _render_request_submit(payload: RequestSubmitPayload) -> RenderedNotification:
     """渲染 REQUEST_SUBMIT 审核卡片并按需自动构造批准/拒绝内联按钮。"""
     year_part = _format_year_part(payload.media_year)

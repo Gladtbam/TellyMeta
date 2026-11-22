@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import re
 import time
@@ -32,6 +33,7 @@ from models.events import (
     NotificationAudience,
     NotificationEvent,
     NotificationRouteCategory,
+    NotificationRouteScope,
     NotificationTargetType,
     get_event_spec,
 )
@@ -41,6 +43,7 @@ from repositories.notification_repo import (
     OpsAlertRepository,
     UserNotificationPreferenceRepository,
 )
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.notification_renderer import (
     NotificationPayload,
@@ -784,42 +787,9 @@ class NotificationService:
             return async_sessionmaker(bind, class_=AsyncSession, expire_on_commit=False)
         return None
 
-    async def _resolve_route_config(
-        self,
-        *,
-        category: NotificationRouteCategory,
-        server_id: int | None,
-        session: AsyncSession | None,
-        fallback_factory: async_sessionmaker[AsyncSession] | None,
-    ) -> _ResolvedRouteConfig:
-        """按单服覆盖 -> 全局默认 -> 内置兜底三级优先级解析路由规则。"""
-        route = None
-        if session is not None:
-            try:
-                route = await NotificationRouteRepository(
-                    session
-                ).resolve_effective_route(category, server_id)
-            except SQLAlchemyError as exc:
-                logger.warning("查询通知路由失败，回退默认策略: {}", exc)
-        else:
-            factory = self.runtime.resolve_session_factory(fallback_factory)
-            if factory is not None:
-                try:
-                    async with self.runtime._db_lock, factory() as db:
-                        route = await NotificationRouteRepository(
-                            db
-                        ).resolve_effective_route(category, server_id)
-                except SQLAlchemyError as exc:
-                    logger.warning("查询通知路由失败，回退默认策略: {}", exc)
-
-        if route is None:
-            return _ResolvedRouteConfig(
-                target_type=DEFAULT_GLOBAL_ROUTE_TARGETS[category],
-                target_chat_id=None,
-                target_topic_id=None,
-                escalate_admin_dm=False,
-                enabled_events=frozenset(),
-            )
+    @staticmethod
+    def _route_to_resolved_config(route: Any) -> _ResolvedRouteConfig:
+        """将 ORM 通知路由对象转换为归一化生效路由快照。"""
         return _ResolvedRouteConfig(
             target_type=NotificationTargetType(route.target_type),
             target_chat_id=route.target_chat_id,
@@ -831,6 +801,114 @@ class NotificationService:
                 )
             ),
         )
+
+    @staticmethod
+    def _synthesize_legacy_topic_route(topic_id: int) -> _ResolvedRouteConfig:
+        """将存量 ServerInstance 的正/负话题字段合成为等效通知路由配置。"""
+        if topic_id > 0:
+            return _ResolvedRouteConfig(
+                target_type=NotificationTargetType.FORUM_TOPIC,
+                target_chat_id=None,
+                target_topic_id=int(topic_id),
+                escalate_admin_dm=False,
+                enabled_events=frozenset(),
+            )
+        return _ResolvedRouteConfig(
+            target_type=NotificationTargetType.CHAT_OR_CHANNEL,
+            target_chat_id=int(topic_id),
+            target_topic_id=None,
+            escalate_admin_dm=False,
+            enabled_events=frozenset(),
+        )
+
+    async def _query_route_config(
+        self,
+        db: AsyncSession,
+        *,
+        category: NotificationRouteCategory,
+        server_id: int | None,
+    ) -> _ResolvedRouteConfig | None:
+        """按单服覆盖 -> 全局非禁用路由 -> 遗留话题字段 -> 全局禁用路由的顺序查询生效配置。"""
+        route_repo = NotificationRouteRepository(db)
+        if server_id is not None:
+            server_route = await route_repo.get_route(
+                scope_type=NotificationRouteScope.SERVER,
+                category=category,
+                server_id=server_id,
+                fresh=True,
+            )
+            if server_route is not None:
+                return self._route_to_resolved_config(server_route)
+
+        global_route = await route_repo.get_route(
+            scope_type=NotificationRouteScope.GLOBAL,
+            category=category,
+            server_id=None,
+            fresh=True,
+        )
+        if (
+            global_route is not None
+            and NotificationTargetType(global_route.target_type)
+            != NotificationTargetType.DISABLED
+        ):
+            return self._route_to_resolved_config(global_route)
+
+        # 未迁移或测试构造的旧服务器未写 NotificationRoute 时，回退读取 ServerInstance 遗留话题字段
+        if server_id is not None and category in (
+            NotificationRouteCategory.MEDIA_LIBRARY,
+            NotificationRouteCategory.MEDIA_REQUEST,
+        ):
+            server = await ServerRepository(db).get_by_id(server_id)
+            if server is not None:
+                legacy_topic = (
+                    server.notify_topic_id
+                    if category == NotificationRouteCategory.MEDIA_LIBRARY
+                    else server.request_notify_topic_id
+                )
+                if legacy_topic:
+                    return self._synthesize_legacy_topic_route(int(legacy_topic))
+
+        if global_route is not None:
+            return self._route_to_resolved_config(global_route)
+        return None
+
+    async def _resolve_route_config(
+        self,
+        *,
+        category: NotificationRouteCategory,
+        server_id: int | None,
+        session: AsyncSession | None,
+        fallback_factory: async_sessionmaker[AsyncSession] | None,
+    ) -> _ResolvedRouteConfig:
+        """按单服覆盖 -> 全局默认 -> 遗留话题兜底 -> 内置默认优先级解析路由规则。"""
+        resolved: _ResolvedRouteConfig | None = None
+        if session is not None:
+            try:
+                resolved = await self._query_route_config(
+                    session, category=category, server_id=server_id
+                )
+            except SQLAlchemyError as exc:
+                logger.warning("查询通知路由失败，回退默认策略: {}", exc)
+        else:
+            factory = self.runtime.resolve_session_factory(fallback_factory)
+            if factory is not None:
+                try:
+                    async with self.runtime._db_lock, factory() as db:
+                        resolved = await self._query_route_config(
+                            db, category=category, server_id=server_id
+                        )
+                except SQLAlchemyError as exc:
+                    logger.warning("查询通知路由失败，回退默认策略: {}", exc)
+
+        if resolved is None:
+            return _ResolvedRouteConfig(
+                target_type=DEFAULT_GLOBAL_ROUTE_TARGETS[category],
+                target_chat_id=None,
+                target_topic_id=None,
+                escalate_admin_dm=False,
+                enabled_events=frozenset(),
+            )
+        return resolved
 
     async def _resolve_admin_ids(
         self,
@@ -1380,6 +1458,123 @@ class NotificationService:
             fallback_factory=derived_factory,
         )
         return await self._send_targets_sync(rendered=rendered, targets=targets)
+
+    async def has_route_targets(
+        self,
+        event: NotificationEvent,
+        *,
+        server_id: int | None = None,
+        route_category_override: NotificationRouteCategory | None = None,
+        session: AsyncSession | None = None,
+    ) -> bool:
+        """判断指定事件与服务器在当前路由策略下是否存在至少一个有效出站目标。"""
+        spec = get_event_spec(event)
+        category = route_category_override or spec.category
+        derived_factory = self._derive_session_factory(session)
+        route_cfg = await self._resolve_route_config(
+            category=category,
+            server_id=server_id,
+            session=session,
+            fallback_factory=derived_factory,
+        )
+        if (
+            not spec.default_enabled
+            and spec.event.value not in route_cfg.enabled_events
+        ):
+            return False
+        targets = await self._resolve_route_targets(
+            route_cfg=route_cfg,
+            category=category,
+            is_critical=(spec.severity.value == "critical"),
+            session=session,
+            fallback_factory=derived_factory,
+        )
+        return bool(targets)
+
+    async def resolve_primary_target_chat_id(
+        self,
+        *,
+        category: NotificationRouteCategory,
+        server_id: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> int | str | None:
+        """解析指定路由类别与服务器的主投递目标 ``chat_id``，用于同步编辑既有消息卡片。"""
+        derived_factory = self._derive_session_factory(session)
+        route_cfg = await self._resolve_route_config(
+            category=category,
+            server_id=server_id,
+            session=session,
+            fallback_factory=derived_factory,
+        )
+        targets = await self._resolve_route_targets(
+            route_cfg=route_cfg,
+            category=category,
+            is_critical=False,
+            session=session,
+            fallback_factory=derived_factory,
+        )
+        return targets[0].chat_id if targets else None
+
+    async def edit_route_message(
+        self,
+        *,
+        category: NotificationRouteCategory,
+        message_id: int,
+        new_content: str,
+        server_id: int | None = None,
+        clear_buttons: bool = True,
+        parse_mode: str | None = "html",
+        session: AsyncSession | None = None,
+    ) -> bool:
+        """在对应路由主目标会话中非致命编辑既有通知消息（如同步更新求片审核卡片状态）。
+
+        Args:
+            category: 通知路由类别。
+            message_id: 原 Telegram 消息 ID。
+            new_content: 更新后的 HTML 或文本内容。
+            server_id: 关联服务器实例 ID。
+            clear_buttons: 是否清空原消息内联按钮，默认 ``True``。
+            parse_mode: Telegram 解析模式，默认 ``"html"``。
+            session: 可选异步数据库会话。
+
+        Returns:
+            编辑成功返回 ``True``；无客户端、无目标或 Telegram RPC 异常时记录日志并返回 ``False``。
+        """
+        if not message_id:
+            return False
+        client = self.runtime.get_telethon_client()
+        if client is None:
+            return False
+        edit_fn = getattr(client, "edit_message", None)
+        if not callable(edit_fn):
+            return False
+        chat_id = await self.resolve_primary_target_chat_id(
+            category=category,
+            server_id=server_id,
+            session=session,
+        )
+        if chat_id is None:
+            return False
+        try:
+            res = edit_fn(
+                chat_id,
+                message_id,
+                new_content,
+                clear_buttons=clear_buttons,
+                parse_mode=parse_mode,
+            )
+            if inspect.isawaitable(res):
+                await res
+            return True
+        except (RPCError, ValueError, TypeError, OSError, AttributeError) as exc:
+            logger.warning(
+                "编辑通知卡片失败（忽略以保护主事务）: category={}, server_id={}, msg_id={}, err={}",
+                category.value,
+                server_id,
+                message_id,
+                exc,
+            )
+            return False
 
     async def send_test_to_route(
         self,

@@ -1,10 +1,10 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.orm import MediaRequest
+from models.orm import MediaRequest, ServerInstance, ServerType
 from repositories.config_repo import ConfigRepository
 
 
@@ -183,3 +183,87 @@ class RequestRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def has_uncompleted_approved(self, media_server_id: int) -> bool:
+        """检查指定媒体服务器上是否存在已批准但尚未完成入库通知的求片记录。"""
+        stmt = (
+            select(MediaRequest.id)
+            .where(
+                MediaRequest.media_server_id == media_server_id,
+                MediaRequest.status == "approved",
+                MediaRequest.completed_at.is_(None),
+            )
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def claim_approved_for_completion(
+        self,
+        *,
+        media_server_id: int,
+        exact_matches: Sequence[tuple[str, int]],
+        non_radarr_tmdb_id: int | None = None,
+        now: datetime | None = None,
+    ) -> list[MediaRequest]:
+        """原子查找并认领匹配的已批准未完结求片记录，并发入库时每条仅会被认领一次。
+
+        Args:
+            media_server_id: 目标 Emby/Jellyfin 服务器实例 ID。
+            exact_matches: 精确匹配的 ``(media_type, media_id)`` 元组列表（如电影 ``tmdb``、剧集 ``tvdb``）。
+            non_radarr_tmdb_id: 可选剧集 TMDB 回退 ID，仅匹配非 Radarr 实例以防电影与剧集 TMDB ID 数值碰撞。
+            now: 可选当前时间戳，便于测试注入。
+
+        Returns:
+            本次成功原子写入 ``completed_at`` 的 ``MediaRequest`` 列表。
+        """
+        clauses = [
+            and_(
+                MediaRequest.media_type == media_type,
+                MediaRequest.media_id == media_id,
+            )
+            for media_type, media_id in dict.fromkeys(exact_matches)
+            if media_id > 0
+        ]
+        if non_radarr_tmdb_id is not None and non_radarr_tmdb_id > 0:
+            non_radarr_ids = select(ServerInstance.id).where(
+                ServerInstance.server_type != ServerType.RADARR
+            )
+            clauses.append(
+                and_(
+                    MediaRequest.media_type == "tmdb",
+                    MediaRequest.media_id == non_radarr_tmdb_id,
+                    MediaRequest.arr_id.in_(non_radarr_ids),
+                )
+            )
+        if not clauses:
+            return []
+
+        current_time = now or datetime.now()
+        stmt = (
+            update(MediaRequest)
+            .where(
+                MediaRequest.media_server_id == media_server_id,
+                MediaRequest.status == "approved",
+                MediaRequest.completed_at.is_(None),
+                or_(*clauses),
+            )
+            .values(completed_at=current_time)
+            .returning(MediaRequest.id)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self.session.execute(stmt)
+        claimed_ids = list(result.scalars().all())
+        if not claimed_ids:
+            await self.session.rollback()
+            return []
+        await self.session.commit()
+
+        fetch_stmt = (
+            select(MediaRequest)
+            .where(MediaRequest.id.in_(claimed_ids))
+            .order_by(MediaRequest.id.asc())
+            .execution_options(populate_existing=True)
+        )
+        fetched = await self.session.execute(fetch_stmt)
+        return list(fetched.scalars().all())

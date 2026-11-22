@@ -48,9 +48,20 @@ async def request_approve_by_id_handler(
     request_service = RequestService(app, session)
     await event.answer("正在处理审批...", alert=False)
 
+    pre_req = await request_service.request_repo.get_by_id(request_id)
+    was_pending_with_topic = bool(
+        pre_req and pre_req.status == "pending" and pre_req.topic_message_id
+    )
     result = await request_service.handle_approval_by_request_id(
         request_id, approver_name=approver_name
     )
+
+    post_req = await request_service.request_repo.get_by_id(request_id)
+    if was_pending_with_topic and post_req and post_req.status != "pending":
+        # RequestService 已同步更新原审核卡片并移除按钮，此处仅在失败时保留弹窗提示
+        if not result.success:
+            await event.answer(result.message, alert=True)
+        return
 
     msg = await event.get_message()
     original_text = msg.text if msg else ""
@@ -62,8 +73,7 @@ async def request_approve_by_id_handler(
     else:
         await event.answer(result.message, alert=True)
         # 若请求已不再处于 pending（例如失败释分、已撤销或已超时），移除操作按钮避免误点
-        req = await request_service.request_repo.get_by_id(request_id)
-        if req and req.status != "pending":
+        if post_req and post_req.status != "pending":
             await event.edit(
                 original_text
                 + TelegramMessage.render_markdown(t"\n\n⚠️ **{result.message:raw}**"),
@@ -130,9 +140,16 @@ async def request_deny_handler(
         await event.edit(original_text + "\n\n❌ **已拒绝**", buttons=None)
         return
 
+    was_pending_with_topic = bool(req.status == "pending" and req.topic_message_id)
     result = await request_service.handle_rejection(
         target_id, approver_name=approver_name
     )
+    latest = await request_service.request_repo.get_by_id(target_id)
+    if was_pending_with_topic and latest and latest.status != "pending":
+        if not result.success:
+            await event.answer(result.message, alert=True)
+        return
+
     if result.success:
         await event.edit(
             original_text
@@ -143,7 +160,6 @@ async def request_deny_handler(
         )
     else:
         await event.answer(result.message, alert=True)
-        latest = await request_service.request_repo.get_by_id(target_id)
         if latest and latest.status != "pending":
             await event.edit(
                 original_text

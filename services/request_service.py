@@ -1,5 +1,7 @@
+import contextlib
+import inspect
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from httpx2 import HTTPError
@@ -19,8 +21,8 @@ from core.economy_policy import (
 )
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
-from models.events import NotificationEvent
-from models.orm import LibraryBinding, ServerInstance
+from models.events import NotificationEvent, NotificationRouteCategory
+from models.orm import LibraryBinding, MediaRequest, ServerInstance
 from models.radarr import MovieResource
 from models.sonarr import SeriesResource
 from models.tvdb import TvdbData
@@ -30,6 +32,16 @@ from repositories.media_repo import MediaRepository
 from repositories.request_repo import RequestRepository
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
+from services.notification_renderer import (
+    EffectiveEconomyContext,
+    NotificationPayload,
+    RequestApprovedPayload,
+    RequestArrFailedPayload,
+    RequestExpiredPayload,
+    RequestRejectedPayload,
+    RequestSubmitPayload,
+    render_request_topic_card_status,
+)
 from services.notification_service import NotificationService
 from services.user_service import Result
 
@@ -231,13 +243,17 @@ class RequestService:
                 "该媒体在目标 Arr 实例已有待审核的求片申请，请勿重复提交。",
             )
 
-        # 使用绑定的 arr_id 获取 Sonarr/Radarr 服务器信息用于通知
+        # 使用绑定的 arr_id 检查求片审核路由目标是否就绪（兼容 NotificationRoute 与遗留 request_notify_topic_id）
         arr_server = await self.server_repo.get_by_id(arr_id)
         if not arr_server:
             return Result(False, "关联的 Arr 服务器实例不存在。")
 
-        topic_id = arr_server.request_notify_topic_id
-        if not topic_id:
+        has_route = await self.notification_service.has_route_targets(
+            NotificationEvent.REQUEST_SUBMIT,
+            server_id=arr_id,
+            session=self.request_repo.session,
+        )
+        if not has_route:
             return Result(
                 False,
                 TelegramMessage.render_markdown(
@@ -247,7 +263,13 @@ class RequestService:
 
         title, overview, poster = await self._get_media_content(selected_media, client)
         media_server_name = getattr(media_server, "name", "未知")
-        user_name = await self.client.get_user_name(user_id)
+        raw_user_name = await self.client.get_user_name(user_id)
+        user_name = (
+            raw_user_name
+            if isinstance(raw_user_name, str) and raw_user_name
+            else str(user_id)
+        )
+        economy = EffectiveEconomyContext.from_cache(media_server)
 
         # 仅当单服求片定价 > 0 时检查并原子预留积分；0 分免费求片完全不触碰积分余额
         if fixed_cost > 0 and not await self.telegram_repo.deduct_score_if_sufficient(
@@ -288,20 +310,26 @@ class RequestService:
             ]
         ]
 
-        sent_msg = await self.notification_service.send_to_topic(
-            topic_id=topic_id,
-            event_type=NotificationEvent.REQUEST_SUBMIT,
-            image=poster,
-            buttons=buttons,
-            # 模板变量
-            user_name=user_name,
-            user_id=user_id,
-            media_title=title,
-            media_year=getattr(selected_media, "year", "未知"),
-            tmdb_id=media_id,
+        media_year_raw = getattr(selected_media, "year", None)
+        submit_payload = RequestSubmitPayload(
             server_name=media_server_name,
+            user_id=user_id,
+            user_name=user_name,
+            media_title=title,
+            media_year=media_year_raw if media_year_raw else None,
+            media_type=prefix.upper(),
+            media_id=media_id,
             overview=overview,
-            prefix=prefix.upper(),
+            request_id=req_id,
+            reserved_cost=fixed_cost,
+            poster_url=poster,
+            buttons=buttons,
+            economy=economy,
+        )
+        sent_msg = await self.notification_service.emit_sync(
+            submit_payload,
+            server_id=arr_id,
+            session=self.request_repo.session,
         )
 
         # 只有通知成功送达管理员话题，提交才算成功；失败则回滚状态并释放全部预留积分
@@ -423,49 +451,93 @@ class RequestService:
             )
         return Result(False, msg)
 
-    async def _get_media_server_name(self, media_server_id: int) -> str:
-        """获取媒体服务器名称用于通知展示"""
+    async def _resolve_media_server_and_economy(
+        self, media_server_id: int
+    ) -> tuple[str, EffectiveEconomyContext]:
+        """读取目标媒体服务器名称与遵循 ADR-0004 的有效经济开关快照。"""
         server = await self.server_repo.get_by_id(media_server_id)
-        return server.name if server else f"#{media_server_id}"
+        server_name = server.name if server else f"#{media_server_id}"
+        return server_name, EffectiveEconomyContext.from_cache(server)
 
-    async def _notify_requester_dm(
+    async def _safe_get_user_name(self, user_id: int) -> str | None:
+        """非致命读取申请人展示名称，供编辑原审核卡片时显示。"""
+        getter = getattr(self.client, "get_user_name", None)
+        if not callable(getter):
+            return None
+        try:
+            res = getter(user_id)
+            if inspect.isawaitable(res):
+                res = await res
+            return str(res) if res else None
+        except errors.RPCError, ValueError, TypeError, OSError, AttributeError:
+            return None
+
+    async def _sync_topic_card_status(
+        self,
+        req: MediaRequest,
+        *,
+        stage: Literal[
+            "approved", "rejected", "failed", "expired", "canceled", "completed"
+        ],
+        server_name: str,
+        economy: EffectiveEconomyContext,
+        approver_name: str | None = None,
+        detail_text: str | None = None,
+    ) -> None:
+        """若请求记录存在 topic_message_id，非致命更新群内原审核卡片文本并移除过期内联按钮。"""
+        if not req.topic_message_id:
+            return
+        user_name = await self._safe_get_user_name(req.user_id)
+        card_html = render_request_topic_card_status(
+            stage=stage,
+            request_id=req.id,
+            user_id=req.user_id,
+            server_name=server_name,
+            media_title=req.title or str(req.media_id),
+            media_type=req.media_type,
+            media_id=req.media_id,
+            reserved_cost=req.reserved_cost,
+            approver_name=approver_name,
+            detail_text=detail_text,
+            user_name=user_name,
+            economy=economy,
+        )
+        with contextlib.suppress(errors.RPCError, ValueError, TypeError, OSError):
+            await self.notification_service.edit_route_message(
+                category=NotificationRouteCategory.MEDIA_REQUEST,
+                server_id=req.arr_id,
+                message_id=req.topic_message_id,
+                new_content=card_html,
+                clear_buttons=True,
+                parse_mode="html",
+                session=self.request_repo.session,
+            )
+
+    async def _emit_requester_dm(
         self,
         request_id: int,
         user_id: int,
         stage: str,
+        payload: NotificationPayload,
         *,
-        event_type: NotificationEvent | None = None,
-        text: str | None = None,
-        **kwargs: Any,
-    ) -> bool:
-        """向求片申请人发送私聊结果通知；送达失败仅记录诊断日志，不逆转已完成的状态和积分处理"""
+        server_id: int,
+    ) -> None:
+        """通过统一异步管线发射求片状态变更私聊通知（失败自动兜底收件箱，不阻断主流程）。"""
         try:
-            if event_type is not None:
-                ok = await self.notification_service.send_to_user(
-                    user_id, event_type, **kwargs
-                )
-            elif text is not None:
-                ok = await self.notification_service.send_text_to_user(user_id, text)
-            else:
-                return False
-
-            if not ok:
-                logger.warning(
-                    "求片结果私聊通知送达失败（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}",
-                    request_id,
-                    user_id,
-                    stage,
-                )
-            return ok
-        except (errors.RPCError, ValueError, OSError) as e:
+            await self.notification_service.emit(
+                payload,
+                user_id=user_id,
+                server_id=server_id,
+                session=self.request_repo.session,
+            )
+        except (errors.RPCError, ValueError, TypeError, OSError) as exc:
             logger.warning(
-                "求片结果私聊通知异常（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}, err={}",
+                "求片结果通知入队异常（不影响已完成状态与积分）: request_id={}, user_id={}, stage={}, err={}",
                 request_id,
                 user_id,
                 stage,
-                e,
+                exc,
             )
-            return False
 
     async def handle_approval_by_request_id(
         self, request_id: int, approver_name: str = "管理员"
@@ -484,18 +556,52 @@ class RequestService:
         now = datetime.now()
         if req.expires_at <= now:
             # 已超期但定时任务尚未扫描到时，在此直接触发超时释放，禁止再批准
+            default_expire_days = (await self.config_repo.get_policy_config())[
+                "request_expire_days"
+            ]
+            req_days = (
+                max(1, (req.expires_at - req.created_at).days)
+                if req.expires_at and req.created_at
+                else default_expire_days
+            )
             expired_req = await self.request_repo.atomic_transition(
                 request_id,
                 from_status="pending",
                 to_status="expired",
                 cost_status="released",
-                fail_reason="待审核超过7天自动取消",
+                fail_reason=f"待审核超过{req_days}天自动取消",
                 now=now,
             )
-            if expired_req and expired_req.reserved_cost > 0:
-                await self.telegram_repo.update_score(
-                    expired_req.user_id, expired_req.reserved_cost
+            if expired_req:
+                if expired_req.reserved_cost > 0:
+                    await self.telegram_repo.update_score(
+                        expired_req.user_id, expired_req.reserved_cost
+                    )
+                server_name, economy = await self._resolve_media_server_and_economy(
+                    expired_req.media_server_id
                 )
+                await self._sync_topic_card_status(
+                    expired_req,
+                    stage="expired",
+                    server_name=server_name,
+                    economy=economy,
+                    detail_text=expired_req.fail_reason,
+                )
+                await self._emit_requester_dm(
+                    expired_req.id,
+                    expired_req.user_id,
+                    "expired",
+                    RequestExpiredPayload(
+                        server_name=server_name,
+                        media_title=expired_req.title or str(expired_req.media_id),
+                        expire_days=req_days,
+                        reserved_cost=expired_req.reserved_cost,
+                        request_id=expired_req.id,
+                        economy=economy,
+                    ),
+                    server_id=expired_req.media_server_id,
+                )
+            if expired_req and expired_req.reserved_cost > 0:
                 return Result(
                     False,
                     "该求片请求已超过 7 天有效期并自动取消，已释放预留积分，无法批准。",
@@ -522,7 +628,7 @@ class RequestService:
             claimed.media_server_id, claimed.library_name, claimed.media_id
         )
         if ok:
-            await self.request_repo.atomic_transition(
+            approved_req = await self.request_repo.atomic_transition(
                 request_id,
                 from_status="processing",
                 to_status="approved",
@@ -536,15 +642,30 @@ class RequestService:
                 claimed.reserved_cost,
                 approver_name,
             )
-            server_name = await self._get_media_server_name(claimed.media_server_id)
-            await self._notify_requester_dm(
+            server_name, economy = await self._resolve_media_server_and_economy(
+                claimed.media_server_id
+            )
+            target_req = approved_req or claimed
+            await self._sync_topic_card_status(
+                target_req,
+                stage="approved",
+                server_name=server_name,
+                economy=economy,
+                approver_name=approver_name,
+            )
+            await self._emit_requester_dm(
                 request_id,
                 claimed.user_id,
                 "approved",
-                event_type=NotificationEvent.REQUEST_APPROVED,
-                media_title=claimed.title or msg,
-                media_year="",
-                server_name=server_name,
+                RequestApprovedPayload(
+                    server_name=server_name,
+                    media_title=claimed.title or msg,
+                    approver_name=approver_name,
+                    reserved_cost=claimed.reserved_cost,
+                    request_id=request_id,
+                    economy=economy,
+                ),
+                server_id=claimed.media_server_id,
             )
             if claimed.reserved_cost > 0:
                 return Result(
@@ -561,7 +682,7 @@ class RequestService:
             )
 
         # Arr 添加失败时仅在曾预留积分的情况下退回
-        await self.request_repo.atomic_transition(
+        failed_req = await self.request_repo.atomic_transition(
             request_id,
             from_status="processing",
             to_status="failed",
@@ -580,20 +701,32 @@ class RequestService:
             claimed.reserved_cost,
             msg,
         )
-        server_name = await self._get_media_server_name(claimed.media_server_id)
-        release_dm_line = (
-            f"\n已全额释放预留积分 <b>{claimed.reserved_cost}</b>。"
-            if claimed.reserved_cost > 0
-            else ""
+        server_name, economy = await self._resolve_media_server_and_economy(
+            claimed.media_server_id
         )
-        await self._notify_requester_dm(
+        target_req = failed_req or claimed
+        await self._sync_topic_card_status(
+            target_req,
+            stage="failed",
+            server_name=server_name,
+            economy=economy,
+            approver_name=approver_name,
+            detail_text=msg,
+        )
+        await self._emit_requester_dm(
             request_id,
             claimed.user_id,
             "arr_failed",
-            text=TelegramMessage.render_html(t"""\
-                ❌ <b>求片添加失败</b>
-
-                您请求的 <b>{claimed.title or claimed.media_id}</b>（服务器: <code>{server_name}</code>）在加入媒体库时失败：{msg}{release_dm_line:raw}"""),
+            RequestArrFailedPayload(
+                server_name=server_name,
+                media_title=claimed.title or str(claimed.media_id),
+                fail_reason=msg,
+                approver_name=approver_name,
+                reserved_cost=claimed.reserved_cost,
+                request_id=request_id,
+                economy=economy,
+            ),
+            server_id=claimed.media_server_id,
         )
         if claimed.reserved_cost > 0:
             return Result(
@@ -636,22 +769,33 @@ class RequestService:
             updated.reserved_cost,
             approver_name,
         )
-        server_name = await self._get_media_server_name(updated.media_server_id)
-        has_cost = updated.reserved_cost > 0
-        reason_text = (
-            f"管理员（{approver_name}）已拒绝该请求，已释放全部预留积分 {updated.reserved_cost}。"
-            if has_cost
-            else f"管理员（{approver_name}）已拒绝该请求。"
+        server_name, economy = await self._resolve_media_server_and_economy(
+            updated.media_server_id
         )
-        await self._notify_requester_dm(
+        has_cost = updated.reserved_cost > 0
+        reason_text = f"管理员（{approver_name}）已拒绝该请求。"
+        await self._sync_topic_card_status(
+            updated,
+            stage="rejected",
+            server_name=server_name,
+            economy=economy,
+            approver_name=approver_name,
+            detail_text=updated.fail_reason,
+        )
+        await self._emit_requester_dm(
             request_id,
             updated.user_id,
             "rejected",
-            event_type=NotificationEvent.REQUEST_REJECTED,
-            media_title=updated.title or f"#{request_id}",
-            media_year="",
-            server_name=server_name,
-            reason=reason_text,
+            RequestRejectedPayload(
+                server_name=server_name,
+                media_title=updated.title or f"#{request_id}",
+                reason=reason_text,
+                approver_name=approver_name,
+                reserved_cost=updated.reserved_cost,
+                request_id=request_id,
+                economy=economy,
+            ),
+            server_id=updated.media_server_id,
         )
         if has_cost:
             return Result(
@@ -692,6 +836,17 @@ class RequestService:
             await self.telegram_repo.update_score(
                 updated.user_id, updated.reserved_cost
             )
+        server_name, economy = await self._resolve_media_server_and_economy(
+            updated.media_server_id
+        )
+        await self._sync_topic_card_status(
+            updated,
+            stage="canceled",
+            server_name=server_name,
+            economy=economy,
+            detail_text="申请人主动撤销",
+        )
+        if updated.reserved_cost > 0:
             logger.info(
                 "申请人已撤销求片并释放积分: request_id={}, user_id={}, released_cost={}",
                 request_id,
@@ -744,20 +899,29 @@ class RequestService:
                 updated.user_id,
                 updated.reserved_cost,
             )
-            server_name = await self._get_media_server_name(updated.media_server_id)
-            expire_release_line = (
-                f"\n已全额释放预留积分 <b>{updated.reserved_cost}</b>。"
-                if updated.reserved_cost > 0
-                else ""
+            server_name, economy = await self._resolve_media_server_and_economy(
+                updated.media_server_id
             )
-            await self._notify_requester_dm(
+            await self._sync_topic_card_status(
+                updated,
+                stage="expired",
+                server_name=server_name,
+                economy=economy,
+                detail_text=updated.fail_reason,
+            )
+            await self._emit_requester_dm(
                 updated.id,
                 updated.user_id,
                 "expired",
-                text=TelegramMessage.render_html(t"""\
-                    ⏰ <b>求片已超时自动取消</b>
-
-                    您请求的 <b>{updated.title or updated.media_id}</b>（服务器: <code>{server_name}</code>）待审核已满 {req_days} 天未处理，系统已自动取消。{expire_release_line:raw}"""),
+                RequestExpiredPayload(
+                    server_name=server_name,
+                    media_title=updated.title or str(updated.media_id),
+                    expire_days=req_days,
+                    reserved_cost=updated.reserved_cost,
+                    request_id=updated.id,
+                    economy=economy,
+                ),
+                server_id=updated.media_server_id,
             )
         return expired_count
 
@@ -796,6 +960,9 @@ class RequestService:
                 "expires_at": item.expires_at.isoformat() if item.expires_at else None,
                 "resolved_at": (
                     item.resolved_at.isoformat() if item.resolved_at else None
+                ),
+                "completed_at": (
+                    item.completed_at.isoformat() if item.completed_at else None
                 ),
             }
             for item in items
