@@ -5,6 +5,10 @@ from string.templatelib import Interpolation, Template, convert
 
 # 匹配 Telethon Markdown 中连续的格式分隔符（**、__、~~）
 _MD_DELIM_RE = re.compile(r"\*{2,}|_{2,}|~{2,}")
+# 匹配仅包含空格或制表符的伪空行，便于统一折叠多空行
+_WHITESPACE_LINE_RE = re.compile(r"^[ \t]+$", re.MULTILINE)
+# 匹配连续三个及以上换行符，避免可选区块为空时残留多余空行
+_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
 
 
 class TelegramMessage:
@@ -30,6 +34,22 @@ class TelegramMessage:
     def escape_html(text: str) -> str:
         """转义动态文本中的 HTML 特殊字符。"""
         return html.escape(text)
+
+    @staticmethod
+    def collapse_blank_lines(text: str) -> str:
+        """规范化多段落消息中的空白行，消除条件片段为空时残留的多余空行与首尾空行。
+
+        Args:
+            text: 已完成基础渲染的消息文本。
+
+        Returns:
+            将 CRLF 转为 LF、清理纯空白行并将连续三行及以上换行收敛为单个空行后的文本。
+        """
+        if not text:
+            return ""
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = _WHITESPACE_LINE_RE.sub("", normalized)
+        return _MULTI_NEWLINE_RE.sub("\n\n", normalized).strip()
 
     @staticmethod
     def _format_interpolation(
@@ -117,29 +137,43 @@ class TelegramMessage:
         return "".join(parts)
 
     @classmethod
-    def render_markdown(cls, template: Template) -> str:
+    def render_markdown(
+        cls,
+        template: Template,
+        *,
+        collapse_blank_lines: bool = False,
+    ) -> str:
         """渲染用于 Telegram Markdown 的 t-string 模板，自动剥离公共缩进并转义动态插值。
 
         使用 `{value:raw}` 可跳过对已格式化 Markdown 片段的转义。
 
         Args:
             template: Python t-string 模板对象。
+            collapse_blank_lines: 是否折叠连续空行并去除首尾空白（默认 ``False`` 保持向后兼容）。
 
         Returns:
             可直接发送给 Telethon `parse_mode="markdown"` 的消息字符串。
         """
-        return cls._render_template(template, cls.escape_markdown)
+        rendered = cls._render_template(template, cls.escape_markdown)
+        return cls.collapse_blank_lines(rendered) if collapse_blank_lines else rendered
 
     @classmethod
-    def render_html(cls, template: Template) -> str:
+    def render_html(
+        cls,
+        template: Template,
+        *,
+        collapse_blank_lines: bool = False,
+    ) -> str:
         """渲染用于 Telegram HTML 的 t-string 模板，自动剥离公共缩进并转义 HTML 特殊字符。
 
         使用 `{value:raw}` 可跳过对已格式化 HTML 片段的转义。
 
         Args:
             template: Python t-string 模板对象。
+            collapse_blank_lines: 是否折叠连续空行并去除首尾空白（默认 ``False`` 保持向后兼容）。
 
         Returns:
             可直接发送给 Telethon `parse_mode="html"` 的消息字符串。
         """
-        return cls._render_template(template, cls.escape_html)
+        rendered = cls._render_template(template, cls.escape_html)
+        return cls.collapse_blank_lines(rendered) if collapse_blank_lines else rendered
