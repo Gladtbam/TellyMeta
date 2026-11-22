@@ -196,6 +196,7 @@ class MediaRepository:
             MediaUser: 更新后的 Media 用户对象
         """
         media_user.is_banned = True
+        media_user.grace_delete_reminder_sent = False
         if delete_at is not None:
             media_user.delete_at = delete_at
         else:
@@ -415,9 +416,11 @@ class MediaRepository:
         media_user.expires_at = cycle.expires_at
         media_user.is_banned = False  # 续期时自动解封
         media_user.delete_at = None  # 清除删除时间
-        # 仅重置本期保活计数与亚秒余数，绝不清除历史累计总时长 total_watch_time_seconds
+        media_user.grace_delete_reminder_sent = False
+        # 仅重置本期保活计数、亚秒余数及首次达标提示标记，绝不清除历史累计总时长 total_watch_time_seconds
         media_user.cycle_watch_time_seconds = 0
         media_user.watch_time_remainder_ms = 0
+        media_user.watch_time_milestone_notified = False
         if (
             cycle.is_reset or crossed_due_reset
         ) and not media_user.is_traffic_suspended:
@@ -458,6 +461,7 @@ class MediaRepository:
         media_user.expires_at = base_date + timedelta(days=days)
         media_user.is_banned = False  # 续期时自动解封
         media_user.delete_at = None  # 清除删除时间
+        media_user.grace_delete_reminder_sent = False
         await self.session.commit()
         await self.session.refresh(media_user)
         return media_user

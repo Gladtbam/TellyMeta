@@ -137,7 +137,10 @@ async def warn_handler(
     警告一个用户，需回复一个用户
     """
     user_service = UserService(app, session)
-    user = await user_service.warn_user(target_user_id)
+    operator_name = await user_service.resolve_user_display_name(
+        getattr(event, "sender_id", None), fallback="管理员"
+    )
+    user = await user_service.warn_user(target_user_id, operator_name=operator_name)
 
     await safe_reply(
         event,
@@ -173,7 +176,12 @@ async def change_handler(
         return
 
     score_change = int(args[1])
-    res = await user_service.change_user_score(target_user_id, score_change)
+    operator_name = await user_service.resolve_user_display_name(
+        getattr(event, "sender_id", None), fallback="管理员"
+    )
+    res = await user_service.change_user_score(
+        target_user_id, score_change, operator_name=operator_name
+    )
     if not res.success or not res.extra_data:
         await safe_reply(event, f"❌ {res.message}")
         return
@@ -253,7 +261,15 @@ async def delete_handler(
     删除一个用户的 Emby 账户，需回复一个用户
     """
     user_service = UserService(app, session)
-    result = await user_service.delete_account(target_user_id, "both")
+    operator_name = await user_service.resolve_user_display_name(
+        getattr(event, "sender_id", None), fallback="管理员"
+    )
+    result = await user_service.delete_account(
+        target_user_id,
+        "both",
+        operator_name=operator_name,
+        emit_notification=True,
+    )
 
     await safe_reply(event, result.message)
 
@@ -275,8 +291,30 @@ async def kick_handler(
     if isinstance(event, events.NewMessage.Event):
         user_service = UserService(app, session)
         client: TelethonClientWarper = app.state.telethon_client
+        operator_name = await user_service.resolve_user_display_name(
+            getattr(event, "sender_id", None), fallback="管理员"
+        )
+        target_name = await user_service.resolve_user_display_name(target_user_id)
+        srv_name, media_name, ctx_srv = await user_service.snapshot_user_media_summary(
+            target_user_id
+        )
         await client.kick_and_ban_participant(target_user_id)
-        result = await user_service.delete_account(target_user_id, "both")
+        result = await user_service.delete_account(
+            target_user_id,
+            "both",
+            operator_name=operator_name,
+            emit_notification=False,
+        )
+        # /kick 与删号合并为单次 kick 通知事件，避免重复发送 delete 回执
+        await user_service.notify_admin_ban_or_kick(
+            action_type="kick",
+            target_user_id=target_user_id,
+            operator_name=operator_name,
+            target_name=target_name,
+            server_name=srv_name,
+            media_name=media_name,
+            context_server=ctx_srv,
+        )
         await safe_reply(event, "已踢出用户。\n" + result.message)
     elif isinstance(event, events.CallbackQuery.Event):
         target_user_id = int(event.pattern_match.group(1).decode("utf-8"))  # type: ignore
@@ -304,8 +342,18 @@ async def ban_handler(
 
     if isinstance(event, events.NewMessage.Event):
         client: TelethonClientWarper = app.state.telethon_client
+        user_service = UserService(app, session)
+        operator_name = await user_service.resolve_user_display_name(
+            getattr(event, "sender_id", None), fallback="管理员"
+        )
         user_name = await client.get_user_name(target_user_id)
         await client.ban_user(target_user_id)
+        await user_service.notify_admin_ban_or_kick(
+            action_type="ban",
+            target_user_id=target_user_id,
+            operator_name=operator_name,
+            target_name=user_name if isinstance(user_name, str) else "",
+        )
         await safe_reply(
             event,
             TelegramMessage.render_markdown(

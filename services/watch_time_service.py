@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -599,7 +599,7 @@ async def run_emby_heartbeat_tick(app: FastAPI, server_id: int) -> None:
 
     async with async_session() as session:
         try:
-            service = WatchTimeService(session)
+            service = WatchTimeService(session, app=app)
             media_clients: dict[int, MediaService] = getattr(
                 app.state, "media_clients", {}
             )
@@ -608,6 +608,7 @@ async def run_emby_heartbeat_tick(app: FastAPI, server_id: int) -> None:
                 server_id,
                 media_client=media_clients.get(server_id),
                 scheduler=scheduler,
+                app=app,
                 commit=True,
             )
             await session.commit()
@@ -705,16 +706,87 @@ class WatchTimeService:
         session: AsyncSession,
         *,
         clock: Callable[[], datetime] | None = None,
+        app: Any | None = None,
     ) -> None:
         """初始化服务实例
 
         Args:
             session: 异步 SQLAlchemy 会话。
             clock: 可选时间注入函数，供单元测试控制确定性时间流逝。
+            app: 可选 FastAPI 应用实例，用于在突破保活门槛时发射统一通知。
         """
         self.session = session
         self._clock_fn = clock or datetime.now
+        self.app = app
         self.config_repo = ConfigRepository(session)
+
+    def _build_milestone_if_crossed(
+        self,
+        server: ServerInstance | None,
+        media_user: MediaUser | None,
+        prev_cycle_seconds: int,
+        *,
+        global_watch_on: bool,
+    ) -> Any | None:
+        """在持锁事务提交前检测是否同周期首次突破保活门槛并置位幂等标记。
+
+        Args:
+            server: 所属服务器 ORM 实例。
+            media_user: 更新后的媒体账号 ORM 实例。
+            prev_cycle_seconds: 本次结算前账号当期累计播放秒数。
+            global_watch_on: 全局播放时长开关状态。
+
+        Returns:
+            首次突破门槛时置位 ``watch_time_milestone_notified=True`` 并返回
+            ``WatchTimeRenewalEligiblePayload``；否则返回 ``None``。
+        """
+        if (
+            server is None
+            or media_user is None
+            or media_user.is_banned
+            or media_user.watch_time_milestone_notified
+            or not is_watch_time_renewal_open(global_watch_on, server)
+        ):
+            return None
+
+        threshold = max(0, int(server.watch_time_renewal_threshold_seconds or 0))
+        curr = max(0, int(media_user.cycle_watch_time_seconds or 0))
+        if threshold <= 0 or not (prev_cycle_seconds < threshold <= curr):
+            return None
+
+        from services.notification_renderer import (
+            EffectiveEconomyContext,
+            WatchTimeRenewalEligiblePayload,
+        )
+
+        media_user.watch_time_milestone_notified = True
+        return WatchTimeRenewalEligiblePayload(
+            server_name=server.name,
+            media_name=media_user.media_name,
+            watched_seconds=curr,
+            threshold_seconds=threshold,
+            expires_at=media_user.expires_at,
+            auto_renew_enabled=bool(media_user.auto_renew),
+            economy=EffectiveEconomyContext.from_cache(server),
+        )
+
+    async def _emit_milestone_notifications(
+        self,
+        app: Any | None,
+        pending: Sequence[tuple[int, Any]],
+    ) -> None:
+        """在事务提交并离开账号锁后发射时长保活首次达标祝贺通知。"""
+        if app is None or not pending:
+            return
+        from services.notification_service import NotificationService
+
+        notifier = NotificationService(app)
+        for user_id, payload in pending:
+            await notifier.emit(
+                user_id=user_id,
+                payload=payload,
+                session=self.session,
+            )
 
     def _now(self) -> datetime:
         """读取归一化后的当前配置时区时间"""
@@ -1211,6 +1283,7 @@ class WatchTimeService:
         exclude_session_key: str | None = None,
         skip_paused: bool = False,
         live_by_key: dict[str, ActiveSession] | None = None,
+        app: Any | None = None,
     ) -> int:
         """逐账号加锁刷新候选活跃会话，跳过未超时或同账号在线会话并按宽限封顶结算关闭
 
@@ -1224,11 +1297,14 @@ class WatchTimeService:
             exclude_session_key: 可选排除的当前会话键，防止误杀正在处理事件的会话。
             skip_paused: 为 ``True`` 时跳过暂停态会话。
             live_by_key: 可选远端 ``/Sessions`` 活跃会话索引；命中同账号仍在播会话时保留活跃。
+            app: 可选 FastAPI 应用实例，用于在提交后发射保活首次达标通知。
 
         Returns:
             本次实际截断并关闭的会话快照数量。
         """
         closed_count = 0
+        pending_emits: list[tuple[int, Any]] = []
+        target_app = app if app is not None else self.app
         for sess_id, user_id in candidates:
             lock = get_account_lock(user_id, server_id)
             async with lock:
@@ -1268,17 +1344,34 @@ class WatchTimeService:
                             await self.session.commit()
                         continue
 
-                await self._close_and_settle_grace_capped(
+                prev_cycle_seconds = (
+                    int(mu.cycle_watch_time_seconds or 0) if mu is not None else 0
+                )
+                added = await self._close_and_settle_grace_capped(
                     media_user=mu,
                     sess=db_sess,
                     grace_seconds=policy.grace_seconds,
                     daily_cap_seconds=policy.daily_cap_seconds,
                     now=now,
                 )
+                if added > 0 and mu is not None and commit and target_app is not None:
+                    srv = await self._reload_server(server_id)
+                    global_on = await self.config_repo.is_watch_time_enabled()
+                    milestone_payload = self._build_milestone_if_crossed(
+                        srv,
+                        mu,
+                        prev_cycle_seconds,
+                        global_watch_on=global_on,
+                    )
+                    if milestone_payload is not None:
+                        pending_emits.append((mu.id, milestone_payload))
                 closed_count += 1
                 await self.session.flush()
                 if commit:
                     await self.session.commit()
+
+        if commit and pending_emits:
+            await self._emit_milestone_notifications(target_app, pending_emits)
         return closed_count
 
     async def _cleanup_stale_jellyfin_sessions(
@@ -1289,6 +1382,7 @@ class WatchTimeService:
         now: datetime,
         *,
         commit: bool = False,
+        app: Any | None = None,
     ) -> None:
         """在 Jellyfin Webhook 到来时逐账号加锁清理其他已超时失联的在播会话
 
@@ -1302,6 +1396,7 @@ class WatchTimeService:
             policy: 当前播放时长策略配置。
             now: 归一化后的当前时间。
             commit: 是否在每条陈旧会话清理完毕后立即提交事务以缩小锁边界。
+            app: 可选 FastAPI 应用实例，用于发射保活首次达标通知。
         """
         cutoff = now - timedelta(seconds=policy.grace_seconds)
         # 仅清理其他处于播放中却长期失去心跳的会话；排除当前上报会话且不误杀短时暂停会话
@@ -1335,6 +1430,7 @@ class WatchTimeService:
             commit=commit,
             exclude_session_key=exclude_session_key,
             skip_paused=True,
+            app=app,
         )
 
     async def process_playback_event(
@@ -1377,6 +1473,7 @@ class WatchTimeService:
         else:
             await self.session.flush()
 
+        target_app = app if app is not None else self.app
         if server.server_type == ServerType.JELLYFIN:
             await self._cleanup_stale_jellyfin_sessions(
                 server_id,
@@ -1384,8 +1481,10 @@ class WatchTimeService:
                 policy,
                 now,
                 commit=commit,
+                app=target_app,
             )
 
+        pending_milestone: tuple[int, Any] | None = None
         lock = get_account_lock(user_id, server_id)
         async with lock:
             fresh_server = await self._reload_server(server_id)
@@ -1405,6 +1504,7 @@ class WatchTimeService:
                     await self.session.commit()
                 return 0
 
+            prev_cycle_seconds = int(fresh_mu.cycle_watch_time_seconds or 0)
             sess = await self._find_session_row(server_id, event.session_key)
             added_seconds = await self._apply_event_to_session(
                 server_id=server_id,
@@ -1414,6 +1514,15 @@ class WatchTimeService:
                 policy=policy,
                 now=now,
             )
+            if added_seconds > 0 and commit and target_app is not None:
+                milestone_payload = self._build_milestone_if_crossed(
+                    fresh_server,
+                    fresh_mu,
+                    prev_cycle_seconds,
+                    global_watch_on=True,
+                )
+                if milestone_payload is not None:
+                    pending_milestone = (user_id, milestone_payload)
             await self.session.flush()
             if commit:
                 await self.session.commit()
@@ -1423,13 +1532,15 @@ class WatchTimeService:
                 async with _get_server_heartbeat_lock(server_id):
                     await self._sync_emby_heartbeat(
                         server_id,
-                        app=app,
+                        app=target_app,
                         scheduler=scheduler,
                         heartbeat_interval=policy.heartbeat_interval_seconds,
                         allow_add=True,
                     )
 
-            return added_seconds
+        if commit and pending_milestone is not None:
+            await self._emit_milestone_notifications(target_app, [pending_milestone])
+        return added_seconds
 
     async def _server_has_active_sessions(self, server_id: int) -> bool:
         """检查指定服务器是否仍存在活跃（含暂时暂停但未停播）会话"""
@@ -1874,6 +1985,7 @@ class WatchTimeService:
         *,
         media_client: MediaService | None,
         scheduler: AsyncIOScheduler | None = None,
+        app: Any | None = None,
         commit: bool = False,
     ) -> int:
         """执行一次 Emby 服务器主动会话心跳对账
@@ -1890,11 +2002,13 @@ class WatchTimeService:
             server_id: 目标 Emby 服务器 ID。
             media_client: 对应的 ``MediaService`` 客户端；为 ``None`` 时视为停用。
             scheduler: 可选调度器，用于在无活跃会话或禁用时摘除心跳任务。
+            app: 可选 FastAPI 应用实例，用于在提交后发射保活首次达标通知。
             commit: 是否按账号提交数据库事务以配合长耗时网络拉取后的一致性。
 
         Returns:
             本次心跳对账总共新增入账的秒数。
         """
+        target_app = app if app is not None else self.app
         server = await self._reload_server(server_id)
         if (
             server is None
@@ -1939,6 +2053,7 @@ class WatchTimeService:
             await self.session.commit()
 
         total_added = 0
+        pending_emits: list[tuple[int, Any]] = []
         for sess_id, user_id in candidates:
             lock = get_account_lock(user_id, server_id)
             async with lock:
@@ -1965,7 +2080,13 @@ class WatchTimeService:
                         await self.session.commit()
                     continue
 
-                total_added += await self._reconcile_single_emby_session(
+                pre_mu = await self._reload_media_user(db_sess.user_id, server_id)
+                prev_cycle_seconds = (
+                    int(pre_mu.cycle_watch_time_seconds or 0)
+                    if pre_mu is not None
+                    else 0
+                )
+                added = await self._reconcile_single_emby_session(
                     server_id=server_id,
                     db_sess=db_sess,
                     live_by_key=live_by_key,
@@ -1973,9 +2094,27 @@ class WatchTimeService:
                     live_step_cap=live_step_cap,
                     now=now,
                 )
+                total_added += added
+                if (
+                    added > 0
+                    and pre_mu is not None
+                    and commit
+                    and target_app is not None
+                ):
+                    milestone_payload = self._build_milestone_if_crossed(
+                        fresh_server,
+                        pre_mu,
+                        prev_cycle_seconds,
+                        global_watch_on=True,
+                    )
+                    if milestone_payload is not None:
+                        pending_emits.append((pre_mu.id, milestone_payload))
                 await self.session.flush()
                 if commit:
                     await self.session.commit()
+
+        if commit and pending_emits:
+            await self._emit_milestone_notifications(target_app, pending_emits)
 
         # 若服务器此时仍存在关闭前的残余（例如对账途中全局开关被关闭），确保停用
         post_server = await self._reload_server(server_id)

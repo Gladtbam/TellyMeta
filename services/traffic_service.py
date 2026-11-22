@@ -7,7 +7,7 @@ import contextlib
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -20,12 +20,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.database import async_session
-from core.economy_policy import (
-    calculate_traffic_balances,
-    evaluate_traffic_pack_access,
-)
+from core.economy_policy import calculate_traffic_balances
 from core.media_utils import expand_media_id_candidates, get_account_lock
-from core.telegram_message import TelegramMessage
 from models.nginx import Nginx, UrlInfo, format_traffic_bytes
 from models.orm import MediaUser, ServerInstance, ServerType
 from repositories.config_repo import ConfigRepository
@@ -33,6 +29,12 @@ from services.media_service import (
     MediaService,
     compute_external_disabled_state,
     sync_external_disabled_state,
+)
+from services.notification_renderer import (
+    EffectiveEconomyContext,
+    TrafficAutoSuspendedPayload,
+    TrafficQuota80Payload,
+    TrafficQuota100Payload,
 )
 from services.notification_service import NotificationService
 
@@ -86,6 +88,8 @@ class _PendingTrafficAlert:
     pack_bytes: int = 0
     auto_suspended: bool = False
     traffic_pack_open: bool = False
+    server_id: int = 0
+    economy: EffectiveEconomyContext = field(default_factory=EffectiveEconomyContext)
 
 
 def _lookup_cache_entry(
@@ -111,58 +115,6 @@ def _lookup_cache_entry(
         return uid
     cache.pop(key, None)
     return None
-
-
-def _render_quota_alert_html(alert: _PendingTrafficAlert) -> str:
-    """渲染 80% 预警、100% 耗尽或超流自动停用的 Telegram HTML 私聊提醒消息
-
-    Args:
-        alert: 已提交账务后生成的配额告警上下文。
-
-    Returns:
-        经 t-string 自动转义后的安全 HTML 字符串。
-    """
-    used_str = format_traffic_bytes(alert.used_bytes)
-    quota_str = format_traffic_bytes(alert.quota_bytes)
-    pack_line = (
-        f"\n剩余流量包: <code>{format_traffic_bytes(alert.pack_bytes)}</code>"
-        if alert.pack_bytes > 0
-        else ""
-    )
-    reset_str = (
-        alert.next_reset_at.strftime("%Y-%m-%d %H:%M")
-        if alert.next_reset_at is not None
-        else "下个账期"
-    )
-    server_name = alert.server_name
-    media_name = alert.media_name
-    if alert.auto_suspended:
-        header = "⛔ <b>流量已耗尽（100%），账号已超流停用</b>"
-        pack_hint = (
-            "可在 Mini App 使用积分兑换流量包立即恢复，或等待下次重置后自动解除。"
-            if alert.traffic_pack_open
-            else "请联系管理员临时调额恢复，或等待下次重置后自动解除。"
-        )
-        footer = (
-            "本周期基础配额与流量包均已用尽，播放权限已临时停用（不会触发删号）。"
-            f"{pack_hint}"
-        )
-    elif alert.level_percent >= 100:
-        header = "🚨 <b>基础流量配额已耗尽（100%）</b>"
-        footer = "当前处于软告警模式，暂不会触发超流停用，请注意控制播放码率。"
-    else:
-        header = "⚠️ <b>流量配额预警（已用达 80%）</b>"
-        footer = "请注意合理规划观影清晰度。"
-
-    return TelegramMessage.render_html(t"""\
-        {header:raw}
-
-        服务器: <code>{server_name}</code>
-        媒体账号: <code>{media_name}</code>
-        本周期已用: <code>{used_str}</code> / <code>{quota_str}</code>{pack_line:raw}
-        下次重置时间: <code>{reset_str}</code>
-        {footer:raw}
-    """)
 
 
 class TrafficService(asyncio.DatagramProtocol):
@@ -781,9 +733,11 @@ class TrafficService(asyncio.DatagramProtocol):
                         )
                         self._pending_bytes[orig_key] += delta_bytes
 
-            # 所有数据库事务均提交并释放账号锁后再异步发送 Bot 私聊告警，避免网络 IO 阻塞锁
-            for alert in pending_alerts:
-                await self._send_quota_alert_dm(alert)
+            # 所有数据库事务均提交并释放账号锁后再通过统一通知管线异步入队，避免网络 IO 阻塞锁
+            if pending_alerts and self.app is not None:
+                async with self._session_factory() as notify_session:
+                    for alert in pending_alerts:
+                        await self._send_quota_alert_dm(alert, session=notify_session)
 
             return flushed_total
 
@@ -946,14 +900,7 @@ class TrafficService(asyncio.DatagramProtocol):
         if level is None or not server.enable_traffic_alert:
             return None
 
-        pack_open, _ = evaluate_traffic_pack_access(
-            server,
-            points_pack_allowed=ConfigRepository.is_points_feature_enabled_from_cache(
-                ConfigRepository.KEY_ENABLE_POINTS_TRAFFIC_PACK
-            ),
-            points_pack_reason="",
-            global_traffic_enabled=ConfigRepository.is_traffic_enabled_from_cache(),
-        )
+        economy = EffectiveEconomyContext.from_cache(server)
 
         return _PendingTrafficAlert(
             user_id=media_user.id,
@@ -965,34 +912,70 @@ class TrafficService(asyncio.DatagramProtocol):
             level_percent=level,
             pack_bytes=pack_remaining,
             auto_suspended=auto_suspended,
-            traffic_pack_open=pack_open,
+            traffic_pack_open=economy.traffic_pack_open,
+            server_id=server.id,
+            economy=economy,
         )
 
-    async def _send_quota_alert_dm(self, alert: _PendingTrafficAlert) -> bool:
-        """向关联 Telegram 用户发送流量配额预警或耗尽私聊通知（仅告警不触发停用）
+    async def _send_quota_alert_dm(
+        self,
+        alert: _PendingTrafficAlert,
+        *,
+        session: AsyncSession | None = None,
+    ) -> bool:
+        """通过统一通知管线发射流量配额 80%/100% 预警或超流自动停用事件
 
         Args:
             alert: 配额告警上下文。
+            session: 可选只读数据库会话，用于读取用户通知偏好并派生兜底收件箱会话工厂。
 
         Returns:
-            Telegram 私聊送达成功返回 ``True``，未配置客户端或发送失败返回 ``False``。
+            通知成功入队返回 ``True``，被偏好过滤或无应用宿主返回 ``False``。
         """
-        if self.app is None or getattr(self.app.state, "telethon_client", None) is None:
+        if self.app is None:
             return False
 
-        msg = _render_quota_alert_html(alert)
-        try:
-            return await NotificationService(self.app).send_text_to_user(
-                alert.user_id, msg
+        payload: (
+            TrafficAutoSuspendedPayload | TrafficQuota100Payload | TrafficQuota80Payload
+        )
+        if alert.auto_suspended:
+            payload = TrafficAutoSuspendedPayload(
+                server_name=alert.server_name,
+                media_name=alert.media_name,
+                used_bytes=alert.used_bytes,
+                quota_bytes=alert.quota_bytes,
+                pack_remaining_bytes=alert.pack_bytes,
+                next_reset_at=alert.next_reset_at,
+                economy=alert.economy,
             )
-        except (HTTPError, ValueError, TypeError, OSError) as exc:
-            logger.warning(
-                "发送流量配额告警私聊失败: user_id={}, server={}, err={}",
-                alert.user_id,
-                alert.server_name,
-                exc,
+        elif alert.level_percent >= 100:
+            payload = TrafficQuota100Payload(
+                server_name=alert.server_name,
+                media_name=alert.media_name,
+                used_bytes=alert.used_bytes,
+                quota_bytes=alert.quota_bytes,
+                pack_remaining_bytes=alert.pack_bytes,
+                next_reset_at=alert.next_reset_at,
+                economy=alert.economy,
             )
-            return False
+        else:
+            payload = TrafficQuota80Payload(
+                server_name=alert.server_name,
+                media_name=alert.media_name,
+                used_bytes=alert.used_bytes,
+                quota_bytes=alert.quota_bytes,
+                pack_remaining_bytes=alert.pack_bytes,
+                next_reset_at=alert.next_reset_at,
+                economy=alert.economy,
+            )
+
+        return await NotificationService(self.app).emit(
+            payload,
+            user_id=alert.user_id,
+            server_id=alert.server_id or None,
+            source_key=f"traffic_alert:{alert.user_id}:{alert.server_id}:{alert.level_percent}",
+            session=session,
+        )
 
     async def stop(self) -> int:
         """先关闭 UDP 监听传输阻断新报文入队，再强制刷盘所有残余内存缓冲

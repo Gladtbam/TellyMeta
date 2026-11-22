@@ -1,9 +1,11 @@
+import inspect
 import ipaddress
 import math
 import re
 import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
@@ -55,7 +57,22 @@ from services.media_service import (
     compute_external_disabled_state,
     sync_external_disabled_state,
 )
-from services.notification_renderer import UserPolicySyncSummaryPayload
+from services.notification_renderer import (
+    AccountDeletedPayload,
+    AdminUserActionPayload,
+    AutoRenewFailedPayload,
+    AutoRenewSuccessPayload,
+    BatchTrafficReleaseSummaryPayload,
+    BillingCycleResetPayload,
+    EffectiveEconomyContext,
+    ExpiryBanPayload,
+    GraceDeleteReminderPayload,
+    NotificationPayload,
+    PreExpiryReminderPayload,
+    SelfActionReceiptPayload,
+    TrafficUnsuspendedPayload,
+    UserPolicySyncSummaryPayload,
+)
 from services.notification_service import NotificationService
 from services.traffic_service import flush_app_traffic
 from services.user_service import Result
@@ -101,7 +118,7 @@ class _RenewChannel(StrEnum):
 
 @dataclass(slots=True, frozen=True)
 class AutoRenewOutcome:
-    """自动续期单账号执行结果，显式区分成功、续期通道、扣分与外部临时可重试故障"""
+    """自动续期单账号执行结果，显式区分成功、续期通道、扣分、可重试故障与失败预警详情"""
 
     renewed: bool
     message: str
@@ -109,23 +126,10 @@ class AutoRenewOutcome:
     expires_at: datetime | None = None
     channel: _RenewChannel | None = None
     cost_score: int = 0
-
-
-@dataclass(slots=True, frozen=True)
-class _PreExpiryReminderContext:
-    """临近到期提醒私聊通知上下文"""
-
-    user_id: int
-    server_name: str
-    media_name: str
-    expires_at: datetime
-    auto_renew: bool
-    watch_open: bool
-    watch_eligible: bool
-    watch_status_text: str
-    points_renew_enabled: bool = True
-    points_renew_score: int = 0
-    user_score: int = 0
+    failure_notifiable: bool = False
+    required_score: int | None = None
+    user_score: int | None = None
+    watch_status_text: str = ""
 
 
 # 到期准点复核允许的调度器短时唤醒漂移容差（防止毫秒级唤醒晚于 expires_at 误触发重锚与清空当期流量）
@@ -164,6 +168,41 @@ class AccountService:
     def _get_scheduler(self) -> Any:
         """安全获取挂载在 ``app.state`` 上的 APScheduler 调度器实例（未配置时返回 ``None``）"""
         return getattr(getattr(self.app, "state", None), "scheduler", None)
+
+    async def _emit_notification(
+        self,
+        payload: NotificationPayload,
+        *,
+        user_id: int | None = None,
+        server_id: int | None = None,
+        source_key: str | None = None,
+        skip_inbox_fallback: bool = False,
+    ) -> None:
+        """通过统一通知管线异步入队发射事件（绝不在账号锁内执行）。"""
+        await NotificationService(self.app).emit(
+            payload,
+            user_id=user_id,
+            server_id=server_id,
+            source_key=source_key,
+            skip_inbox_fallback=skip_inbox_fallback,
+            session=self.media_repo.session,
+        )
+
+    async def _safe_resolve_user_name(self, user_id: int) -> str:
+        """安全查询 Telegram 用户展示名，测试替身未配置或异常时返回空串。"""
+        tg_client = getattr(getattr(self.app, "state", None), "telethon_client", None)
+        getter = getattr(tg_client, "get_user_name", None)
+        if not callable(getter):
+            return ""
+        try:
+            raw = getter(user_id)
+            if inspect.isawaitable(raw):
+                raw = await raw
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return ""
+        return ""
 
     @staticmethod
     def _is_safe_url(url: str) -> bool:
@@ -310,6 +349,8 @@ class AccountService:
         username: str | Literal[False] | None,
         server_id: int,
         skip_checks: bool = False,
+        *,
+        emit_receipt: bool = True,
     ) -> Result:
         """注册新用户
         Args:
@@ -448,6 +489,21 @@ class AccountService:
                 media_user,
                 now=reg_now,
             )
+
+            if emit_receipt:
+                await self._emit_notification(
+                    SelfActionReceiptPayload(
+                        action_type="register",
+                        server_name=server.name,
+                        media_name=str(username),
+                        expires_at=media_user.expires_at,
+                        cost_score=reserved_score,
+                        economy=EffectiveEconomyContext.from_cache(server),
+                    ),
+                    user_id=user_id,
+                    server_id=server_id,
+                    source_key=f"self_register:{user_id}:{server_id}",
+                )
 
             return Result(
                 True,
@@ -649,7 +705,14 @@ class AccountService:
 
         await client.update_policy(media_user_id, policy_dict, is_none=True)
 
-    async def renew(self, user_id: int, server_id: int, use_score: bool) -> Result:
+    async def renew(
+        self,
+        user_id: int,
+        server_id: int,
+        use_score: bool,
+        *,
+        emit_receipt: bool = True,
+    ) -> Result:
         """按服务器有效自然月数与锚定自然月周期续期指定媒体账号
 
         优先判定时长保活资格（启用时长保活且本周期有效播放时长达标时免积分续期，
@@ -662,11 +725,14 @@ class AccountService:
             server_id: 目标媒体服务器 ID
             use_score: 保留既有方法签名以兼容全部调用方；``True`` 表示自助续期
                 （优先走时长保活，不满足时回退积分扣费），``False`` 表示激活码兑换续期
+            emit_receipt: 是否通过统一通知管线发射脱敏自助回执（由同步敏感弹窗通道调用时可置 ``False``）。
 
         Returns:
             续期操作结果 ``Result``，携带成功状态与通知文案
         """
         await self.flush_pending_traffic()
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]] = []
+        result_obj: Result
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             media_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -736,6 +802,7 @@ class AccountService:
                 server,
                 now=now,
                 effective_cycle_now=now,
+                pending_notifications=pending_notifications,
             )
             just_unsuspended_externally = (
                 was_traffic_suspended
@@ -778,6 +845,27 @@ class AccountService:
                     run_date=now + timedelta(minutes=15),
                 )
 
+            if emit_receipt:
+                pending_notifications.append(
+                    (
+                        SelfActionReceiptPayload(
+                            action_type="renew",
+                            server_name=server.name,
+                            media_name=media_user.media_name,
+                            expires_at=media_user.expires_at,
+                            cost_score=(
+                                renew_score
+                                if renew_channel == _RenewChannel.SCORE
+                                else 0
+                            ),
+                            economy=EffectiveEconomyContext.from_cache(server),
+                        ),
+                        user_id,
+                        server_id,
+                        f"self_renew:{user_id}:{server_id}",
+                    )
+                )
+
             expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
             suspension_note = ""
             if media_user.is_traffic_suspended:
@@ -798,19 +886,25 @@ class AccountService:
             if renew_channel == _RenewChannel.WATCH_TIME:
                 points_enabled = ConfigRepository.is_points_enabled_from_cache()
                 wt_tag = "时长保活免积分" if points_enabled else "时长保活自动续期"
-                return Result(
+                result_obj = Result(
                     True,
                     TelegramMessage.render_markdown(
                         t"续期成功（{wt_tag}），您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
                     ),
                 )
+            else:
+                result_obj = Result(
+                    True,
+                    TelegramMessage.render_markdown(
+                        t"续期成功，您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
+                    ),
+                )
 
-            return Result(
-                True,
-                TelegramMessage.render_markdown(
-                    t"续期成功，您的 {server.name} 媒体账号已延长至 {expires_str}。{suspension_note}"
-                ),
+        for payload, uid, sid, src_key in pending_notifications:
+            await self._emit_notification(
+                payload, user_id=uid, server_id=sid, source_key=src_key
             )
+        return result_obj
 
     async def _fetch_external_user(
         self, client: MediaService, media_id: str
@@ -881,68 +975,6 @@ class AccountService:
         )
         return outcome.error
 
-    async def _send_auto_renew_dm(
-        self,
-        *,
-        user_id: int,
-        server_name: str,
-        media_name: str,
-        expires_at: datetime,
-        renew_channel: _RenewChannel = _RenewChannel.WATCH_TIME,
-        cost_score: int = 0,
-    ) -> bool:
-        """向用户发送自动续期成功 Bot 私聊通知
-
-        副作用：尝试通过 Telegram 发送私聊消息；发送失败仅记录告警日志，绝不回滚已完成续期。
-
-        Args:
-            user_id: Telegram 用户 ID
-            server_name: 媒体服务器名称
-            media_name: 媒体账号用户名
-            expires_at: 续期后的新到期时间
-            renew_channel: 本次生效的自动续期通道（时长保活或积分）
-            cost_score: 本次消耗的积分数（时长通道为 0）
-
-        Returns:
-            私聊通知送达成功返回 ``True``，未配置客户端或发送失败返回 ``False``
-        """
-        if getattr(self.app.state, "telethon_client", None) is None:
-            return False
-        exp_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
-        points_enabled = ConfigRepository.is_points_enabled_from_cache()
-        if renew_channel == _RenewChannel.WATCH_TIME:
-            if points_enabled:
-                cost_line = "消耗积分: <code>0</code>（观看度已达 100%，免分保活续期）"
-            else:
-                cost_line = "续期方式: <code>观看度已达 100% 自动免费续期</code>"
-        else:
-            cost_line = f"消耗积分: <code>{cost_score}</code>（积分自动续期）"
-        msg = TelegramMessage.render_html(t"""\
-            ✅ <b>自动续期成功</b>
-
-            服务器: <code>{server_name}</code>
-            媒体账号: <code>{media_name}</code>
-            {cost_line:raw}
-            有效期延长至: <code>{exp_str}</code>
-        """)
-        try:
-            ok = await NotificationService(self.app).send_text_to_user(user_id, msg)
-            if not ok:
-                logger.warning(
-                    "自动续期私聊通知送达失败（不影响已完成续期）: user_id={}, server={}",
-                    user_id,
-                    server_name,
-                )
-            return ok
-        except (HTTPError, ValueError, TypeError, OSError) as e:
-            logger.warning(
-                "自动续期私聊通知发送异常（不影响已完成续期）: user_id={}, server={}, err={}",
-                user_id,
-                server_name,
-                e,
-            )
-            return False
-
     async def _settle_due_traffic_reset_before_renewal_locked(
         self,
         media_user: MediaUser,
@@ -950,6 +982,8 @@ class AccountService:
         *,
         now: datetime,
         effective_cycle_now: datetime,
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]]
+        | None = None,
     ) -> tuple[MediaUser, bool]:
         """在续期或自动续期推进周期前，先结清已到点的月度流量重置
 
@@ -962,6 +996,7 @@ class AccountService:
             server: 所属服务器实例配置。
             now: 当前实际时间。
             effective_cycle_now: 续期周期基准时间（抖动抢救时可能回齐至 ``expires_at``）。
+            pending_notifications: 可选收集锁外发射通知载荷的列表。
 
         Returns:
             ``(媒体账号 ORM 对象, 是否需要调度超流解封延迟重试)`` 二元组。
@@ -974,7 +1009,10 @@ class AccountService:
             else now
         )
         reset_res = await self._reset_single_account_traffic_locked(
-            media_user, server, reset_now
+            media_user,
+            server,
+            reset_now,
+            pending_notifications=pending_notifications,
         )
         return media_user, reset_res == "reset_retry_unsuspend"
 
@@ -1002,7 +1040,8 @@ class AccountService:
             结构化 ``AutoRenewOutcome``，包含续期成功标志、通道、消耗积分及临时通信异常 ``retryable_error`` 标志
         """
         await self.flush_pending_traffic()
-        dm_payload: dict[str, Any] | None = None
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]] = []
+        auto_success_payload: AutoRenewSuccessPayload | None = None
         outcome: AutoRenewOutcome
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
@@ -1045,12 +1084,25 @@ class AccountService:
                     return AutoRenewOutcome(
                         False,
                         f"自动续期积分不足，需要 {renew_score} 积分（当前 {tg_user.score}）",
+                        failure_notifiable=True,
+                        required_score=renew_score,
+                        user_score=int(tg_user.score),
+                        watch_status_text=wt_status.status_text
+                        if wt_status.is_open
+                        else "",
                     )
             else:
                 reason = (
                     wt_status.status_text if wt_status.is_open else points_renew_reason
                 )
-                return AutoRenewOutcome(False, f"未满足自动续期条件：{reason}")
+                return AutoRenewOutcome(
+                    False,
+                    f"未满足自动续期条件：{reason}",
+                    failure_notifiable=True,
+                    watch_status_text=wt_status.status_text
+                    if wt_status.is_open
+                    else "",
+                )
 
             client = self.media_clients.get(server_id)
             if not client:
@@ -1090,6 +1142,7 @@ class AccountService:
                 server,
                 now=now,
                 effective_cycle_now=effective_cycle_now,
+                pending_notifications=pending_notifications,
             )
             just_unsuspended_externally = (
                 was_traffic_suspended
@@ -1110,14 +1163,27 @@ class AccountService:
                     )
 
             # 确认外部账号正常后再原子扣除积分，防止外部 500 故障或跨服并发时出现误扣/负分
+            remaining_score: int | None = None
             if renew_channel == _RenewChannel.SCORE and renew_score > 0:
                 deducted = await self.telegram_repo.deduct_score_if_sufficient(
                     user_id, renew_score
                 )
                 if not deducted:
+                    tg_after_fail = await self.telegram_repo.get_by_id(user_id)
                     return AutoRenewOutcome(
-                        False, f"自动续期失败，积分余额不足 {renew_score}"
+                        False,
+                        f"自动续期失败，积分余额不足 {renew_score}",
+                        failure_notifiable=True,
+                        required_score=renew_score,
+                        user_score=int(tg_after_fail.score)
+                        if tg_after_fail is not None
+                        else 0,
+                        watch_status_text=wt_status.status_text
+                        if wt_status.is_open
+                        else "",
                     )
+                tg_after = await self.telegram_repo.get_by_id(user_id)
+                remaining_score = int(tg_after.score) if tg_after is not None else None
                 reloaded = await self.media_repo.get_by_id(
                     user_id, server_id, fresh=True
                 )
@@ -1147,14 +1213,21 @@ class AccountService:
             server_name = str(server.name)
             media_name = str(media_user.media_name)
             new_expires_at = media_user.expires_at
-            dm_payload = {
-                "user_id": user_id,
-                "server_name": server_name,
-                "media_name": media_name,
-                "expires_at": new_expires_at,
-                "renew_channel": renew_channel,
-                "cost_score": renew_score,
-            }
+            economy = EffectiveEconomyContext.from_cache(server)
+            auto_success_payload = AutoRenewSuccessPayload(
+                server_name=server_name,
+                media_name=media_name,
+                expires_at=new_expires_at,
+                renew_channel=(
+                    "watch_time"
+                    if renew_channel == _RenewChannel.WATCH_TIME
+                    else "points"
+                ),
+                cost_score=renew_score,
+                remaining_score=remaining_score,
+                is_traffic_suspended=bool(media_user.is_traffic_suspended),
+                economy=economy,
+            )
             exp_str = new_expires_at.strftime("%Y-%m-%d %H:%M:%S")
             channel_desc = (
                 "有效播放时长"
@@ -1177,8 +1250,17 @@ class AccountService:
                 cost_score=renew_score,
             )
 
-        if dm_payload is not None:
-            await self._send_auto_renew_dm(**dm_payload)
+        for payload, uid, sid, src_key in pending_notifications:
+            await self._emit_notification(
+                payload, user_id=uid, server_id=sid, source_key=src_key
+            )
+        if auto_success_payload is not None:
+            await self._emit_notification(
+                auto_success_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"auto_renew_success:{user_id}:{server_id}",
+            )
         return outcome
 
     async def process_auto_renewals(self) -> int:
@@ -1314,61 +1396,6 @@ class AccountService:
         )
         return should_release, bal
 
-    async def _send_traffic_unsuspended_dm(
-        self,
-        *,
-        user_id: int,
-        server_name: str,
-        media_name: str,
-        added_bytes: int,
-        total_pack_bytes: int,
-        next_reset_at: datetime | None = None,
-    ) -> bool:
-        """向因超流停用且兑换流量包后立即恢复播放权限的用户发送 Bot 私聊通知
-
-        副作用：尝试发送 Telegram 私聊提醒；发送失败仅记录日志，不影响已完成兑换。
-
-        Args:
-            user_id: Telegram 用户 ID。
-            server_name: 媒体服务器名称。
-            media_name: 媒体账号用户名。
-            added_bytes: 本次兑换增加的流量包字节数。
-            total_pack_bytes: 兑换后的当期流量包总余额字节数。
-            next_reset_at: 下一次账期重置时间（用于提示单期清零边界）。
-
-        Returns:
-            私聊送达成功返回 ``True``，未配置客户端或送达失败返回 ``False``。
-        """
-        if getattr(self.app.state, "telethon_client", None) is None:
-            return False
-        added_str = format_traffic_bytes(added_bytes)
-        total_pack_str = format_traffic_bytes(total_pack_bytes)
-        reset_note = (
-            f"{next_reset_at.strftime('%Y-%m-%d %H:%M')} 账期重置时清零"
-            if next_reset_at is not None
-            else "本周期重置时清零"
-        )
-        msg = TelegramMessage.render_html(t"""\
-            ✅ <b>流量包兑换成功，超流停用已解除</b>
-
-            服务器: <code>{server_name}</code>
-            媒体账号: <code>{media_name}</code>
-            本次增加: <code>+{added_str}</code>
-            当期流量包余额: <code>{total_pack_str}</code>
-            有效说明: <code>仅限当前账期使用，将于 {reset_note}</code>
-            您的播放权限已立即恢复，祝观影愉快！
-        """)
-        try:
-            return await NotificationService(self.app).send_text_to_user(user_id, msg)
-        except (HTTPError, ValueError, TypeError, OSError) as exc:
-            logger.warning(
-                "发送流量包解封私聊通知失败（不影响兑换结果）: user_id={}, server={}, err={}",
-                user_id,
-                server_name,
-                exc,
-            )
-            return False
-
     async def redeem_traffic_pack(
         self, user_id: int, server_id: int, quantity: int = 1
     ) -> Result:
@@ -1402,6 +1429,7 @@ class AccountService:
         next_reset_at: datetime | None = None
         total_cost = 0
         added_bytes = 0
+        unsuspended_payload: TrafficUnsuspendedPayload | None = None
 
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
@@ -1497,6 +1525,17 @@ class AccountService:
                 next_reset_at = fresh_mu.next_reset_at
                 tg_user = await self.telegram_repo.get_or_create(user_id)
                 remaining_score = int(tg_user.score)
+                if should_unban_external:
+                    unsuspended_payload = TrafficUnsuspendedPayload(
+                        server_name=server_name,
+                        media_name=media_name,
+                        recovery_reason="traffic_pack",
+                        added_bytes=added_bytes,
+                        total_pack_bytes=new_pack_bytes,
+                        next_reset_at=next_reset_at,
+                        still_expiry_banned=False,
+                        economy=EffectiveEconomyContext.from_cache(server),
+                    )
             except (SQLAlchemyError, ValueError, RuntimeError) as exc:
                 logger.exception(
                     "兑换流量包提交数据库失败，退回已扣积分: user_id={}, server_id={}, err={}",
@@ -1510,14 +1549,12 @@ class AccountService:
                     False, "兑换过程中发生数据库异常，积分已退回，请稍后重试。"
                 )
 
-        if should_unban_external:
-            await self._send_traffic_unsuspended_dm(
+        if unsuspended_payload is not None:
+            await self._emit_notification(
+                unsuspended_payload,
                 user_id=user_id,
-                server_name=server_name,
-                media_name=media_name,
-                added_bytes=added_bytes,
-                total_pack_bytes=new_pack_bytes,
-                next_reset_at=next_reset_at,
+                server_id=server_id,
+                source_key=f"traffic_unsuspended:{user_id}:{server_id}:traffic_pack",
             )
 
         added_str = format_traffic_bytes(added_bytes)
@@ -1558,12 +1595,18 @@ class AccountService:
         )
 
     async def redeem_code(
-        self, user_id: int, username: str | Literal[False] | None, code_str: str
+        self,
+        user_id: int,
+        username: str | Literal[False] | None,
+        code_str: str,
+        *,
+        emit_receipt: bool = True,
     ) -> Result:
         """使用注册码或续期码注册或续期
         Args:
             user_id (int): 用户的 Telegram ID
             code_str (str): 注册码或续期码
+            emit_receipt: 是否通过统一通知管线发射脱敏核销回执。
         """
         claimed = await self.code_repo.try_claim(code_str)
         if not claimed or claimed.used_at is None:
@@ -1582,9 +1625,13 @@ class AccountService:
                 return Result(False, "该激活码对应的服务器已失效或被删除，无法使用。")
 
             if code_type == "signup":
-                result = await self.register(user_id, username, code_server_id, True)
+                result = await self.register(
+                    user_id, username, code_server_id, True, emit_receipt=False
+                )
             elif code_type == "renew":
-                result = await self.renew(user_id, code_server_id, False)
+                result = await self.renew(
+                    user_id, code_server_id, False, emit_receipt=False
+                )
             else:
                 await self.code_repo.release_claim(claimed_id, claimed_used_at)
                 return Result(False, "无效的码类型，请联系管理员。")
@@ -1603,6 +1650,28 @@ class AccountService:
         if not result.success:
             await self.code_repo.release_claim(claimed_id, claimed_used_at)
             return result
+
+        if emit_receipt:
+            fresh_mu = await self.media_repo.get_by_id(
+                user_id, code_server_id, fresh=True
+            )
+            await self._emit_notification(
+                SelfActionReceiptPayload(
+                    action_type="redeem_code",
+                    server_name=server.name,
+                    media_name=(
+                        fresh_mu.media_name
+                        if fresh_mu is not None
+                        else str(username or "")
+                    ),
+                    expires_at=fresh_mu.expires_at if fresh_mu is not None else None,
+                    code_kind="signup" if code_type == "signup" else "renew",
+                    economy=EffectiveEconomyContext.from_cache(server),
+                ),
+                user_id=user_id,
+                server_id=code_server_id,
+                source_key=f"self_redeem_code:{user_id}:{code_server_id}",
+            )
 
         logger.info(
             "激活码兑换成功: code_id={}, code={}, type={}, server_id={}, user_id={}, used_at={}",
@@ -2038,10 +2107,14 @@ class AccountService:
             },
         )
 
-    async def forget_password(self, user_id: int, server_id: int):
+    async def forget_password(
+        self, user_id: int, server_id: int, *, emit_receipt: bool = True
+    ):
         """重置密码
         Args:
             user_id (int): 用户的 Telegram ID
+            server_id (int): 目标媒体服务器 ID
+            emit_receipt: 是否通过统一通知管线发射脱敏安全操作回执
         """
         media_user = await self.media_repo.get_by_id(user_id, server_id)
         if media_user is None:
@@ -2057,6 +2130,21 @@ class AccountService:
 
         try:
             passwd = await client.post_password(media_user.media_id)
+            if emit_receipt:
+                server = await self.server_repo.get_by_id(server_id, fresh=True)
+                await self._emit_notification(
+                    SelfActionReceiptPayload(
+                        action_type="reset_password",
+                        server_name=(
+                            server.name if server is not None else f"Server {server_id}"
+                        ),
+                        media_name=media_user.media_name,
+                        economy=EffectiveEconomyContext.from_cache(server),
+                    ),
+                    user_id=user_id,
+                    server_id=server_id,
+                    source_key=f"self_reset_password:{user_id}:{server_id}",
+                )
             return Result(
                 True,
                 TelegramMessage.render_markdown(t"""\
@@ -2105,7 +2193,10 @@ class AccountService:
         return Result(True, "账户已成功删除。")
 
     async def release_traffic_suspensions(
-        self, server_id: int | None = None
+        self,
+        server_id: int | None = None,
+        *,
+        trigger_reason: str = "服务器限流策略或配额变更",
     ) -> tuple[int, int]:
         """关闭流量开关、关闭超流停用或调高/清零服务器配额时，安全批量释放符合条件的超流停用账号
 
@@ -2113,6 +2204,7 @@ class AccountService:
 
         Args:
             server_id: 目标服务器 ID；为 ``None`` 时扫描全部服务器（用于全局开关关闭）。
+            trigger_reason: 批量释放的触发原因描述（用于运维汇总摘要展示）。
 
         Returns:
             ``(成功清除或释放账号数, 外部解封失败待重试账号数)`` 二元组。
@@ -2127,6 +2219,9 @@ class AccountService:
 
         released_count = 0
         failed_count = 0
+        skipped_banned_count = 0
+        released_accounts: list[str] = []
+        pending_user_notices: list[tuple[TrafficUnsuspendedPayload, int, int]] = []
         global_traffic_on = ConfigRepository.is_traffic_enabled_from_cache()
 
         for uid, sid in target_pairs:
@@ -2144,6 +2239,7 @@ class AccountService:
                     continue
 
                 self._sync_traffic_alert_flags_locked(fresh_mu, bal)
+                was_banned = bool(fresh_mu.is_banned)
 
                 status = await self._clear_or_sync_traffic_suspension_locked(
                     fresh_mu,
@@ -2153,6 +2249,29 @@ class AccountService:
                 if status == "cleared":
                     await self.media_repo.session.commit()
                     released_count += 1
+                    if was_banned:
+                        skipped_banned_count += 1
+                    else:
+                        srv_name = (
+                            fresh_srv.name if fresh_srv is not None else f"Server {sid}"
+                        )
+                        released_accounts.append(str(fresh_mu.media_name))
+                        pending_user_notices.append(
+                            (
+                                TrafficUnsuspendedPayload(
+                                    server_name=srv_name,
+                                    media_name=fresh_mu.media_name,
+                                    recovery_reason="server_policy_change",
+                                    next_reset_at=fresh_mu.next_reset_at,
+                                    still_expiry_banned=False,
+                                    economy=EffectiveEconomyContext.from_cache(
+                                        fresh_srv
+                                    ),
+                                ),
+                                uid,
+                                sid,
+                            )
+                        )
                 elif status == "retryable_error":
                     failed_count += 1
                     schedule_traffic_unsuspend_retry(
@@ -2163,6 +2282,35 @@ class AccountService:
                     )
                     await self.media_repo.session.commit()
 
+        for payload, uid, sid in pending_user_notices:
+            await self._emit_notification(
+                payload,
+                user_id=uid,
+                server_id=sid,
+                source_key=f"traffic_unsuspended:{uid}:{sid}:server_policy_change",
+            )
+
+        if released_count > 0 or failed_count > 0:
+            if server_id is not None:
+                srv_obj = await self.server_repo.get_by_id(server_id, fresh=True)
+                summary_server_name = (
+                    srv_obj.name if srv_obj is not None else f"Server {server_id}"
+                )
+            else:
+                summary_server_name = "全局全部服务器"
+            await self._emit_notification(
+                BatchTrafficReleaseSummaryPayload(
+                    server_name=summary_server_name,
+                    trigger_reason=trigger_reason,
+                    released_count=released_count,
+                    skipped_banned_count=skipped_banned_count,
+                    failed_count=failed_count,
+                    released_accounts=released_accounts,
+                ),
+                server_id=server_id,
+                source_key=f"batch_traffic_release:{server_id if server_id is not None else 'global'}",
+            )
+
         return released_count, failed_count
 
     async def adjust_account_cycle_traffic(
@@ -2172,6 +2320,7 @@ class AccountService:
         *,
         delta_gib: float = 0.0,
         reset_cycle_usage: bool = False,
+        operator_name: str = "管理员",
     ) -> Result:
         """管理员调整指定媒体账号当前账期临时额度（±GiB）或清零当期已用流量，并按 ADR-0002 安全解封
 
@@ -2184,6 +2333,7 @@ class AccountService:
             server_id: 目标媒体服务器 ID。
             delta_gib: 当期临时配额增减量（GiB，可正可负）。
             reset_cycle_usage: 是否同步清零当期已用流量、既有调额与预警标记。
+            operator_name: 发起调额的管理员显示名称。
 
         Returns:
             操作结果 ``Result``，``extra_data`` 附带调额后流量与解封状态明细。
@@ -2197,6 +2347,10 @@ class AccountService:
         await self.flush_pending_traffic()
         now = self._now()
         scheduler = self._get_scheduler()
+
+        unsuspended_payload: TrafficUnsuspendedPayload | None = None
+        admin_payload: AdminUserActionPayload | None = None
+        result_obj: Result
 
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
@@ -2259,6 +2413,31 @@ class AccountService:
             await self.media_repo.session.commit()
             await self.media_repo.session.refresh(fresh_mu)
 
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
+            if unsuspended:
+                unsuspended_payload = TrafficUnsuspendedPayload(
+                    server_name=fresh_srv.name,
+                    media_name=fresh_mu.media_name,
+                    recovery_reason="admin_adjust",
+                    adjustment_bytes=delta_bytes,
+                    reset_cycle_usage=reset_cycle_usage,
+                    next_reset_at=fresh_mu.next_reset_at,
+                    still_expiry_banned=False,
+                    economy=economy,
+                )
+            admin_payload = AdminUserActionPayload(
+                action_type="traffic_adjust",
+                target_user_id=user_id,
+                target_user_name="",
+                operator_name=operator_name,
+                server_name=fresh_srv.name,
+                media_name=fresh_mu.media_name,
+                traffic_delta_bytes=delta_bytes if delta_bytes != 0 else None,
+                reset_cycle_usage=reset_cycle_usage,
+                unsuspended_traffic=unsuspended,
+                economy=economy,
+            )
+
             quota_text = (
                 format_traffic_bytes(bal.effective_base_quota_bytes)
                 if bal.is_limited
@@ -2289,7 +2468,7 @@ class AccountService:
                 f"{'、'.join(actions)}{suffix}。"
                 f"当前生效配额: {quota_text}，当期总剩余: {remain_text}。"
             )
-            return Result(
+            result_obj = Result(
                 True,
                 msg,
                 extra_data={
@@ -2306,6 +2485,27 @@ class AccountService:
                     "unsuspended": unsuspended,
                 },
             )
+
+        if unsuspended_payload is not None:
+            await self._emit_notification(
+                unsuspended_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"traffic_unsuspended:{user_id}:{server_id}:admin_adjust",
+            )
+        if admin_payload is not None:
+            target_name = await self._safe_resolve_user_name(user_id)
+            if target_name:
+                admin_payload = dataclass_replace(
+                    admin_payload, target_user_name=target_name
+                )
+            await self._emit_notification(
+                admin_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"admin_traffic_adjust:{user_id}:{server_id}",
+            )
+        return result_obj
 
     async def flush_pending_traffic(self) -> None:
         """在执行账期重置、切换流量开关或管理员调额前尽力将内存中的在途流量增量刷盘。"""
@@ -2373,6 +2573,9 @@ class AccountService:
         fresh_mu: MediaUser,
         fresh_srv: ServerInstance | None,
         now: datetime,
+        *,
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]]
+        | None = None,
     ) -> Literal["reset", "reset_retry_unsuspend", "skipped"]:
         """在已持有账号串行锁的前提下执行单账号锚定月度流量清零与安全解封
 
@@ -2380,6 +2583,7 @@ class AccountService:
             fresh_mu: 锁内强制刷新的媒体账号对象。
             fresh_srv: 锁内强制刷新的服务器实例对象。
             now: 当前基准时间。
+            pending_notifications: 可选收集锁外发射通知载荷的列表。
 
         Returns:
             ``"reset"`` 表示完成重置并无需解封重试；``"reset_retry_unsuspend"`` 表示已推进账期但
@@ -2415,6 +2619,11 @@ class AccountService:
                 schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
             return "skipped"
 
+        was_suspended = bool(fresh_mu.is_traffic_suspended)
+        was_banned = bool(fresh_mu.is_banned)
+        cleared_pack_bytes = max(0, int(fresh_mu.traffic_pack_bytes or 0))
+        cleared_adjustment_bytes = int(fresh_mu.cycle_traffic_adjustment_bytes or 0)
+
         new_started_at, new_next_reset_at = resolve_anchored_cycle_window(
             now, fresh_mu.anchor_day, fresh_mu.next_reset_at
         )
@@ -2437,6 +2646,49 @@ class AccountService:
         await self.media_repo.session.refresh(fresh_mu)
         if srv_enabled:
             schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
+
+        if pending_notifications is not None and fresh_srv is not None:
+            uid = int(fresh_mu.id)
+            sid = int(fresh_mu.server_id)
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
+            if was_suspended and unsuspend_status == "cleared" and not was_banned:
+                pending_notifications.append(
+                    (
+                        TrafficUnsuspendedPayload(
+                            server_name=fresh_srv.name,
+                            media_name=fresh_mu.media_name,
+                            recovery_reason="cycle_reset",
+                            next_reset_at=fresh_mu.next_reset_at,
+                            still_expiry_banned=False,
+                            economy=economy,
+                        ),
+                        uid,
+                        sid,
+                        f"traffic_unsuspended:{uid}:{sid}:cycle_reset",
+                    )
+                )
+            elif not was_suspended:
+                pending_notifications.append(
+                    (
+                        BillingCycleResetPayload(
+                            server_name=fresh_srv.name,
+                            media_name=fresh_mu.media_name,
+                            reset_at=now,
+                            next_reset_at=fresh_mu.next_reset_at,
+                            cleared_pack_bytes=cleared_pack_bytes,
+                            cleared_adjustment_bytes=cleared_adjustment_bytes,
+                            new_quota_bytes=max(
+                                0, int(fresh_srv.traffic_quota_bytes or 0)
+                            ),
+                            unsuspended_traffic=False,
+                            economy=economy,
+                        ),
+                        uid,
+                        sid,
+                        f"billing_cycle_reset:{uid}:{sid}",
+                    )
+                )
+
         if unsuspend_status == "retryable_error" and srv_enabled:
             return "reset_retry_unsuspend"
         return "reset"
@@ -2483,6 +2735,9 @@ class AccountService:
         fresh_srv: ServerInstance | None,
         now: datetime,
         scheduler: Any,
+        *,
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]]
+        | None = None,
     ) -> tuple[bool, bool]:
         """在已持有单账号锁时执行遗漏账期重置与残余超流释放对账，并在需要时登记解封重试。
 
@@ -2493,16 +2748,43 @@ class AccountService:
         retry_unsuspend = False
         if fresh_mu.next_reset_at is None or fresh_mu.next_reset_at <= now:
             reset_status = await self._reset_single_account_traffic_locked(
-                fresh_mu, fresh_srv, now
+                fresh_mu,
+                fresh_srv,
+                now,
+                pending_notifications=pending_notifications,
             )
             reset_done = reset_status in ("reset", "reset_retry_unsuspend")
             retry_unsuspend = reset_status == "reset_retry_unsuspend"
 
         unsuspended = False
         if fresh_mu.is_traffic_suspended:
+            was_banned = bool(fresh_mu.is_banned)
             unsuspended = await self._release_orphan_traffic_suspension_locked(
                 fresh_mu, fresh_srv
             )
+            if (
+                unsuspended
+                and pending_notifications is not None
+                and fresh_srv is not None
+                and not was_banned
+            ):
+                uid = int(fresh_mu.id)
+                sid = int(fresh_mu.server_id)
+                pending_notifications.append(
+                    (
+                        TrafficUnsuspendedPayload(
+                            server_name=fresh_srv.name,
+                            media_name=fresh_mu.media_name,
+                            recovery_reason="server_policy_change",
+                            next_reset_at=fresh_mu.next_reset_at,
+                            still_expiry_banned=False,
+                            economy=EffectiveEconomyContext.from_cache(fresh_srv),
+                        ),
+                        uid,
+                        sid,
+                        f"traffic_unsuspended:{uid}:{sid}:orphan_release",
+                    )
+                )
 
         if retry_unsuspend and fresh_srv is not None and fresh_srv.is_enabled:
             schedule_traffic_unsuspend_retry(
@@ -2528,6 +2810,7 @@ class AccountService:
 
         healed_count = 0
         scheduler = self._get_scheduler()
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]] = []
         for uid, sid in target_pairs:
             async with get_account_lock(uid, sid):
                 await self.media_repo.end_clean_read_tx()
@@ -2540,7 +2823,11 @@ class AccountService:
                     reset_done,
                     unsuspended,
                 ) = await self._reconcile_account_traffic_step_locked(
-                    fresh_mu, fresh_srv, now, scheduler
+                    fresh_mu,
+                    fresh_srv,
+                    now,
+                    scheduler,
+                    pending_notifications=pending_notifications,
                 )
                 if reset_done or unsuspended:
                     healed_count += 1
@@ -2550,6 +2837,10 @@ class AccountService:
                 else:
                     remove_account_lifecycle_jobs(scheduler, uid, sid)
 
+        for payload, uid, sid, src_key in pending_notifications:
+            await self._emit_notification(
+                payload, user_id=uid, server_id=sid, source_key=src_key
+            )
         return healed_count
 
     async def calibrate_account_lifecycles(
@@ -2603,6 +2894,7 @@ class AccountService:
                     remove_account_lifecycle_jobs(scheduler, parsed[0], parsed[1])
                     summary["orphan_jobs_removed"] += 1
 
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]] = []
         for uid, sid in target_pairs:
             async with get_account_lock(uid, sid):
                 await self.media_repo.end_clean_read_tx()
@@ -2615,7 +2907,11 @@ class AccountService:
                     reset_done,
                     unsuspended,
                 ) = await self._reconcile_account_traffic_step_locked(
-                    fresh_mu, fresh_srv, now, scheduler
+                    fresh_mu,
+                    fresh_srv,
+                    now,
+                    scheduler,
+                    pending_notifications=pending_notifications,
                 )
                 if reset_done:
                     summary["resets"] += 1
@@ -2658,6 +2954,11 @@ class AccountService:
                 else:
                     remove_account_lifecycle_jobs(scheduler, uid, sid)
 
+        for payload, uid, sid, src_key in pending_notifications:
+            await self._emit_notification(
+                payload, user_id=uid, server_id=sid, source_key=src_key
+            )
+
         return summary
 
     async def reset_account_traffic_cycle(
@@ -2678,6 +2979,8 @@ class AccountService:
             ``"reset"``、``"retry_unsuspend"`` 或 ``"skipped"``。
         """
         await self.flush_pending_traffic()
+        pending_notifications: list[tuple[NotificationPayload, int, int, str]] = []
+        outcome: Literal["reset", "retry_unsuspend", "skipped"]
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -2686,11 +2989,18 @@ class AccountService:
                 return "skipped"
             fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
             res = await self._reset_single_account_traffic_locked(
-                fresh_mu, fresh_srv, self._now()
+                fresh_mu,
+                fresh_srv,
+                self._now(),
+                pending_notifications=pending_notifications,
             )
-            if res == "reset_retry_unsuspend":
-                return "retry_unsuspend"
-            return res
+            outcome = "retry_unsuspend" if res == "reset_retry_unsuspend" else res
+
+        for payload, uid, sid, src_key in pending_notifications:
+            await self._emit_notification(
+                payload, user_id=uid, server_id=sid, source_key=src_key
+            )
+        return outcome
 
     async def release_account_traffic_suspension(
         self, user_id: int, server_id: int
@@ -2705,6 +3015,8 @@ class AccountService:
             ``"released"``、``"skipped"`` 或 ``"retryable_error"``。
         """
         scheduler = self._get_scheduler()
+        unsuspended_payload: TrafficUnsuspendedPayload | None = None
+        result_status: Literal["released", "skipped", "retryable_error"]
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -2717,6 +3029,8 @@ class AccountService:
                 return "skipped"
 
             now = self._now()
+            was_suspended = bool(fresh_mu.is_traffic_suspended)
+            was_banned = bool(fresh_mu.is_banned)
             # 仅当当前周期尚未再度超流耗尽或账期已推入新周期后允许释放
             status = await self._clear_or_sync_traffic_suspension_locked(
                 fresh_mu,
@@ -2727,89 +3041,29 @@ class AccountService:
                 await self.media_repo.session.commit()
                 await self.media_repo.session.refresh(fresh_mu)
                 schedule_account_lifecycle_jobs(scheduler, fresh_mu, now=now)
-                return "released"
-            if status == "retryable_error":
+                if was_suspended and not was_banned:
+                    unsuspended_payload = TrafficUnsuspendedPayload(
+                        server_name=fresh_srv.name,
+                        media_name=fresh_mu.media_name,
+                        recovery_reason="cycle_reset",
+                        next_reset_at=fresh_mu.next_reset_at,
+                        still_expiry_banned=False,
+                        economy=EffectiveEconomyContext.from_cache(fresh_srv),
+                    )
+                result_status = "released"
+            elif status == "retryable_error":
                 return "retryable_error"
-            return "skipped"
-
-    async def _send_pre_expiry_reminder_dm(
-        self, ctx: _PreExpiryReminderContext
-    ) -> bool:
-        """向即将到期的媒体账号所属用户发送临近到期续期提醒私聊通知
-
-        Args:
-            ctx: 结构化的 ``_PreExpiryReminderContext`` 通知上下文。
-
-        Returns:
-            私聊发送成功返回 ``True``，未配置客户端或送达失败返回 ``False``。
-        """
-        if getattr(getattr(self.app, "state", None), "telethon_client", None) is None:
-            return False
-
-        exp_str = ctx.expires_at.strftime("%Y-%m-%d %H:%M:%S")
-        paid_methods = "积分或激活码" if ctx.points_renew_enabled else "激活码"
-        if ctx.auto_renew:
-            if ctx.watch_open and ctx.watch_eligible:
-                hint_line = (
-                    "已开启自动续期：当前观看度已达 100%，到期时将自动免积分续期。"
-                    if ctx.points_renew_enabled
-                    else "已开启自动续期：当前观看度已达 100%，到期时将自动免费续期。"
-                )
-            elif ctx.watch_open:
-                if ctx.points_renew_enabled:
-                    if ctx.user_score >= ctx.points_renew_score:
-                        hint_line = (
-                            f"已开启自动续期：当前{ctx.watch_status_text}；若到期前观看度达 100% 将免费续期，"
-                            f"否则将自动消耗 {ctx.points_renew_score} 积分续期（当前积分 {ctx.user_score}，充足）。"
-                        )
-                    else:
-                        hint_line = (
-                            f"已开启自动续期：当前{ctx.watch_status_text}，且积分不足"
-                            f"（需 {ctx.points_renew_score} 积分，当前 {ctx.user_score}）；"
-                            "请在到期前继续观影达标、补充积分或使用激活码续期，以免过期封禁。"
-                        )
-                else:
-                    hint_line = f"已开启自动续期：当前{ctx.watch_status_text}，请在到期前继续观影达 100%（到期后自动免费续期）或使用激活码手动续期。"
-            elif ctx.points_renew_enabled:
-                if ctx.user_score >= ctx.points_renew_score:
-                    hint_line = (
-                        f"已开启自动续期：到期时将自动消耗 {ctx.points_renew_score} 积分续期"
-                        f"（当前积分 {ctx.user_score}，充足）。"
-                    )
-                else:
-                    hint_line = (
-                        f"已开启自动续期，但当前积分不足（需 {ctx.points_renew_score} 积分，当前 {ctx.user_score}），"
-                        "请在到期前补充积分或使用激活码续期，以免过期封禁。"
-                    )
             else:
-                hint_line = "已开启自动续期，但当前服务器暂未开放可自动触发的续期条件，请及时使用激活码手动续期，以免过期封禁。"
-        elif ctx.watch_open and ctx.watch_eligible:
-            hint_line = "当前观看度已达 100%，可前往 Mini App 免费续期。"
-        elif ctx.watch_open:
-            hint_line = f"保活进度: {ctx.watch_status_text}，可在到期前继续观影达标或使用{paid_methods}续期。"
-        else:
-            hint_line = f"请前往 Mini App 使用{paid_methods}及时续期，以免过期封禁。"
+                return "skipped"
 
-        msg = TelegramMessage.render_html(t"""\
-            ⏰ <b>媒体账号临近到期提醒</b>
-
-            服务器: <code>{ctx.server_name}</code>
-            媒体账号: <code>{ctx.media_name}</code>
-            到期时间: <code>{exp_str}</code>
-            {hint_line}
-        """)
-        try:
-            return await NotificationService(self.app).send_text_to_user(
-                ctx.user_id, msg
+        if unsuspended_payload is not None:
+            await self._emit_notification(
+                unsuspended_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"traffic_unsuspended:{user_id}:{server_id}:cycle_reset",
             )
-        except (HTTPError, ValueError, TypeError, OSError) as exc:
-            logger.warning(
-                "发送临近到期提醒私聊失败: user_id={}, server={}, err={}",
-                ctx.user_id,
-                ctx.server_name,
-                exc,
-            )
-            return False
+        return result_status
 
     async def process_pre_expiry_check(
         self,
@@ -2838,7 +3092,7 @@ class AccountService:
         Returns:
             执行结果状态字面量，便于单次任务调度器与测试观测结果分流。
         """
-        reminder_ctx: _PreExpiryReminderContext | None = None
+        reminder_payload: PreExpiryReminderPayload | None = None
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -2869,35 +3123,38 @@ class AccountService:
                 fresh_mu,
                 global_watch_time_enabled=await self.config_repo.is_watch_time_enabled(),
             )
-            points_renew_enabled = await self.config_repo.is_points_feature_enabled(
-                ConfigRepository.KEY_ENABLE_POINTS_RENEW
-            )
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
             auto_renew_flag = bool(fresh_mu.auto_renew)
-            points_renew_score = 0
-            user_score = 0
-            if points_renew_enabled and auto_renew_flag:
+            points_renew_score: int | None = None
+            user_score: int | None = None
+            if economy.effective_points_renew:
                 points_renew_score = max(
                     0, int(await self.telegram_repo.get_renew_score())
                 )
-                tg_user = await self.telegram_repo.get_by_id(user_id)
-                user_score = int(tg_user.score) if tg_user is not None else 0
+                if auto_renew_flag:
+                    tg_user = await self.telegram_repo.get_by_id(user_id)
+                    user_score = int(tg_user.score) if tg_user is not None else 0
 
-            reminder_ctx = _PreExpiryReminderContext(
-                user_id=user_id,
+            reminder_payload = PreExpiryReminderPayload(
                 server_name=fresh_srv.name,
                 media_name=fresh_mu.media_name,
                 expires_at=fresh_mu.expires_at,
-                auto_renew=auto_renew_flag,
-                watch_open=wt_status.is_open,
+                auto_renew_enabled=auto_renew_flag,
                 watch_eligible=wt_status.is_eligible,
                 watch_status_text=wt_status.status_text,
-                points_renew_enabled=points_renew_enabled,
                 points_renew_score=points_renew_score,
                 user_score=user_score,
+                economy=economy,
             )
 
-        # 释放非重入账号锁后再发起 Telegram 私聊网络 IO，防止长耗时网络阻塞同账号其他操作
-        await self._send_pre_expiry_reminder_dm(reminder_ctx)
+        # 释放非重入账号锁后再投递统一通知管线，防止阻塞同账号其他操作
+        if reminder_payload is not None:
+            await self._emit_notification(
+                reminder_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"pre_expiry:{user_id}:{server_id}",
+            )
         return "reminded"
 
     async def ban_expired_account(
@@ -2932,6 +3189,7 @@ class AccountService:
                 )
                 return "skipped"
 
+        failed_auto_outcome: AutoRenewOutcome | None = None
         if check_auto_renew:
             auto_outcome = await self.try_auto_renew_account(
                 user_id,
@@ -2952,7 +3210,10 @@ class AccountService:
                     server_id,
                 )
                 return "retryable_error"
+            if auto_outcome.failure_notifiable:
+                failed_auto_outcome = auto_outcome
 
+        pending_payloads: list[NotificationPayload] = []
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -3017,7 +3278,54 @@ class AccountService:
 
             fresh_user = await self.media_repo.mark_banned(fresh_user)
             schedule_account_lifecycle_jobs(self._get_scheduler(), fresh_user, now=now)
-            return "banned"
+
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            server_name = (
+                fresh_srv.name if fresh_srv is not None else f"Server {server_id}"
+            )
+            policy_cfg = await self.config_repo.get_policy_config()
+            grace_days = max(0, int(policy_cfg["account_delete_grace_days"]))
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
+            points_renew_score = (
+                max(0, int(await self.telegram_repo.get_renew_score()))
+                if economy.effective_points_renew
+                else None
+            )
+            if failed_auto_outcome is not None:
+                pending_payloads.append(
+                    AutoRenewFailedPayload(
+                        server_name=server_name,
+                        media_name=fresh_user.media_name,
+                        expires_at=fresh_user.expires_at,
+                        reason="",
+                        grace_days=grace_days,
+                        required_score=failed_auto_outcome.required_score,
+                        user_score=failed_auto_outcome.user_score,
+                        watch_status_text=failed_auto_outcome.watch_status_text,
+                        will_ban=True,
+                        economy=economy,
+                    )
+                )
+            pending_payloads.append(
+                ExpiryBanPayload(
+                    server_name=server_name,
+                    media_name=fresh_user.media_name,
+                    expires_at=fresh_user.expires_at,
+                    delete_at=fresh_user.delete_at,
+                    grace_days=grace_days,
+                    points_renew_score=points_renew_score,
+                    economy=economy,
+                )
+            )
+
+        for payload in pending_payloads:
+            await self._emit_notification(
+                payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"{payload.event.value}:{user_id}:{server_id}",
+            )
+        return "banned"
 
     async def delete_expired_banned_account(
         self, user_id: int, server_id: int
@@ -3034,6 +3342,7 @@ class AccountService:
         Returns:
             ``"deleted"``、``"skipped"`` 或 ``"retryable_error"``。
         """
+        deleted_payload: AccountDeletedPayload | None = None
         async with get_account_lock(user_id, server_id):
             await self.media_repo.end_clean_read_tx()
             fresh_user = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
@@ -3088,6 +3397,116 @@ class AccountService:
                 )
                 return "retryable_error"
 
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            server_name = (
+                fresh_srv.name if fresh_srv is not None else f"Server {server_id}"
+            )
+            media_name = str(fresh_user.media_name)
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
             await self.media_repo.delete(fresh_user)
             remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
-            return "deleted"
+            deleted_payload = AccountDeletedPayload(
+                server_name=server_name,
+                media_name=media_name,
+                reason="过期封禁宽限期届满未续期",
+                deleted_at=now,
+                economy=economy,
+            )
+
+        if deleted_payload is not None:
+            await self._emit_notification(
+                deleted_payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"account_deleted:{user_id}:{server_id}",
+            )
+        return "deleted"
+
+    async def process_grace_delete_reminder(
+        self,
+        user_id: int,
+        server_id: int,
+        *,
+        reminder_window: timedelta = timedelta(hours=24),
+    ) -> Literal[
+        "reminded",
+        "not_due",
+        "already_due",
+        "already_sent",
+        "not_banned",
+        "missing",
+        "server_disabled",
+    ]:
+        """在宽限期删号前 24 小时发送最终清理预警，并持久化去重标记防止重复触发。
+
+        Args:
+            user_id: Telegram 用户 ID。
+            server_id: 目标媒体服务器 ID。
+            reminder_window: 删号前预警提前窗口（默认 24 小时）。
+
+        Returns:
+            执行状态字面量，便于单次调度任务及测试观测结果分流。
+        """
+        payload: GraceDeleteReminderPayload | None = None
+        async with get_account_lock(user_id, server_id):
+            await self.media_repo.end_clean_read_tx()
+            fresh_mu = await self.media_repo.get_by_id(user_id, server_id, fresh=True)
+            now = self._now()
+            if fresh_mu is None:
+                remove_account_lifecycle_jobs(self._get_scheduler(), user_id, server_id)
+                return "missing"
+            if not fresh_mu.is_banned or fresh_mu.delete_at is None:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_mu, now=now
+                )
+                return "not_banned"
+            if fresh_mu.grace_delete_reminder_sent:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_mu, now=now
+                )
+                return "already_sent"
+            if fresh_mu.delete_at <= now:
+                return "already_due"
+            if fresh_mu.delete_at - reminder_window > now:
+                schedule_account_lifecycle_jobs(
+                    self._get_scheduler(), fresh_mu, now=now
+                )
+                return "not_due"
+
+            fresh_srv = await self.server_repo.get_by_id(server_id, fresh=True)
+            if fresh_srv is None or not fresh_srv.is_enabled:
+                return "server_disabled"
+
+            fresh_mu.grace_delete_reminder_sent = True
+            await self.media_repo.session.commit()
+
+            policy_cfg = await self.config_repo.get_policy_config()
+            grace_days = max(0, int(policy_cfg["account_delete_grace_days"]))
+            economy = EffectiveEconomyContext.from_cache(fresh_srv)
+            points_renew_score = (
+                max(0, int(await self.telegram_repo.get_renew_score()))
+                if economy.effective_points_renew
+                else None
+            )
+            remaining_hours = max(
+                1, round((fresh_mu.delete_at - now).total_seconds() / 3600)
+            )
+            payload = GraceDeleteReminderPayload(
+                server_name=fresh_srv.name,
+                media_name=fresh_mu.media_name,
+                delete_at=fresh_mu.delete_at,
+                remaining_hours=remaining_hours,
+                grace_days=grace_days,
+                points_renew_score=points_renew_score,
+                economy=economy,
+            )
+
+        if payload is not None:
+            await NotificationService(self.app).emit(
+                payload,
+                user_id=user_id,
+                server_id=server_id,
+                source_key=f"grace_delete_reminder:{user_id}:{server_id}",
+                session=self.media_repo.session,
+            )
+        return "reminded"

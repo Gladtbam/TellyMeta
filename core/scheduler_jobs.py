@@ -38,10 +38,12 @@ if TYPE_CHECKING:
 settings = get_settings()
 
 PRE_EXPIRY_WINDOW = timedelta(hours=24)
+GRACE_DELETE_REMINDER_WINDOW = timedelta(hours=24)
 TRAFFIC_RESET_JOB_PREFIX = "traffic_reset_"
 TRAFFIC_UNSUSPEND_JOB_PREFIX = "traffic_unsuspend_"
 PRE_EXPIRY_CHECK_JOB_PREFIX = "pre_expiry_check_"
 EXPIRY_BAN_JOB_PREFIX = "expiry_ban_"
+GRACE_DELETE_REMINDER_JOB_PREFIX = "grace_delete_reminder_"
 GRACE_DELETE_JOB_PREFIX = "grace_delete_"
 
 
@@ -70,13 +72,20 @@ def grace_delete_job_id(user_id: int, server_id: int) -> str:
     return f"{GRACE_DELETE_JOB_PREFIX}{user_id}_{server_id}"
 
 
+def grace_delete_reminder_job_id(user_id: int, server_id: int) -> str:
+    """生成媒体账号宽限期删号前 24 小时预警单次任务 ID。"""
+    return f"{GRACE_DELETE_REMINDER_JOB_PREFIX}{user_id}_{server_id}"
+
+
 def parse_lifecycle_job_account(job_id: str) -> tuple[int, int] | None:
     """从生命周期单次任务 ID 解析 ``(user_id, server_id)``；非生命周期任务返回 ``None``。"""
+    # 最长前缀优先匹配，防止 grace_delete_ 抢先截断 grace_delete_reminder_
     for prefix in (
         TRAFFIC_RESET_JOB_PREFIX,
         TRAFFIC_UNSUSPEND_JOB_PREFIX,
         PRE_EXPIRY_CHECK_JOB_PREFIX,
         EXPIRY_BAN_JOB_PREFIX,
+        GRACE_DELETE_REMINDER_JOB_PREFIX,
         GRACE_DELETE_JOB_PREFIX,
     ):
         if job_id.startswith(prefix):
@@ -150,6 +159,7 @@ def remove_account_lifecycle_jobs(
         traffic_unsuspend_job_id(user_id, server_id),
         pre_expiry_check_job_id(user_id, server_id),
         expiry_ban_job_id(user_id, server_id),
+        grace_delete_reminder_job_id(user_id, server_id),
         grace_delete_job_id(user_id, server_id),
     ):
         _remove_job_if_exists(scheduler, job_id)
@@ -237,6 +247,7 @@ def schedule_account_lifecycle_jobs(
     if media_user.is_banned:
         _remove_job_if_exists(scheduler, pre_expiry_check_job_id(uid, sid))
         _remove_job_if_exists(scheduler, expiry_ban_job_id(uid, sid))
+        reminder_id = grace_delete_reminder_job_id(uid, sid)
         if media_user.delete_at is not None:
             _add_or_replace_date_job(
                 scheduler,
@@ -246,11 +257,28 @@ def schedule_account_lifecycle_jobs(
                 server_id=sid,
                 job_id=grace_delete_job_id(uid, sid),
             )
+            reminder_at = media_user.delete_at - GRACE_DELETE_REMINDER_WINDOW
+            reminder_sent = bool(
+                getattr(media_user, "grace_delete_reminder_sent", False)
+            )
+            if not reminder_sent and reminder_at > current_now:
+                _add_or_replace_date_job(
+                    scheduler,
+                    run_account_grace_delete_reminder,
+                    run_date=reminder_at,
+                    user_id=uid,
+                    server_id=sid,
+                    job_id=reminder_id,
+                )
+            elif reminder_sent or media_user.delete_at <= current_now:
+                _remove_job_if_exists(scheduler, reminder_id)
         else:
             _remove_job_if_exists(scheduler, grace_delete_job_id(uid, sid))
+            _remove_job_if_exists(scheduler, reminder_id)
         return
 
     _remove_job_if_exists(scheduler, grace_delete_job_id(uid, sid))
+    _remove_job_if_exists(scheduler, grace_delete_reminder_job_id(uid, sid))
     _add_or_replace_date_job(
         scheduler,
         run_account_expiry_ban,
@@ -477,6 +505,21 @@ async def run_account_expiry_ban(user_id: int, server_id: int) -> None:
         runner=lambda svc: svc.ban_expired_account(user_id, server_id),
         retry_func=run_account_expiry_ban,
         retry_job_id=expiry_ban_job_id(user_id, server_id),
+    )
+
+
+async def run_account_grace_delete_reminder(user_id: int, server_id: int) -> None:
+    """顶层可序列化单次任务：在宽限期删号前 24 小时发送最终清理预警。
+
+    Args:
+        user_id: Telegram 用户 ID。
+        server_id: 媒体服务器 ID。
+    """
+    await _execute_account_lifecycle_job(
+        user_id=user_id,
+        server_id=server_id,
+        action_label="删号前24h提醒",
+        runner=lambda svc: svc.process_grace_delete_reminder(user_id, server_id),
     )
 
 

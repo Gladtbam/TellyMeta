@@ -310,7 +310,7 @@ NOTIFICATION_EVENT_SPECS: dict[NotificationEvent, NotificationEventSpec] = dict(
         _spec(
             NotificationEvent.EXPIRY_BAN,
             NotificationRouteCategory.ACCOUNT_LIFECYCLE,
-            NotificationAudience.USER_DM,
+            NotificationAudience.BOTH,
             NotificationSeverity.CRITICAL,
             is_mandatory=True,
         ),
@@ -324,7 +324,7 @@ NOTIFICATION_EVENT_SPECS: dict[NotificationEvent, NotificationEventSpec] = dict(
         _spec(
             NotificationEvent.ACCOUNT_DELETED,
             NotificationRouteCategory.ACCOUNT_LIFECYCLE,
-            NotificationAudience.USER_DM,
+            NotificationAudience.BOTH,
             NotificationSeverity.CRITICAL,
             is_mandatory=True,
         ),

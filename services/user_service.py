@@ -1,4 +1,5 @@
 import contextlib
+import inspect
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from random import choice, choices, randint
@@ -962,35 +963,216 @@ class UserService:
 
         return Result(success=True, message=message)
 
+    async def _safe_resolve_user_name(self, user_id: int | None) -> str:
+        """安全解析 Telegram 用户展示名（兼容同步/异步/缺失测试替身）。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID。
+
+        Returns:
+            非空用户名字符串；解析失败时返回空字符串。
+        """
+        if user_id is None:
+            return ""
+        client = getattr(getattr(self.app, "state", None), "telethon_client", None)
+        getter = getattr(client, "get_user_name", None) if client is not None else None
+        if not callable(getter):
+            return ""
+        try:
+            res = getter(user_id)
+            if inspect.isawaitable(res):
+                res = await res
+            if isinstance(res, str) and res.strip():
+                return res.strip()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return ""
+        return ""
+
+    async def _emit_admin_user_action(
+        self,
+        payload: Any,
+        *,
+        skip_inbox_fallback: bool = False,
+    ) -> None:
+        """通过统一通知管线发送管理员操作回执与审计消息（严格隔离外部发送异常）。
+
+        Args:
+            payload: ``AdminUserActionPayload`` 载荷实例。
+            skip_inbox_fallback: 目标 ``TelegramUser`` 已被删除时传 ``True``，防止站内兜底外键失效。
+        """
+        from services.notification_service import NotificationService
+
+        try:
+            await NotificationService(self.app).emit(
+                user_id=payload.target_user_id,
+                payload=payload,
+                session=self.session,
+                skip_inbox_fallback=skip_inbox_fallback,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "发送管理员操作通知失败（已忽略，不影响主业务）: action={}, target={}, err={}",
+                getattr(payload, "action_type", "unknown"),
+                getattr(payload, "target_user_id", None),
+                exc,
+            )
+
+    async def resolve_user_display_name(
+        self, user_id: int | None, *, fallback: str = ""
+    ) -> str:
+        """公开的 Telegram 用户展示名安全解析助手（兼容 Bot 与 Mini App 管理入口）。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID（可为 ``None``）。
+            fallback: 无法解析或为空时的兜底文案。
+
+        Returns:
+            解析得到的非空展示名或 ``fallback``。
+        """
+        resolved = await self._safe_resolve_user_name(user_id)
+        return resolved if resolved else fallback
+
+    async def snapshot_user_media_summary(
+        self, user_id: int
+    ) -> tuple[str | None, str | None, ServerInstance | None]:
+        """在删号前采集目标用户关联媒体服务器与媒体账号摘要，供踢出审计通知使用。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID。
+
+        Returns:
+            ``(server_display, media_display, single_server_or_none)`` 三元组。
+        """
+        user = await self.telegram_repo.get_by_id(user_id)
+        if not user or not user.media_users:
+            return None, None, None
+        pairs: list[tuple[str, str]] = []
+        last_srv: ServerInstance | None = None
+        for mu in user.media_users:
+            srv = await self.server_repo.get_by_id(mu.server_id)
+            srv_name = srv.name if srv is not None else f"Server {mu.server_id}"
+            pairs.append((srv_name, mu.media_name))
+            last_srv = srv
+        if len(pairs) == 1:
+            return pairs[0][0], pairs[0][1], last_srv
+        return ", ".join(s for s, _ in pairs), ", ".join(m for _, m in pairs), None
+
+    async def notify_admin_ban_or_kick(
+        self,
+        *,
+        action_type: Literal["kick", "ban"],
+        target_user_id: int,
+        operator_name: str = "管理员",
+        target_name: str = "",
+        server_name: str | None = None,
+        media_name: str | None = None,
+        context_server: ServerInstance | None = None,
+    ) -> None:
+        """发送管理员踢出或封禁操作回执与审计事件，并自动规避已删号外键兜底冲突。
+
+        Args:
+            action_type: 管理动作类型（``"kick"`` 或 ``"ban"``）。
+            target_user_id: 目标 Telegram 用户 ID。
+            operator_name: 执行操作的管理员展示名。
+            target_name: 预解析的目标用户展示名。
+            server_name: 关联服务器展示名称（可选）。
+            media_name: 关联媒体账号名（可选）。
+            context_server: 单服场景的服务器实例，用于构建 ADR-0004 经济上下文。
+        """
+        from services.notification_renderer import (
+            AdminUserActionPayload,
+            EffectiveEconomyContext,
+        )
+
+        resolved_target = target_name.strip() or await self._safe_resolve_user_name(
+            target_user_id
+        )
+        tg_exists = await self.telegram_repo.get_by_id(target_user_id) is not None
+        await self._emit_admin_user_action(
+            AdminUserActionPayload(
+                action_type=action_type,
+                target_user_id=target_user_id,
+                target_user_name=resolved_target,
+                operator_name=operator_name.strip() or "管理员",
+                server_name=server_name,
+                media_name=media_name,
+                economy=EffectiveEconomyContext.from_cache(context_server),
+            ),
+            # 踢出删号或未入库用户不存在 TelegramUser 外键记录，跳过站内落箱防止 FK 失败
+            skip_inbox_fallback=(not tg_exists),
+        )
+
     async def warn_user(
-        self, target_user_id: int, *, increment: int = 1
+        self,
+        target_user_id: int,
+        *,
+        increment: int = 1,
+        operator_name: str = "管理员",
+        reason: str = "",
     ) -> TelegramUser:
-        """为目标用户累计警告次数；仅在积分惩罚通道生效时连带扣除等额积分。
+        """为目标用户累计警告次数；仅在积分惩罚通道生效时连带扣除等额积分并发送操作回执。
 
         Args:
             target_user_id: 目标用户 Telegram ID。
             increment: 本次新增警告次数（默认 ``1``）。
+            operator_name: 执行操作的管理员显示名。
+            reason: 可选操作备注说明。
 
         Returns:
             更新并提交后的 ``TelegramUser`` 对象。
         """
+        from services.notification_renderer import (
+            AdminUserActionPayload,
+            EffectiveEconomyContext,
+        )
+
+        existing = await self.telegram_repo.get_by_id(target_user_id)
+        prev_score = int(existing.score) if existing is not None else 0
+
         warn_penalty_enabled = await self.config_repo.is_points_feature_enabled(
             ConfigRepository.KEY_ENABLE_POINTS_WARN
         )
         if warn_penalty_enabled:
-            return await self.telegram_repo.update_warn_and_score(
+            user = await self.telegram_repo.update_warn_and_score(
                 target_user_id, increment=increment
             )
-        return await self.telegram_repo.update_warn_only(
-            target_user_id, increment=increment
-        )
+        else:
+            user = await self.telegram_repo.update_warn_only(
+                target_user_id, increment=increment
+            )
 
-    async def change_user_score(self, target_user_id: int, score_change: int) -> Result:
-        """管理员手动调整用户社区积分；全局积分总开关关闭时拒绝操作。
+        target_name = await self._safe_resolve_user_name(target_user_id)
+        actual_delta = (int(user.score) - prev_score) if warn_penalty_enabled else None
+        await self._emit_admin_user_action(
+            AdminUserActionPayload(
+                action_type="warn",
+                target_user_id=target_user_id,
+                target_user_name=target_name,
+                operator_name=operator_name.strip() or "管理员",
+                reason=reason,
+                warning_count=int(user.warning_count),
+                score_delta=actual_delta,
+                current_score=int(user.score) if warn_penalty_enabled else None,
+                economy=EffectiveEconomyContext.from_cache(None),
+            )
+        )
+        return user
+
+    async def change_user_score(
+        self,
+        target_user_id: int,
+        score_change: int,
+        *,
+        operator_name: str = "管理员",
+        reason: str = "",
+    ) -> Result:
+        """管理员手动调整用户社区积分；全局积分总开关关闭时拒绝操作，成功时发送透明回执。
 
         Args:
             target_user_id: 目标用户 Telegram ID。
             score_change: 积分增减量（正数加分，负数扣分）。
+            operator_name: 执行操作的管理员显示名。
+            reason: 可选操作备注说明。
 
         Returns:
             ``Result``，成功时 ``extra_data`` 携带更新后的 ``user`` 与 ``score``。
@@ -998,6 +1180,26 @@ class UserService:
         if not await self.config_repo.is_points_enabled():
             return Result(False, "全局积分总开关已关闭，无法修改积分。")
         user = await self.telegram_repo.update_score(target_user_id, score_change)
+
+        from services.notification_renderer import (
+            AdminUserActionPayload,
+            EffectiveEconomyContext,
+        )
+
+        target_name = await self._safe_resolve_user_name(target_user_id)
+        await self._emit_admin_user_action(
+            AdminUserActionPayload(
+                action_type="score_adjust",
+                target_user_id=target_user_id,
+                target_user_name=target_name,
+                operator_name=operator_name.strip() or "管理员",
+                reason=reason,
+                score_delta=int(score_change),
+                current_score=int(user.score),
+                economy=EffectiveEconomyContext.from_cache(None),
+            )
+        )
+
         prefix = "+" if score_change > 0 else ""
         return Result(
             True,
@@ -1014,12 +1216,34 @@ class UserService:
         return Result(True, "排行榜获取成功", extra_data=users)
 
     async def delete_account(
-        self, user_id: int, account_type: Literal["media", "tg", "both"]
+        self,
+        user_id: int,
+        account_type: Literal["media", "tg", "both"],
+        *,
+        operator_name: str = "管理员",
+        emit_notification: bool = False,
+        reason: str = "",
     ) -> Result:
-        """删除账户"""
+        """删除用户关联的媒体账号或 Telegram 绑定记录，并按需发送管理员删号回执与审计。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID。
+            account_type: 删除范围（``media`` / ``tg`` / ``both``）。
+            operator_name: 执行操作的管理员显示名。
+            emit_notification: 是否发射 ``ADMIN_USER_ACTION(delete)``（如 ``/kick`` 外层统一发 ``kick`` 时传 ``False``）。
+            reason: 可选操作原因说明。
+
+        Returns:
+            ``Result`` 删除结果。
+        """
         user = await self.telegram_repo.get_by_id(user_id)
         if not user:
             return Result(True, "未找到该 Telegram 账户，无需删除。")
+
+        target_name = await self._safe_resolve_user_name(user_id)
+        deleted_media: list[tuple[str, str]] = []
+        last_deleted_server: ServerInstance | None = None
+        telegram_deleted = False
 
         logs = []
         has_media_failure = False
@@ -1063,6 +1287,8 @@ class UserService:
 
                     mu_uid = int(mu.id)
                     mu_sid = int(mu.server_id)
+                    deleted_media.append((server_name, mu.media_name))
+                    last_deleted_server = server
                     await self.media_repo.delete(mu)
                     remove_account_lifecycle_jobs(
                         getattr(getattr(self.app, "state", None), "scheduler", None),
@@ -1077,7 +1303,48 @@ class UserService:
                     )
                 else:
                     await self.telegram_repo.delete_by_id(user_id)
+                    telegram_deleted = True
                     logs.append("Telegram 绑定记录已清除。")
+
+            if emit_notification and (deleted_media or telegram_deleted):
+                from services.notification_renderer import (
+                    AdminUserActionPayload,
+                    EffectiveEconomyContext,
+                )
+
+                srv_display = (
+                    deleted_media[0][0]
+                    if len(deleted_media) == 1
+                    else (
+                        ", ".join(s for s, _ in deleted_media)
+                        if deleted_media
+                        else None
+                    )
+                )
+                media_display = (
+                    deleted_media[0][1]
+                    if len(deleted_media) == 1
+                    else (
+                        ", ".join(m for _, m in deleted_media)
+                        if deleted_media
+                        else None
+                    )
+                )
+                ctx_server = last_deleted_server if len(deleted_media) == 1 else None
+                await self._emit_admin_user_action(
+                    AdminUserActionPayload(
+                        action_type="delete",
+                        target_user_id=user_id,
+                        target_user_name=target_name,
+                        operator_name=operator_name.strip() or "管理员",
+                        server_name=srv_display,
+                        media_name=media_display,
+                        reason=reason,
+                        economy=EffectiveEconomyContext.from_cache(ctx_server),
+                    ),
+                    # TelegramUser 记录已被清除时外键不可写入收件箱，跳过兜底落箱避免数据库约束冲突
+                    skip_inbox_fallback=telegram_deleted,
+                )
 
             msg = "\n".join(logs) if logs else "无关联账户需要删除。"
             return Result(not has_media_failure, msg)

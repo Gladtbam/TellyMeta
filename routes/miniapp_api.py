@@ -88,15 +88,24 @@ async def _deliver_sensitive_result(
     raw_message: str,
     dm_success_notice: str,
     dm_failed_prefix: str,
+    *,
+    skip_inbox_fallback: bool = True,
 ) -> dict[str, Any]:
-    """优先通过 Telegram 私聊交付敏感结果；私聊失败时降级为 Mini App 本人一次性展示。"""
+    """优先通过 Telegram 私聊交付敏感结果；私聊失败时降级为 Mini App 本人一次性展示。
+
+    Note:
+        由于请求发起方已在 Mini App 当前会话内等待响应，私聊失败时会当场回传
+        ``one_time_result`` 前端一次性弹窗，因此显式标记 ``skip_inbox_fallback=True``：
+        绝不写入 ``NotificationInboxItem``，避免站内重复提醒与明文凭据落库。
+    """
     dm_delivered = True
     try:
         await client.send_message(user_id, raw_message, parse_mode="markdown")
     except (errors.RPCError, ValueError) as e:
         dm_delivered = False
         logger.warning(
-            "Telegram 私聊交付敏感结果失败，降级为前端一次性展示: user_id={}, action={}, err={}",
+            "Telegram 私聊交付敏感结果失败，降级为前端一次性展示（skip_inbox_fallback={}）: user_id={}, action={}, err={}",
+            skip_inbox_fallback,
             user_id,
             action,
             e,
@@ -193,6 +202,7 @@ async def _execute_idempotent_sensitive_action(
             raw_message=result.message,
             dm_success_notice=dm_success_notice,
             dm_failed_prefix=dm_failed_prefix,
+            skip_inbox_fallback=True,
         )
 
     return await _run_idempotent_action(
@@ -434,20 +444,29 @@ async def get_target_user_info_for_admin(
         raise HTTPException(status_code=500, detail="获取目标用户信息失败") from e
 
 
+async def _resolve_api_operator_name(user_service: UserService, admin_id: Any) -> str:
+    """安全解析管理 API 调用者展示名（兼容直接调用与 FastAPI DI）。"""
+    resolved_id = admin_id if isinstance(admin_id, int) else None
+    return await user_service.resolve_user_display_name(resolved_id, fallback="管理员")
+
+
 @router.post(
     "/admin/user/{target_user_id}/warn",
     response_model=AdminActionResponse,
-    dependencies=[Depends(validate_admin_access)],
 )
 async def admin_warn_user(
     request: Request,
     target_user_id: int,
     session: AsyncSession = Depends(get_db),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员警告目标用户 (+1)"""
     try:
         user_service = UserService(request.app, session)
-        user = await user_service.warn_user(target_user_id, increment=1)
+        operator_name = await _resolve_api_operator_name(user_service, admin_id)
+        user = await user_service.warn_user(
+            target_user_id, increment=1, operator_name=operator_name
+        )
         return AdminActionResponse(
             success=True,
             message=f"已警告用户，当前警告次数: {user.warning_count} 次",
@@ -460,18 +479,21 @@ async def admin_warn_user(
 @router.post(
     "/admin/user/{target_user_id}/change_score",
     response_model=AdminActionResponse,
-    dependencies=[Depends(validate_admin_access)],
 )
 async def admin_change_user_score(
     request: Request,
     target_user_id: int,
     body: ChangeScoreDto,
     session: AsyncSession = Depends(get_db),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员修改目标用户积分"""
     try:
         user_service = UserService(request.app, session)
-        result = await user_service.change_user_score(target_user_id, body.score_change)
+        operator_name = await _resolve_api_operator_name(user_service, admin_id)
+        result = await user_service.change_user_score(
+            target_user_id, body.score_change, operator_name=operator_name
+        )
         return AdminActionResponse(success=result.success, message=result.message)
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("修改积分失败: {}", e)
@@ -481,17 +503,23 @@ async def admin_change_user_score(
 @router.post(
     "/admin/user/{target_user_id}/del",
     response_model=AdminActionResponse,
-    dependencies=[Depends(validate_admin_access)],
 )
 async def admin_delete_user_account(
     request: Request,
     target_user_id: int,
     session: AsyncSession = Depends(get_db),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员删除目标用户的媒体账户"""
     try:
         user_service = UserService(request.app, session)
-        result = await user_service.delete_account(target_user_id, "both")
+        operator_name = await _resolve_api_operator_name(user_service, admin_id)
+        result = await user_service.delete_account(
+            target_user_id,
+            "both",
+            operator_name=operator_name,
+            emit_notification=True,
+        )
         return AdminActionResponse(
             success=result.success,
             message=result.message or "媒体账户已成功删除",
@@ -504,21 +532,42 @@ async def admin_delete_user_account(
 @router.post(
     "/admin/user/{target_user_id}/kick",
     response_model=AdminActionResponse,
-    dependencies=[Depends(validate_admin_access)],
 )
 async def admin_kick_user(
     request: Request,
     target_user_id: int,
     session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员将目标用户踢出群组并删除账户"""
     try:
+        user_service = UserService(request.app, session)
+        operator_name = await _resolve_api_operator_name(user_service, admin_id)
+        target_name = await user_service.resolve_user_display_name(target_user_id)
+        srv_name, media_name, ctx_srv = await user_service.snapshot_user_media_summary(
+            target_user_id
+        )
+
         with contextlib.suppress(Exception):
             await client.kick_and_ban_participant(target_user_id)
 
-        user_service = UserService(request.app, session)
-        result = await user_service.delete_account(target_user_id, "both")
+        result = await user_service.delete_account(
+            target_user_id,
+            "both",
+            operator_name=operator_name,
+            emit_notification=False,
+        )
+        # 与删号合并为单次 kick 通知，避免重复发出 delete 回执
+        await user_service.notify_admin_ban_or_kick(
+            action_type="kick",
+            target_user_id=target_user_id,
+            operator_name=operator_name,
+            target_name=target_name,
+            server_name=srv_name,
+            media_name=media_name,
+            context_server=ctx_srv,
+        )
         return AdminActionResponse(
             success=True,
             message=f"已踢出群组并清理媒体账户。{result.message}",
@@ -531,16 +580,24 @@ async def admin_kick_user(
 @router.post(
     "/admin/user/{target_user_id}/ban",
     response_model=AdminActionResponse,
-    dependencies=[Depends(validate_admin_access)],
 )
 async def admin_ban_user(
     request: Request,
     target_user_id: int,
+    session: AsyncSession = Depends(get_db),
     client: TelethonClientWarper = Depends(get_telethon_client),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员在群组中封禁目标用户"""
     try:
         await client.ban_user(target_user_id)
+        user_service = UserService(request.app, session)
+        operator_name = await _resolve_api_operator_name(user_service, admin_id)
+        await user_service.notify_admin_ban_or_kick(
+            action_type="ban",
+            target_user_id=target_user_id,
+            operator_name=operator_name,
+        )
         return AdminActionResponse(
             success=True,
             message=f"已成功封禁该用户（ID: {target_user_id}）",
@@ -552,7 +609,6 @@ async def admin_ban_user(
 
 @router.post(
     "/admin/user/{target_user_id}/accounts/{server_id}/traffic_adjust",
-    dependencies=[Depends(validate_admin_access)],
     response_model=AdminActionResponse,
 )
 async def admin_adjust_account_traffic(
@@ -561,14 +617,18 @@ async def admin_adjust_account_traffic(
     server_id: int,
     body: AdminTrafficAdjustDto,
     session: AsyncSession = Depends(get_db),
+    admin_id: int = Depends(validate_admin_access),
 ) -> AdminActionResponse:
     """管理员调整目标媒体账号当期临时流量额度（±GiB）或清零当期已用流量"""
+    user_service = UserService(request.app, session)
+    operator_name = await _resolve_api_operator_name(user_service, admin_id)
     service = AccountService(request.app, session)
     result = await service.adjust_account_cycle_traffic(
         target_user_id,
         server_id,
         delta_gib=body.delta_gib,
         reset_cycle_usage=body.reset_cycle_usage,
+        operator_name=operator_name,
     )
     extra = result.extra_data if isinstance(result.extra_data, dict) else {}
     return AdminActionResponse(
@@ -607,7 +667,10 @@ async def redeem_code(
         target_key=clean_code,
         idempotency_key=x_idempotency_key,
         client=client,
-        operation=lambda: account_service.redeem_code(user_id, username, clean_code),
+        # 兑换结果由 _deliver_sensitive_result 负责私聊/前端一次性弹窗，跳过重复回执与站内落箱
+        operation=lambda: account_service.redeem_code(
+            user_id, username, clean_code, emit_receipt=False
+        ),
         dm_success_notice="兑换成功！详细信息已发送到您的 Telegram 私聊。",
         dm_failed_prefix="兑换成功",
     )
@@ -650,9 +713,11 @@ async def signup_account(
                 return verify_result
 
             return await account_service.register(
-                user_id, username, server_id, skip_checks=True
+                user_id, username, server_id, skip_checks=True, emit_receipt=False
             )
-        return await account_service.register(user_id, username, server_id)
+        return await account_service.register(
+            user_id, username, server_id, emit_receipt=False
+        )
 
     return await _execute_idempotent_sensitive_action(
         request=request,
@@ -700,7 +765,10 @@ async def reset_account_password(
         target_key=str(server_id),
         idempotency_key=x_idempotency_key,
         client=client,
-        operation=lambda: service.forget_password(user_id, server_id),
+        # 新密码经 _deliver_sensitive_result 交付（失败即前端一次性弹窗），跳过重复回执与落箱
+        operation=lambda: service.forget_password(
+            user_id, server_id, emit_receipt=False
+        ),
         dm_success_notice="密码重置成功，新密码已发送到您的 Telegram 私聊。",
         dm_failed_prefix="密码重置成功",
     )
