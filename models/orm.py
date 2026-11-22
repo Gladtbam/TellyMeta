@@ -273,6 +273,13 @@ class MediaUser(Base):
     is_traffic_suspended: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false"), nullable=False
     )
+    # 同有效期周期内是否已触发保活首次达标提醒，及宽限删号前 24h 最后提醒标记
+    watch_time_milestone_notified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    grace_delete_reminder_sent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
 
     telegram_user: Mapped[TelegramUser] = relationship(back_populates="media_users")
     __table_args__ = (
@@ -403,6 +410,8 @@ class MediaRequest(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 媒体库真实入库并完成 REQUEST_COMPLETED 通知的时间（用于多集剧集入库防重复触发）
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         # 同一 Arr 实例对同一媒体同时仅允许一条待审核求片
@@ -500,4 +509,159 @@ class MediaPlaybackSession(Base):
             "session_key",
             name="uq_media_playback_session_server_key",
         ),
+    )
+
+
+class NotificationRoute(Base):
+    """分层通知路由配置模型（支持全局默认规则与按服务器实例覆盖）"""
+
+    __tablename__ = "notification_routes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    server_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_type: Mapped[str] = mapped_column(
+        String(32),
+        default="disabled",
+        server_default=text("'disabled'"),
+        nullable=False,
+    )
+    target_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    target_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    escalate_admin_dm: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # 可选高频或删除类事件白名单 JSON 列表（如 ["sonarr_grab", "media_library_deleted"]）
+    enabled_events_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+    )
+
+    __table_args__ = (
+        # SQLite/PostgreSQL 下 NULL 值在普通唯一约束中不冲突，拆分为两个部分唯一索引以防重复路由
+        Index(
+            "uq_notification_route_global_cat",
+            "scope_type",
+            "category",
+            unique=True,
+            sqlite_where=text("server_id IS NULL"),
+            postgresql_where=text("server_id IS NULL"),
+        ),
+        Index(
+            "uq_notification_route_server_cat",
+            "scope_type",
+            "server_id",
+            "category",
+            unique=True,
+            sqlite_where=text("server_id IS NOT NULL"),
+            postgresql_where=text("server_id IS NOT NULL"),
+        ),
+    )
+
+
+class NotificationInboxItem(Base):
+    """用户私聊投递失败兜底站内收件箱模型（仅存脱敏摘要，保留 30 天）"""
+
+    __tablename__ = "notification_inbox_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("telegram_users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    server_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(16), default="info", server_default=text("'info'"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    action_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_mandatory: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    is_read: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default=text("false"),
+        nullable=False,
+        index=True,
+    )
+    delivery_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, nullable=False, index=True
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class OpsAlertLog(Base):
+    """系统运维告警记录模型（支撑同源冷却去重与 30 天审计查询）"""
+
+    __tablename__ = "ops_alert_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    server_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("server_instances.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(16), default="warning", server_default=text("'warning'"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+    delivered_targets_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default=text("'[]'"), nullable=False
+    )
+    delivery_status: Mapped[str] = mapped_column(
+        String(32), default="sent", server_default=text("'sent'"), nullable=False
+    )
+    error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, nullable=False, index=True
+    )
+
+
+class UserNotificationPreference(Base):
+    """Telegram 用户可选通知偏好配置模型（必达通知不受本表开关限制）"""
+
+    __tablename__ = "user_notification_preferences"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("telegram_users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    allow_watch_time_milestone: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    allow_pre_expiry_reminder: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    allow_traffic_80_alert: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    allow_cycle_reset: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    allow_self_action_receipt: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
     )

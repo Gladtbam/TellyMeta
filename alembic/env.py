@@ -73,8 +73,9 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        render_as_batch=is_sqlite_url(DATABASE_URL),
-        include_object=include_object)
+        render_as_batch=is_sqlite_url(_target_url),
+        include_object=include_object,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
