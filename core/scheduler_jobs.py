@@ -842,6 +842,35 @@ async def cleanup_api_cache_task() -> None:
     await CacheService.cleanup_expired()
 
 
+@scheduled_job(
+    "cron",
+    hour=3,
+    minute=30,
+    id="cleanup_notification_records",
+    replace_existing=True,
+)
+async def cleanup_notification_records() -> None:
+    """每日定时清理超过 30 天的站内兜底收件箱记录与运维告警日志。"""
+    from services.notification_service import cleanup_expired_notification_records
+
+    async with async_session() as session:
+        try:
+            inbox_deleted, ops_deleted = await cleanup_expired_notification_records(
+                session
+            )
+            if inbox_deleted or ops_deleted:
+                logger.info(
+                    "已清理超过 30 天的历史通知记录: inbox={}, ops_alert={}",
+                    inbox_deleted,
+                    ops_deleted,
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.exception("清理过期通知记录失败: {}", exc)
+            await session.rollback()
+        finally:
+            await session.close()
+
+
 @scheduled_job("cron", hour=4, minute=0, id="auto_backup_db", replace_existing=True)
 async def auto_backup_db() -> None:
     """自动备份数据库"""

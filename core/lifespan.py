@@ -42,6 +42,7 @@ from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
+from services.notification_service import get_or_create_notification_runtime
 from services.score_service import MessageTrackingState
 from services.settings_service import SettingsServices
 from services.traffic_service import sync_traffic_listener
@@ -180,6 +181,10 @@ async def lifespan(app: FastAPI):
         finally:
             await session.close()
 
+    # 在 Telethon 就绪与配置缓存加载后启动异步通知投递后台队列
+    notification_runtime = get_or_create_notification_runtime(app)
+    notification_runtime.start()
+
     app.state.scheduler = AsyncIOScheduler(
         jobstores={
             "default": SQLAlchemyJobStore(url=get_sync_database_url(DATABASE_URL)),
@@ -254,6 +259,11 @@ async def lifespan(app: FastAPI):
         await client.close()
     for client in app.state.media_clients.values():
         await client.close()
+
+    # 先排空并停止异步通知队列，再断开 Telethon 与释放数据库引擎
+    notification_runtime = getattr(app.state, "notification_runtime", None)
+    if notification_runtime is not None:
+        await notification_runtime.stop(drain_timeout=10.0)
 
     if await app.state.telethon_client.is_connected():
         await app.state.telethon_client.disconnect()

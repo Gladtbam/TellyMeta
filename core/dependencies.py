@@ -69,6 +69,7 @@ def get_scheduler(request: Request) -> AsyncIOScheduler:
 
 
 def get_notification_service(request: Request) -> NotificationService:
+    """获取绑定共享异步通知运行时的 ``NotificationService`` 实例。"""
     return NotificationService(request.app)
 
 
