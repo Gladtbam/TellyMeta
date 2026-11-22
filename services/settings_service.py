@@ -43,6 +43,7 @@ from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.account_service import AccountService, format_traffic_release_summary
 from services.media_service import MediaService
+from services.notification_service import attach_external_client_hooks
 from services.traffic_service import (
     invalidate_traffic_server_cache,
     sync_traffic_listener,
@@ -341,6 +342,13 @@ class SettingsServices:
             self.qb_clients[server.id] = client
 
         if client:
+            attach_external_client_hooks(
+                client,
+                app=self.app,
+                server_id=server.id,
+                server_name=server.name,
+                server_type=str(server.server_type),
+            )
             await client.login()
 
     async def _remove_and_close_client(self, server: ServerInstance):
@@ -1160,6 +1168,15 @@ class SettingsServices:
                 new_client = self._build_qb_client(url, api_key, qb_username)
                 await new_client.login()
                 self.qb_clients[instance.id] = new_client
+
+            if new_client is not None:
+                attach_external_client_hooks(
+                    new_client,
+                    app=self.app,
+                    server_id=instance.id,
+                    server_name=name,
+                    server_type=str(server_type),
+                )
 
             invalidate_traffic_server_cache(self.app)
             return Result(

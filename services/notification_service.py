@@ -46,6 +46,8 @@ from repositories.notification_repo import (
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.notification_renderer import (
+    ExternalServerErrorPayload,
+    ExternalServerRecoveredPayload,
     NotificationPayload,
     NotificationRenderer,
     RenderedNotification,
@@ -1922,6 +1924,63 @@ class NotificationService:
         except (RPCError, ValueError, TypeError, OSError) as e:
             logger.error("无法向 {} 发送用户文本通知：{}", user_id, e)
             return False
+
+
+def attach_external_client_hooks(
+    client: Any,
+    *,
+    app: FastAPI | Any,
+    server_id: int,
+    server_name: str,
+    server_type: str,
+) -> Any:
+    """为外部媒体/Arr/qB 客户端统一挂载异常冷却告警与恢复自愈通知钩子。
+
+    Args:
+        client: 继承自 ``BaseClient`` 的外部 HTTP 客户端实例。
+        app: FastAPI 应用实例或携带 ``state`` 的替身对象。
+        server_id: 数据库服务器实例 ID。
+        server_name: 服务器显示名称。
+        server_type: 服务器类型字符串（如 ``emby`` / ``qbittorrent``）。
+
+    Returns:
+        已绑定钩子的原始 ``client`` 对象。
+    """
+    set_hooks = getattr(client, "set_request_hooks", None)
+    if set_hooks is None:
+        return client
+
+    source_key = f"client:{server_type}:{server_id}"
+
+    async def _on_error(
+        operation: str, status_code: int | None, error_message: str
+    ) -> None:
+        await NotificationService(app).emit(
+            ExternalServerErrorPayload(
+                server_name=server_name,
+                server_type=server_type,
+                operation=operation,
+                status_code=status_code,
+                error_message=error_message,
+            ),
+            server_id=server_id,
+            source_key=source_key,
+        )
+
+    async def _on_recovered(operation: str) -> None:
+        await NotificationService(app).emit(
+            ExternalServerRecoveredPayload(
+                server_name=server_name,
+                server_type=server_type,
+                operation=operation,
+                detail="外部服务通信已恢复正常",
+            ),
+            server_id=server_id,
+            source_key=source_key,
+        )
+
+    set_hooks(on_request_error=_on_error, on_request_recovered=_on_recovered)
+    return client
 
 
 async def cleanup_expired_notification_records(

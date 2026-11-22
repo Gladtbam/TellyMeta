@@ -1,6 +1,7 @@
 import re
+import sys
 from datetime import datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
@@ -11,6 +12,48 @@ from core.config import genre_mapping
 from models.protocols import BaseItem
 from models.tmdb import TmdbEpisode
 from services.media_service import MediaService
+from services.notification_renderer import TranslatorErrorPayload
+from services.notification_service import NotificationService
+
+
+def _resolve_active_app() -> Any | None:
+    """安全读取已加载的全局 FastAPI 应用实例，未初始化时返回 None。"""
+    main_mod = sys.modules.get("main")
+    if main_mod is None:
+        return None
+    app = getattr(main_mod, "app", None)
+    if app is None or getattr(app, "state", None) is None:
+        return None
+    return app
+
+
+async def _emit_translator_error(
+    app: Any,
+    *,
+    server_id: int,
+    server_name: str,
+    item_id: str,
+    item_name: str,
+    stage: str,
+    error_message: str,
+) -> None:
+    """通过统一通知管线发射 AI 翻译或媒体写回运维告警（异常时安全降级）。"""
+    if app is None or getattr(app, "state", None) is None:
+        return
+    try:
+        await NotificationService(app).emit(
+            TranslatorErrorPayload(
+                server_name=server_name,
+                item_id=item_id,
+                item_name=item_name,
+                stage=stage,
+                error_message=error_message,
+            ),
+            server_id=server_id,
+            source_key=f"translator:{server_id}:{stage}",
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("发射翻译告警通知失败: {}", exc)
 
 
 async def _get_tmdb_episode_info(
@@ -73,11 +116,16 @@ async def _get_tmdb_episode_info(
 
 
 async def translate_media_item(server_id: int, item_id: str) -> None:
-    """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段。"""
-    from main import app
+    """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段，并在异常时发射运维告警。"""
+    app = _resolve_active_app()
+    if app is None:
+        logger.warning(
+            "应用尚未初始化，跳过翻译任务: server_id={}, item_id={}", server_id, item_id
+        )
+        return
 
-    tmdb_client: TmdbClient | None = app.state.tmdb_client
-    media_clients: dict[int, MediaService] = app.state.media_clients
+    tmdb_client: TmdbClient | None = getattr(app.state, "tmdb_client", None)
+    media_clients: dict[int, MediaService] = getattr(app.state, "media_clients", {})
     ai_client: AIClientWarper | None = getattr(app.state, "ai_client", None)
     if not ai_client:
         logger.info("LLM 翻译未启用或未配置，跳过翻译任务: {}", item_id)
@@ -89,54 +137,83 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
             "服务器 [{}] 客户端未运行或不存在，跳过翻译任务: {}", server_id, item_id
         )
         return
+    server_name = str(getattr(media_client, "server_name", "") or f"Server-{server_id}")
     is_translated = False
 
-    item_info: BaseItem | None = await media_client.get_item_info(item_id)
+    try:
+        item_info: BaseItem | None = await media_client.get_item_info(item_id)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error(
+            "获取待翻译媒体项失败: server={}, item_id={}, err={}",
+            server_name,
+            item_id,
+            exc,
+        )
+        await _emit_translator_error(
+            app,
+            server_id=server_id,
+            server_name=server_name,
+            item_id=item_id,
+            item_name="",
+            stage="fetch_item",
+            error_message=str(exc) or type(exc).__name__,
+        )
+        return
     if item_info is None:
         return
 
     item = cast(BaseItem, item_info)
+    item_display_name = str(item.Name or "")
 
     # 尝试从 TMDB 获取对应的信息
     tmdb_name: str | None = None
     tmdb_overview: str | None = None
 
-    if item.Type == "Episode":
-        if not tmdb_client:
-            tmdb_ep = None
+    try:
+        if item.Type == "Episode":
+            if not tmdb_client:
+                tmdb_ep = None
+            else:
+                tmdb_ep = await _get_tmdb_episode_info(item, tmdb_client, media_client)
+            if tmdb_ep:
+                tmdb_overview = tmdb_ep.overview
+                # 过滤无效标题
+                if tmdb_ep.name and not re.match(
+                    r"^(第[\d ]+集|Episode\s*[\d ]+)$", tmdb_ep.name, re.IGNORECASE
+                ):
+                    tmdb_name = tmdb_ep.name
+
+        # 电影或剧集处理 (Movie / Series) # Radarr 能够提供足够的中文元数据，因此跳过Movie
         else:
-            tmdb_ep = await _get_tmdb_episode_info(item, tmdb_client, media_client)
-        if tmdb_ep:
-            tmdb_overview = tmdb_ep.overview
-            # 过滤无效标题
-            if tmdb_ep.name and not re.match(
-                r"^(第[\d ]+集|Episode\s*[\d ]+)$", tmdb_ep.name, re.IGNORECASE
-            ):
-                tmdb_name = tmdb_ep.name
+            provider_ids = item.ProviderIds or {}
+            imdb_id = provider_ids.get("Imdb") or provider_ids.get("IMDB")
+            if imdb_id and tmdb_client:
+                tmdb_find_res = await tmdb_client.find_info_by_external_id(
+                    "imdb_id", imdb_id
+                )
+                if tmdb_find_res:
+                    res = None
+                    if item.Type == "Series" and tmdb_find_res.tv_results:
+                        res = tmdb_find_res.tv_results[0]
+                        tmdb_name = res.name
 
-    # 电影或剧集处理 (Movie / Series) # Radarr 能够提供足够的中文元数据，因此跳过Movie
-    else:
-        provider_ids = item.ProviderIds or {}
-        imdb_id = provider_ids.get("Imdb") or provider_ids.get("IMDB")
-        if imdb_id and tmdb_client:
-            tmdb_find_res = await tmdb_client.find_info_by_external_id(
-                "imdb_id", imdb_id
-            )
-            if tmdb_find_res:
-                res = None
-                # if item.Type == 'Movie' and tmdb_find_res.movie_results:
-                #     res = tmdb_find_res.movie_results[0]
-                #     tmdb_name = res.title
-                if item.Type == "Series" and tmdb_find_res.tv_results:
-                    res = tmdb_find_res.tv_results[0]
-                    tmdb_name = res.name
-
-                if res and res.overview:
-                    tmdb_overview = res.overview
+                    if res and res.overview:
+                        tmdb_overview = res.overview
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("翻译前查询 TMDB 元数据失败，将降级仅尝试 AI 翻译: {}", exc)
+        await _emit_translator_error(
+            app,
+            server_id=server_id,
+            server_name=server_name,
+            item_id=item_id,
+            item_name=item_display_name,
+            stage="tmdb_lookup",
+            error_message=str(exc) or type(exc).__name__,
+        )
 
     fields_to_translate_item = {"Name": item.Name, "Overview": item.Overview}
 
-    updates = {}
+    updates: dict[str, Any] = {}
 
     for field, text in fields_to_translate_item.items():
         # 检查文本是否为空或包含中文字符
@@ -161,7 +238,33 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
         source_text = text[:-6] if text.endswith("（AI翻译）") else text
 
         if not translated_text:
-            translated_text = await ai_client.translate(field, source_text)
+            try:
+                translated_text = await ai_client.translate(field, source_text)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error("调用 AI 翻译异常: item_id={}, err={}", item_id, exc)
+                await _emit_translator_error(
+                    app,
+                    server_id=server_id,
+                    server_name=server_name,
+                    item_id=item_id,
+                    item_name=item_display_name,
+                    stage="translate",
+                    error_message=str(exc) or type(exc).__name__,
+                )
+                return
+
+            ai_last_err = getattr(ai_client, "last_error", None)
+            if ai_last_err is not None:
+                await _emit_translator_error(
+                    app,
+                    server_id=server_id,
+                    server_name=server_name,
+                    item_id=item_id,
+                    item_name=item_display_name,
+                    stage="translate",
+                    error_message=str(ai_last_err) or type(ai_last_err).__name__,
+                )
+                return
 
         if translated_text:
             updates[field] = f"{translated_text}（AI翻译）"
@@ -179,10 +282,26 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
 
     if is_translated:
         logger.info("[{}]正在翻译项目 {}：{}", server_id, item_id, item.Name)
-        await media_client.post_item_info(item_id, item)
-        await add_translate_media_item(server_id, item_id, days=8)
-
-        logger.info("[{}]计划在 8 天后重试项目 {}", server_id, item_id)
+        try:
+            await media_client.post_item_info(item_id, item)
+            await add_translate_media_item(server_id, item_id, days=8)
+            logger.info("[{}]计划在 8 天后重试项目 {}", server_id, item_id)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error(
+                "回写翻译后元数据失败: server={}, item_id={}, err={}",
+                server_name,
+                item_id,
+                exc,
+            )
+            await _emit_translator_error(
+                app,
+                server_id=server_id,
+                server_name=server_name,
+                item_id=item_id,
+                item_name=item_display_name,
+                stage="post_item_info",
+                error_message=str(exc) or type(exc).__name__,
+            )
     else:
         logger.info("[{}]无需翻译ID: {}", server_id, item_id)
 
@@ -190,13 +309,17 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
 async def add_translate_media_item(server_id: int, item_id: str, days: int) -> None:
     """添加媒体项翻译任务到调度器。
     Args:
-        scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
         server_id (int): 服务器的唯一标识符。
         item_id (str): 媒体项的唯一标识符。
+        days (int): 延迟天数。
     """
-    from main import app
-
-    scheduler: AsyncIOScheduler = app.state.scheduler
+    app = _resolve_active_app()
+    if app is None:
+        return
+    scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)
+    if scheduler is None:
+        logger.debug("调度器未初始化，跳过后续翻译重试调度: item_id={}", item_id)
+        return
 
     scheduler.add_job(
         translate_media_item,
@@ -212,12 +335,15 @@ async def add_translate_media_item(server_id: int, item_id: str, days: int) -> N
 async def cancel_translate_media_item(server_id: int, item_id: str) -> None:
     """取消已计划的翻译任务。
     Args:
-        scheduler (AsyncIOScheduler): 任务调度器，用于管理计划的任务。
+        server_id (int): 服务器 ID。
         item_id (str): 媒体项的唯一标识符。
     """
-    from main import app
-
-    scheduler: AsyncIOScheduler = app.state.scheduler
+    app = _resolve_active_app()
+    if app is None:
+        return
+    scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)
+    if scheduler is None:
+        return
 
     job_id = f"translate_media_item_{server_id}_{item_id}"
     job = scheduler.get_job(job_id)

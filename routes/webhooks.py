@@ -11,7 +11,6 @@ from httpx2 import HTTPError
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import errors
 
 from clients.ai_client import AIClientWarper
 from clients.qb_client import QbittorrentClient
@@ -34,7 +33,6 @@ from core.dependencies import (
     get_tvdb_client,
 )
 from core.task_utils import create_background_task
-from core.telegram_message import TelegramMessage
 from models.emby_webhook import (
     EmbyPayload,
     LibraryDeletedEvent,
@@ -99,7 +97,9 @@ from services.notification_renderer import (
     MediaSystemTestPayload,
     MediaTaskFailedPayload,
     MediaUserLockedOutPayload,
+    MkvPathUnmappedPayload,
     NotificationPayload,
+    QbShareLimitFailedPayload,
     RadarrDeletePayload,
     RadarrDownloadPayload,
     RadarrGrabPayload,
@@ -573,26 +573,133 @@ def _resolve_mkv_task_target(
     return True, Path(local_path), None
 
 
-async def _schedule_qb_share_limit(
+async def _emit_mkv_unmapped_alert(
+    *,
+    notify_service: NotificationService,
+    server_id: int | None,
+    server_name: str,
+    remote_path: str,
+    diagnostic: str,
+    session: AsyncSession | None = None,
+) -> None:
+    """发射 MKV 路径未映射跳过处理运维告警（兼容测试替身）。"""
+    try:
+        await _emit_notification(
+            notify_service,
+            MkvPathUnmappedPayload(
+                server_name=server_name,
+                remote_path=remote_path,
+                diagnostic=diagnostic,
+            ),
+            server_id=server_id,
+            source_key=f"mkv_unmapped:{server_id}:{remote_path}",
+            session=session,
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("发射 MKV 路径映射告警失败: {}", exc)
+
+
+async def _run_qb_share_limit(
+    *,
+    qb_client: QbittorrentClient,
+    torrent_hash: str,
+    seeding_time_limit: int,
+    arr_server_id: int,
+    arr_server_name: str,
+    qb_server_id: int,
+    qb_server_name: str,
+    notify_service: NotificationService | None,
+) -> None:
+    """后台设置 qBittorrent 做种分享限制，失败时记录日志并向运维告警通道发射异常事件。"""
+    try:
+        await qb_client.torrents_set_share_limits(
+            torrent_hash=torrent_hash,
+            seeding_time_limit=seeding_time_limit,
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error(
+            "设置 qBittorrent 做种限制失败: arr={}, qb={}, hash={}, err={}",
+            arr_server_name,
+            qb_server_name,
+            torrent_hash,
+            exc,
+        )
+        if notify_service is None:
+            return
+        try:
+            # 后台任务独立运行于请求会话之外，不传入已结束的 request session
+            await _emit_notification(
+                notify_service,
+                QbShareLimitFailedPayload(
+                    server_name=arr_server_name,
+                    qb_server_name=qb_server_name,
+                    download_id=torrent_hash,
+                    error_message=str(exc) or type(exc).__name__,
+                ),
+                server_id=arr_server_id,
+                source_key=f"qb_share_limit:{qb_server_id}",
+            )
+        except Exception as notify_exc:  # pylint: disable=broad-exception-caught
+            logger.warning("发射 qB 做种限制失败告警异常: {}", notify_exc)
+
+
+async def _finalize_arr_download_ops(
+    *,
     server_instance: ServerInstance,
+    server_name: str,
     download_id: str | None,
     qb_clients: dict[int, QbittorrentClient],
+    notify_service: NotificationService,
     session: AsyncSession,
+    unmapped_remote_path: str | None,
+    unmapped_diag: str | None,
 ) -> None:
-    """根据 Arr 绑定的 qBittorrent 服务器配置异步设置做种时长限制。"""
-    if not download_id or not server_instance.qb_server_id:
-        return
-    qb_client = qb_clients.get(server_instance.qb_server_id)
-    if not qb_client:
-        return
-    qb_server = await ServerRepository(session).get_by_id(server_instance.qb_server_id)
-    seeding_limit = qb_server.qb_torrent_limit if qb_server else 43200
-    create_background_task(
-        qb_client.torrents_set_share_limits(
-            torrent_hash=download_id,
-            seeding_time_limit=seeding_limit,
+    """完成 Arr 下载事件的 qB 参数查询、MKV 未映射告警与只读事务收口后再拉起后台 qB 任务。"""
+    qb_task_coro = None
+    if download_id and server_instance.qb_server_id:
+        qb_client = qb_clients.get(server_instance.qb_server_id)
+        if qb_client:
+            qb_server = await ServerRepository(session).get_by_id(
+                server_instance.qb_server_id
+            )
+            seeding_limit = qb_server.qb_torrent_limit if qb_server else 43200
+            qb_server_name = (
+                qb_server.name if qb_server else f"qB-{server_instance.qb_server_id}"
+            )
+            arr_server_name = (
+                getattr(server_instance, "name", "") or f"Arr-{server_instance.id}"
+            )
+            qb_task_coro = _run_qb_share_limit(
+                qb_client=qb_client,
+                torrent_hash=download_id,
+                seeding_time_limit=seeding_limit,
+                arr_server_id=int(server_instance.id),
+                arr_server_name=arr_server_name,
+                qb_server_id=int(server_instance.qb_server_id),
+                qb_server_name=qb_server_name,
+                notify_service=notify_service,
+            )
+
+    if unmapped_diag and unmapped_remote_path is not None:
+        await _emit_mkv_unmapped_alert(
+            notify_service=notify_service,
+            server_id=getattr(server_instance, "id", None),
+            server_name=server_name,
+            remote_path=unmapped_remote_path,
+            diagnostic=unmapped_diag,
+            session=session,
         )
-    )
+
+    # 在拉起后台协程与请求收尾前关闭只读事务快照，避免 session.close() 回滚与后台日志写入竞争内存连接池
+    if (
+        isinstance(session, AsyncSession)
+        and session.in_transaction()
+        and not (session.new or session.dirty or session.deleted)
+    ):
+        await session.rollback()
+
+    if qb_task_coro is not None:
+        create_background_task(qb_task_coro)
 
 
 @router.post("/webhook/sonarr", status_code=202)
@@ -633,6 +740,8 @@ async def sonarr_webhook(
             session=session,
         )
     elif isinstance(payload, SonarrWebhookDownloadPayload):
+        unmapped_remote_path: str | None = None
+        unmapped_diag: str | None = None
         if payload.episodeFile and payload.episodeFile.path:
             remote_path = payload.episodeFile.path
             should_mkv, mkv_local_path, mkv_diag = _resolve_mkv_task_target(
@@ -648,35 +757,25 @@ async def sonarr_webhook(
                 await task_queue.put((mkv_local_path, client.notify_topic_id))
             elif mkv_diag:
                 logger.warning(mkv_diag)
-                if client.notify_topic_id:
-                    try:
-                        await notify_service.client.send_message(
-                            chat_id=(
-                                client.notify_topic_id
-                                if client.notify_topic_id < 0
-                                else settings.telegram_chat_id
-                            ),
-                            message=TelegramMessage.render_markdown(
-                                t"⚠️ **MKV 处理跳过**\n\n{mkv_diag}"
-                            ),
-                            reply_to=(
-                                client.notify_topic_id
-                                if client.notify_topic_id > 0
-                                else None
-                            ),
-                        )
-                    except (errors.RPCError, ValueError) as e:
-                        logger.warning("发送 MKV 路径映射告警失败: {}", e)
-
-        await _schedule_qb_share_limit(
-            server_instance, payload.downloadId, qb_clients, session
-        )
+                unmapped_remote_path = remote_path
+                unmapped_diag = mkv_diag
 
         await _emit_notification(
             notify_service,
             SonarrDownloadPayload.from_webhook(payload, server_name=client.server_name),
             server_id=server_instance.id,
             session=session,
+        )
+
+        await _finalize_arr_download_ops(
+            server_instance=server_instance,
+            server_name=client.server_name,
+            download_id=payload.downloadId,
+            qb_clients=qb_clients,
+            notify_service=notify_service,
+            session=session,
+            unmapped_remote_path=unmapped_remote_path,
+            unmapped_diag=unmapped_diag,
         )
     elif isinstance(payload, SonarrWebhookGrabPayload):
         await _emit_notification(
@@ -734,6 +833,8 @@ async def radarrarr_webhook(
     )
 
     if isinstance(payload, RadarrWebhookDownloadPayload):
+        unmapped_remote_path: str | None = None
+        unmapped_diag: str | None = None
         if payload.movieFile and payload.movieFile.path:
             remote_path = payload.movieFile.path
             should_mkv, mkv_local_path, mkv_diag = _resolve_mkv_task_target(
@@ -745,25 +846,8 @@ async def radarrarr_webhook(
                 await task_queue.put((mkv_local_path, client.notify_topic_id))
             elif mkv_diag:
                 logger.warning(mkv_diag)
-                if client.notify_topic_id:
-                    try:
-                        await notify_service.client.send_message(
-                            chat_id=(
-                                client.notify_topic_id
-                                if client.notify_topic_id < 0
-                                else settings.telegram_chat_id
-                            ),
-                            message=TelegramMessage.render_markdown(
-                                t"⚠️ **MKV 处理跳过**\n\n{mkv_diag}"
-                            ),
-                            reply_to=(
-                                client.notify_topic_id
-                                if client.notify_topic_id > 0
-                                else None
-                            ),
-                        )
-                    except (errors.RPCError, ValueError) as e:
-                        logger.warning("发送 MKV 路径映射告警失败: {}", e)
+                unmapped_remote_path = remote_path
+                unmapped_diag = mkv_diag
 
         if getattr(server_instance, "allow_nfo", True) and (
             local_movie_file := client.to_local_path(payload.movieFile.path)
@@ -776,15 +860,22 @@ async def radarrarr_webhook(
                 )
             )
 
-        await _schedule_qb_share_limit(
-            server_instance, payload.downloadId, qb_clients, session
-        )
-
         await _emit_notification(
             notify_service,
             _build_radarr_download_payload(payload, server_name=client.server_name),
             server_id=server_instance.id,
             session=session,
+        )
+
+        await _finalize_arr_download_ops(
+            server_instance=server_instance,
+            server_name=client.server_name,
+            download_id=payload.downloadId,
+            qb_clients=qb_clients,
+            notify_service=notify_service,
+            session=session,
+            unmapped_remote_path=unmapped_remote_path,
+            unmapped_diag=unmapped_diag,
         )
     elif isinstance(payload, RadarrWebhookAddedPayload):
         if local_folder_path := client.to_local_path(payload.movie.folderPath):

@@ -1,14 +1,13 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NoReturn
 
 from loguru import logger
 
-from core.config import get_settings
-from core.telegram_message import TelegramMessage
+from services.notification_renderer import MkvProcessFailedPayload
+from services.notification_service import NotificationService
 from workers.mkv_utils import mkv_merge
-
-settings = get_settings()
 
 
 async def _notify_admin_mkv_failure(
@@ -16,33 +15,35 @@ async def _notify_admin_mkv_failure(
     episode_path: Path,
     notify_topic_id: int | None,
     error_message: str,
+    *,
+    server_name: str = "",
 ) -> None:
-    """向管理员话题发送 MKV 处理失败的可诊断告警"""
-    telethon_client = getattr(app_state, "telethon_client", None) if app_state else None
-    if not telethon_client:
+    """通过统一通知管线向运维告警通道发射 MKV 处理失败事件。
+
+    Args:
+        app_state: FastAPI 应用 ``state`` 对象或包装应用实例。
+        episode_path: 触发失败的本地 MKV 文件路径。
+        notify_topic_id: 兼容保留的旧版话题参数（统一管线改由 ``ops_alert`` 路由解析）。
+        error_message: 失败诊断详情。
+        server_name: 可选来源服务器名称。
+    """
+    _ = notify_topic_id
+    if app_state is None:
         return
-
-    target_chat = settings.telegram_chat_id
-    target_reply = None
-    if notify_topic_id and notify_topic_id < 0:
-        target_chat = notify_topic_id
-    elif notify_topic_id and notify_topic_id > 0:
-        target_chat = settings.telegram_chat_id
-        target_reply = notify_topic_id
-
-    text = TelegramMessage.render_markdown(t"""\
-        ⚠️ **MKV 自动清理失败（原文件保持完整）**
-
-        **文件路径**: `{episode_path}`
-        **诊断信息**: {error_message}""")
+    app_wrapper = (
+        app_state if hasattr(app_state, "state") else SimpleNamespace(state=app_state)
+    )
     try:
-        await telethon_client.send_message(
-            chat_id=target_chat,
-            message=text,
-            reply_to=target_reply,
+        await NotificationService(app_wrapper).emit(
+            MkvProcessFailedPayload(
+                file_path=str(episode_path),
+                error_message=error_message,
+                server_name=server_name,
+            ),
+            source_key=f"mkv:{episode_path}",
         )
-    except Exception as e:
-        logger.warning("发送 MKV 失败告警给管理员时出错: {}", e)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("发射 MKV 失败告警通知时出错: {}", e)
 
 
 async def mkv_merge_task(task_queue: asyncio.Queue, app_state: Any = None) -> NoReturn:

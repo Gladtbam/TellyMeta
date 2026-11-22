@@ -61,6 +61,7 @@ class AIClientWarper:
         )
         self.model = model
         self.temperature = temperature
+        self.last_error: OpenAIError | None = None
         self._limiter = AIRateLimiter(
             rpm=rpm, rpd=rpd, tpm=tpm, concurrency=concurrency
         )
@@ -74,6 +75,7 @@ class AIClientWarper:
         Returns:
             str: 翻译后的文本，如果翻译失败则返回原文本。
         """
+        self.last_error = None
         async with self._limiter.acquire(tokens=len(text)):
             prompt = textwrap.dedent(f"""
                 你是一个资深的日本动画（ACG）本地化翻译专家。
@@ -114,6 +116,7 @@ class AIClientWarper:
                 logger.warning("翻译未返回有效的中文文本：{}", response_text)
                 return text
             except OpenAIError as e:
+                self.last_error = e
                 logger.error("AI 翻译期间出错：{}", e)
                 return text
 

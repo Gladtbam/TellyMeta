@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -9,15 +10,24 @@ from typing import TYPE_CHECKING, Any
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.triggers.date import DateTrigger
 from loguru import logger
-from telethon import errors
 
 from core.config import get_settings
 from core.database import async_session, backup_database
 from core.telegram_manager import TelethonClientWarper
-from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
+from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
+from services.notification_renderer import (
+    CleanupInactiveSummaryPayload,
+    DbBackupFailedPayload,
+    LifecycleRetryAlertPayload,
+    NotificationPayload,
+    NsfwRevokeRetryAlertPayload,
+    OrphanSessionsSummaryPayload,
+    StartupCalibrationSummaryPayload,
+)
+from services.notification_service import NotificationService
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -267,6 +277,42 @@ def schedule_account_lifecycle_jobs(
     # 新的 pre_expiry_check，避免重复发送临近到期私聊轰炸；到期保活抢救仍由 expiry_ban 兜底。
 
 
+def _resolve_active_app() -> Any | None:
+    """安全读取已初始化的全局 FastAPI 应用实例，未初始化时返回 None。"""
+    main_mod = sys.modules.get("main")
+    if main_mod is None:
+        return None
+    app = getattr(main_mod, "app", None)
+    if app is None or getattr(app, "state", None) is None:
+        return None
+    return app
+
+
+async def _emit_ops_notification(
+    app: Any | None,
+    payload: NotificationPayload,
+    *,
+    server_id: int | None = None,
+    source_key: str | None = None,
+    session: Any | None = None,
+) -> None:
+    """安全通过统一通知管线发射运维告警或摘要（应用未就绪或发送异常时不中断定时任务）。"""
+    target_app = app if app is not None else _resolve_active_app()
+    if target_app is None or getattr(target_app, "state", None) is None:
+        return
+    try:
+        await NotificationService(target_app).emit(
+            payload,
+            server_id=server_id,
+            source_key=source_key,
+            session=session,
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning(
+            "发射定时任务通知失败: event={}, err={}", payload.event.value, exc
+        )
+
+
 def _schedule_transient_retry(
     scheduler: AsyncIOScheduler | Any | None,
     func: Callable[[int, int], Any],
@@ -328,6 +374,26 @@ async def _execute_account_lifecycle_job(
                     retry_job_id,
                     user_id,
                     server_id,
+                )
+                srv = await account_service.server_repo.get_by_id(server_id)
+                mu = await account_service.media_repo.get_by_id(user_id, server_id)
+                server_name = srv.name if srv is not None else f"Server-{server_id}"
+                media_name = mu.media_name if mu is not None else str(user_id)
+                await _emit_ops_notification(
+                    app,
+                    LifecycleRetryAlertPayload(
+                        server_name=server_name,
+                        media_name=media_name,
+                        user_id=user_id,
+                        job_kind=action_label,
+                        retry_count=1,
+                        error_message=(
+                            f"外部媒体服务器暂不可用，已安排延迟重试（任务 ID: {retry_job_id}）"
+                        ),
+                    ),
+                    server_id=server_id,
+                    source_key=f"lifecycle_retry:{server_id}:{user_id}:{action_label}",
+                    session=session,
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception(
@@ -667,6 +733,11 @@ async def cleanup_orphan_playback_sessions() -> None:
             )
             if closed > 0:
                 logger.info("兜底巡检清理孤立挂起播放会话数: {}", closed)
+                await _emit_ops_notification(
+                    app,
+                    OrphanSessionsSummaryPayload(closed_count=closed),
+                    session=session,
+                )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("执行孤立播放会话清理任务时出错: {}", exc)
             await session.rollback()
@@ -691,6 +762,8 @@ async def retry_pending_nsfw_revokes() -> None:
     async with async_session() as session:
         try:
             account_service = AccountService(app, session)
+            server_repo = ServerRepository(session)
+            failed_alerts: list[tuple[int, str, int, int]] = []
             for server_id, media_ids in list(pending.items()):
                 if not media_ids:
                     pending.pop(server_id, None)
@@ -704,6 +777,29 @@ async def retry_pending_nsfw_revokes() -> None:
                     revoked,
                     failed,
                 )
+                if failed > 0:
+                    srv = await server_repo.get_by_id(server_id)
+                    server_name = srv.name if srv is not None else f"Server-{server_id}"
+                    remaining_count = len(pending.get(server_id) or media_ids)
+                    failed_alerts.append(
+                        (server_id, server_name, remaining_count, failed)
+                    )
+
+            for server_id, server_name, remaining_count, failed in failed_alerts:
+                await _emit_ops_notification(
+                    app,
+                    NsfwRevokeRetryAlertPayload(
+                        server_name=server_name,
+                        pending_count=remaining_count,
+                        failed_count=failed,
+                        error_message=(
+                            f"仍有 {failed} 个媒体账号 NSFW 撤权失败，将在后续周期继续重试"
+                        ),
+                    ),
+                    server_id=server_id,
+                    source_key=f"nsfw_retry:{server_id}",
+                    session=session,
+                )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("重试 NSFW 撤权任务时出错: {}", e)
             await session.rollback()
@@ -715,10 +811,10 @@ async def retry_pending_nsfw_revokes() -> None:
 async def settle_scores() -> None:
     """定时结算用户群聊发言积分，受总开关与群聊发言积分子开关共同控制。
 
-    副作用：放行时按队列批量发放当日发言积分并广播榜单；关闭时清空待结算队列且不发送结算报告。
+    副作用：放行时按队列批量发放当日发言积分并通过统一通知管线播报榜单；关闭时清空待结算队列且静默。
     """
     from main import app  # 避免循环导入
-    from services.score_service import ScoreService
+    from services.score_service import ScoreService, build_score_settlement_payload
 
     async with async_session() as session:
         try:
@@ -731,58 +827,20 @@ async def settle_scores() -> None:
                 return
 
             result = await score_service.settle_and_clear_scores()
-            client: TelethonClientWarper = app.state.telethon_client
-
-            if result is None:
-                await client.send_message(
-                    settings.telegram_chat_id,
-                    "📊 **每日积分结算报告**\n\n今日无活跃积分变动。",
-                )
-                return
-
-            # 构建今日榜单 (按 increment 倒序)
-            sorted_changes = sorted(
-                result.user_score_changes.items(), key=lambda x: x[1], reverse=True
-            )[:10]
-
-            daily_lines = ["📈 **今日积分飙升榜 (Top 10)**"]
-            for idx, (user_id, score_change) in enumerate(sorted_changes, 1):
-                user_name = await client.get_user_name(user_id)
-                medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"{idx}.")
-                daily_lines.append(
-                    TelegramMessage.render_markdown(
-                        t"{medal} [{user_name}](tg://user?id={user_id}) — `+{score_change}`"
-                    )
-                )
-
-            # 构建总榜单
-            top_users = await score_service.telegram_repo.get_top_users(10)
-
-            total_lines = ["🏆 **积分总榜 (Top 10)**"]
-            for idx, user in enumerate(top_users, 1):
-                try:
-                    user_name = await client.get_user_name(user.id)
-                    medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(idx, f"{idx}.")
-                    total_lines.append(
-                        TelegramMessage.render_markdown(
-                            t"{medal} [{user_name}](tg://user?id={user.id}) — `{user.score}`"
-                        )
-                    )
-                except (errors.RPCError, ValueError) as e:
-                    logger.warning("获取{}的名称失败: {}", user.id, e)
-                    total_lines.append(f"{idx}. `Unknown` — `{user.score}`")
-
-            # 合并消息
-            msg = TelegramMessage.render_markdown(t"""\
-                📊 **每日积分结算报告**
-
-                今日共发放 **{result.total_score_settled}** 非签到活跃积分。
-
-                """)
-            msg += "\n".join(daily_lines) + "\n\n"
-            msg += "\n".join(total_lines)
-
-            await client.send_message(settings.telegram_chat_id, msg)
+            client: TelethonClientWarper | None = getattr(
+                app.state, "telethon_client", None
+            )
+            payload = await build_score_settlement_payload(
+                score_service,
+                client,
+                result,
+                is_manual=False,
+            )
+            await NotificationService(app).emit(
+                payload,
+                source_key="score_settlement:daily",
+                session=session,
+            )
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("结算用户积分时出错: {}", e)
@@ -815,18 +873,39 @@ async def cleanup_inactive_users() -> None:
             users = await telegram_repo.get_all_users()
             logger.info("开始检查非群组成员清理任务，当前总用户数: {}", len(users))
 
+            checked_count = 0
+            cleaned_users: list[str] = []
+            failed_users: list[str] = []
+
             for user in users:
                 if user.is_admin:
                     continue
+                checked_count += 1
+                uid = int(user.id)
 
-                participant = await client.get_participant(user.id)
+                participant = await client.get_participant(uid)
                 if not participant:
-                    logger.info("用户 {} 不在群组中，开始清理...", user.id)
-                    result = await user_service.delete_account(user.id, "both")
+                    logger.info("用户 {} 不在群组中，开始清理...", uid)
+                    result = await user_service.delete_account(uid, "both")
                     if result.success:
-                        logger.info("用户 {} 清理成功: {}", user.id, result.message)
+                        logger.info("用户 {} 清理成功: {}", uid, result.message)
+                        cleaned_users.append(str(uid))
                     else:
-                        logger.error("用户 {} 清理失败: {}", user.id, result.message)
+                        logger.error("用户 {} 清理失败: {}", uid, result.message)
+                        failed_users.append(f"{uid}: {result.message}")
+
+            if cleaned_users:
+                await _emit_ops_notification(
+                    app,
+                    CleanupInactiveSummaryPayload(
+                        checked_count=checked_count,
+                        cleaned_count=len(cleaned_users),
+                        failed_count=len(failed_users),
+                        cleaned_users=cleaned_users,
+                        failed_users=failed_users,
+                    ),
+                    session=session,
+                )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.exception("清理非群组成员任务出错: {}", e)
             await session.rollback()
@@ -873,8 +952,31 @@ async def cleanup_notification_records() -> None:
 
 @scheduled_job("cron", hour=4, minute=0, id="auto_backup_db", replace_existing=True)
 async def auto_backup_db() -> None:
-    """自动备份数据库"""
-    await backup_database()
+    """自动备份数据库，并在 SQLite 备份真实失败时发射运维告警"""
+    try:
+        result = await backup_database()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.exception("自动备份数据库发生未预期异常: {}", exc)
+        await _emit_ops_notification(
+            None,
+            DbBackupFailedPayload(
+                backup_path="",
+                error_message=str(exc) or type(exc).__name__,
+            ),
+            source_key="db_backup_failed",
+        )
+        return
+
+    if result is not None and getattr(result, "status", None) == "failed":
+        await _emit_ops_notification(
+            None,
+            DbBackupFailedPayload(
+                backup_path=str(getattr(result, "backup_path", "")),
+                error_message=str(getattr(result, "error_message", ""))
+                or "数据库备份失败",
+            ),
+            source_key="db_backup_failed",
+        )
 
 
 @scheduled_job(
@@ -920,6 +1022,38 @@ async def recover_and_calibrate_account_lifecycles(app: FastAPI) -> dict[str, in
             account_service = AccountService(app, session)
             summary = await account_service.calibrate_account_lifecycles()
             logger.info("媒体账号生命周期调度校准完成: {}", summary)
+            if any(
+                summary.get(k, 0) > 0
+                for k in ("resets", "unsuspended", "auto_renewed", "banned", "deleted")
+            ):
+                details: list[str] = []
+                if summary.get("auto_renewed", 0) > 0:
+                    details.append(f"补跑到期自动续期: {summary['auto_renewed']}")
+                if summary.get("unsuspended", 0) > 0:
+                    details.append(f"补跑解除超流停用: {summary['unsuspended']}")
+                if summary.get("orphan_jobs_removed", 0) > 0:
+                    details.append(
+                        f"清理孤立调度任务: {summary['orphan_jobs_removed']}"
+                    )
+                total_accounts = summary.get("calibrated", 0) + summary.get(
+                    "deleted", 0
+                )
+                await _emit_ops_notification(
+                    app,
+                    StartupCalibrationSummaryPayload(
+                        total_accounts=total_accounts,
+                        backfilled_count=(
+                            summary.get("backfilled_anchors", 0)
+                            + summary.get("backfilled_delete_at", 0)
+                        ),
+                        reset_count=summary.get("resets", 0),
+                        banned_count=summary.get("banned", 0),
+                        deleted_count=summary.get("deleted", 0),
+                        rescheduled_count=summary.get("calibrated", 0),
+                        details=details,
+                    ),
+                    session=session,
+                )
             return summary
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("启动恢复校准媒体账号生命周期调度失败: {}", exc)

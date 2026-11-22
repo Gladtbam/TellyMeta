@@ -55,6 +55,7 @@ from services.media_service import (
     compute_external_disabled_state,
     sync_external_disabled_state,
 )
+from services.notification_renderer import UserPolicySyncSummaryPayload
 from services.notification_service import NotificationService
 from services.traffic_service import flush_app_traffic
 from services.user_service import Result
@@ -1922,6 +1923,7 @@ class AccountService:
         synced_count = 0
         skipped_count = 0
         failed_count = 0
+        error_items: list[str] = []
 
         for uid, _media_id in targets:
             async with get_account_lock(uid, server_id):
@@ -1944,6 +1946,9 @@ class AccountService:
                         )
                     else:
                         failed_count += 1
+                        error_items.append(
+                            f"{fresh_mu.media_name}: HTTP {exc.response.status_code}"
+                        )
                         logger.error(
                             "同步默认 UserPolicy 获取外部账户失败: server_id={}, user_id={}, media_id={}, status={}",
                             server_id,
@@ -1954,6 +1959,7 @@ class AccountService:
                     continue
                 except (HTTPError, ValueError, TypeError) as exc:
                     failed_count += 1
+                    error_items.append(f"{fresh_mu.media_name}: {exc}")
                     logger.error(
                         "同步默认 UserPolicy 获取外部账户异常: server_id={}, user_id={}, media_id={}, err={}",
                         server_id,
@@ -1965,6 +1971,7 @@ class AccountService:
 
                 if not isinstance(media_info, User) or media_info.Policy is None:
                     failed_count += 1
+                    error_items.append(f"{fresh_mu.media_name}: 缺少 Policy")
                     logger.warning(
                         "同步默认 UserPolicy 失败，外部账户缺少 Policy: server_id={}, user_id={}, media_id={}",
                         server_id,
@@ -1981,6 +1988,7 @@ class AccountService:
                     synced_count += 1
                 except (HTTPError, ValueError, TypeError) as exc:
                     failed_count += 1
+                    error_items.append(f"{fresh_mu.media_name}: {exc}")
                     logger.error(
                         "同步默认 UserPolicy 更新外部策略失败: server_id={}, user_id={}, media_id={}, err={}",
                         server_id,
@@ -1996,6 +2004,29 @@ class AccountService:
             parts.append(f"失败 {failed_count} 个")
         summary_msg = f"已同步 {server_name} 的默认 UserPolicy 到存量账号（总计 {total_count} 个：{'，'.join(parts)}）。"
         overall_ok = not (synced_count == 0 and failed_count > 0)
+
+        if synced_count + failed_count > 0:
+            try:
+                # 先释放循环读快照再入队，并在只读查询后及时收口，避免内存 SQLite 连接池事务冲突
+                await self.media_repo.end_clean_read_tx()
+                await NotificationService(self.app).emit(
+                    UserPolicySyncSummaryPayload(
+                        server_name=server_name,
+                        total_count=total_count,
+                        updated_count=synced_count,
+                        skipped_count=skipped_count,
+                        failed_count=failed_count,
+                        error_summary="; ".join(error_items[:5]),
+                    ),
+                    server_id=server_id,
+                    source_key=f"policy_sync:{server_id}",
+                    session=self.media_repo.session,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("发射默认 UserPolicy 同步摘要通知失败: {}", exc)
+            finally:
+                await self.media_repo.end_clean_read_tx()
+
         return Result(
             overall_ok,
             summary_msg,

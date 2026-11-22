@@ -20,9 +20,18 @@ from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
-from services.score_service import MessageTrackingState, ScoreService
+from services.notification_renderer import MemberLeftCleanupAuditPayload
+from services.notification_service import NotificationService
+from services.score_service import (
+    MessageTrackingState,
+    ScoreService,
+    resolve_telegram_display_name,
+)
 from services.user_service import UserService
-from services.verification_service import VerificationService
+from services.verification_service import (
+    VerificationService,
+    cleanup_user_with_server_audit,
+)
 
 settings = get_settings()
 
@@ -232,8 +241,10 @@ async def user_join_handler(
     if event.user_left or event.user_kicked:
         verification_service = VerificationService(app, session)
         user_service = UserService(app, session)
+        client = getattr(getattr(app, "state", None), "telethon_client", None)
         for user_id in effective_ids:
             logger.info("用户 {} 离开", user_id)
+            display_name = await resolve_telegram_display_name(client, user_id)
             challenge = await verification_service.verification_repo.get(user_id)
             if challenge:
                 with contextlib.suppress(JobLookupError):
@@ -242,7 +253,25 @@ async def user_join_handler(
                     )
                 await verification_service.verification_repo.delete(user_id)
 
-            await user_service.delete_account(user_id, "both")
+            (
+                cleaned_servers,
+                del_success,
+                del_detail,
+            ) = await cleanup_user_with_server_audit(session, user_id, user_service)
+            try:
+                await NotificationService(app).emit(
+                    MemberLeftCleanupAuditPayload(
+                        user_id=user_id,
+                        user_name=display_name,
+                        cleaned_servers=cleaned_servers,
+                        success=del_success,
+                        detail=del_detail,
+                    ),
+                    source_key=f"member_left:{user_id}",
+                    session=session,
+                )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("发射群成员退群清理审计通知失败: {}", exc)
 
 
 @TelethonClientWarper.handler(events.CallbackQuery(pattern=b"verify_(\\d+)"))

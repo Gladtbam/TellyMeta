@@ -42,7 +42,10 @@ from core.telegram_manager import TelethonClientWarper
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
-from services.notification_service import get_or_create_notification_runtime
+from services.notification_service import (
+    attach_external_client_hooks,
+    get_or_create_notification_runtime,
+)
 from services.score_service import MessageTrackingState
 from services.settings_service import SettingsServices
 from services.traffic_service import sync_traffic_listener
@@ -116,7 +119,7 @@ async def lifespan(app: FastAPI):
                         logger.error("解析服务器 {} 的路径映射失败: {}", server.name, e)
                 match server.server_type:
                     case ServerType.SONARR:
-                        app.state.sonarr_clients[server.id] = SonarrClient(
+                        sonarr_client = SonarrClient(
                             client=httpx2.AsyncClient(
                                 base_url=server.url,
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -128,8 +131,16 @@ async def lifespan(app: FastAPI):
                             notify_topic_id=server.notify_topic_id,
                             request_notify_topic_id=server.request_notify_topic_id,
                         )
+                        attach_external_client_hooks(
+                            sonarr_client,
+                            app=app,
+                            server_id=server.id,
+                            server_name=server.name,
+                            server_type=str(server.server_type),
+                        )
+                        app.state.sonarr_clients[server.id] = sonarr_client
                     case ServerType.RADARR:
-                        app.state.radarr_clients[server.id] = RadarrClient(
+                        radarr_client = RadarrClient(
                             client=httpx2.AsyncClient(
                                 base_url=server.url,
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -141,8 +152,16 @@ async def lifespan(app: FastAPI):
                             notify_topic_id=server.notify_topic_id,
                             request_notify_topic_id=server.request_notify_topic_id,
                         )
+                        attach_external_client_hooks(
+                            radarr_client,
+                            app=app,
+                            server_id=server.id,
+                            server_name=server.name,
+                            server_type=str(server.server_type),
+                        )
+                        app.state.radarr_clients[server.id] = radarr_client
                     case ServerType.JELLYFIN:
-                        app.state.media_clients[server.id] = JellyfinClient(
+                        jf_client = JellyfinClient(
                             client=httpx2.AsyncClient(
                                 base_url=f"{server.url}",
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -152,8 +171,16 @@ async def lifespan(app: FastAPI):
                             server_name=server.name,
                             notify_topic_id=server.notify_topic_id,
                         )
+                        attach_external_client_hooks(
+                            jf_client,
+                            app=app,
+                            server_id=server.id,
+                            server_name=server.name,
+                            server_type=str(server.server_type),
+                        )
+                        app.state.media_clients[server.id] = jf_client
                     case ServerType.EMBY:
-                        app.state.media_clients[server.id] = EmbyClient(
+                        emby_client = EmbyClient(
                             client=httpx2.AsyncClient(
                                 base_url=f"{server.url}/emby",
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -163,6 +190,14 @@ async def lifespan(app: FastAPI):
                             server_name=server.name,
                             notify_topic_id=server.notify_topic_id,
                         )
+                        attach_external_client_hooks(
+                            emby_client,
+                            app=app,
+                            server_id=server.id,
+                            server_name=server.name,
+                            server_type=str(server.server_type),
+                        )
+                        app.state.media_clients[server.id] = emby_client
                     case ServerType.QBITTORRENT:
                         # 使用 username 时将 api_key 视为登录密码，否则视为 API Key
                         qb_client = QbittorrentClient(
@@ -176,6 +211,13 @@ async def lifespan(app: FastAPI):
                             api_key=(
                                 None if server.qb_username else (server.api_key or None)
                             ),
+                        )
+                        attach_external_client_hooks(
+                            qb_client,
+                            app=app,
+                            server_id=server.id,
+                            server_name=server.name,
+                            server_type=str(server.server_type),
                         )
                         app.state.qb_clients[server.id] = qb_client
         finally:

@@ -1,10 +1,18 @@
+import inspect
 from dataclasses import dataclass, field
+from typing import Any
 
+from loguru import logger
 from sqlalchemy.ext.asyncio.session import AsyncSession
+from telethon import errors
 
 from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.telegram_repo import TelegramRepository
+from services.notification_renderer import (
+    ScoreLeaderboardEntry,
+    ScoreSettlementReportPayload,
+)
 from services.user_service import Result
 
 
@@ -146,3 +154,82 @@ class ScoreService:
         return SettlementResult(
             total_score_settled=total_score, user_score_changes=score_deltas
         )
+
+
+async def resolve_telegram_display_name(client: Any, user_id: int) -> str:
+    """安全获取 Telegram 用户显示名；客户端缺失、未实现或查询异常时回退数字 ID。"""
+    if client is None:
+        return str(user_id)
+    get_name = getattr(client, "get_user_name", None)
+    if not callable(get_name):
+        return str(user_id)
+    try:
+        name = get_name(user_id)
+        if inspect.isawaitable(name):
+            name = await name
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return str(user_id)
+    except (errors.RPCError, ValueError, TypeError, AttributeError) as exc:
+        logger.warning("获取用户 {} 的显示名称失败: {}", user_id, exc)
+        return str(user_id)
+
+
+async def build_score_settlement_payload(
+    score_service: ScoreService,
+    client: Any,
+    result: SettlementResult | None,
+    *,
+    is_manual: bool,
+) -> ScoreSettlementReportPayload:
+    """根据结算结果与总榜数据构造强类型社区积分结算播报载荷。
+
+    Args:
+        score_service: 积分服务实例（用于查询总榜前 10 名用户）。
+        client: Telethon 客户端包装或测试替身（用于解析用户显示名称）。
+        result: 本次结算结果；为 ``None`` 时生成“今日无活跃积分变动”空报。
+        is_manual: 是否由管理员 ``/settle`` 手动触发。
+
+    Returns:
+        ``ScoreSettlementReportPayload`` 强类型载荷实例。
+    """
+    if result is None:
+        return ScoreSettlementReportPayload(
+            total_score_settled=0,
+            daily_top=(),
+            overall_top=(),
+            is_manual=is_manual,
+        )
+
+    # 构建今日积分飙升榜 (Top 10)
+    sorted_changes = sorted(
+        result.user_score_changes.items(), key=lambda item: item[1], reverse=True
+    )[:10]
+    daily_top: list[ScoreLeaderboardEntry] = []
+    for uid, score_change in sorted_changes:
+        daily_top.append(
+            ScoreLeaderboardEntry(
+                user_id=uid,
+                user_name=await resolve_telegram_display_name(client, uid),
+                score=int(score_change),
+            )
+        )
+
+    # 构建积分总榜 (Top 10)
+    top_users = await score_service.telegram_repo.get_top_users(10)
+    overall_top: list[ScoreLeaderboardEntry] = []
+    for user in top_users:
+        overall_top.append(
+            ScoreLeaderboardEntry(
+                user_id=user.id,
+                user_name=await resolve_telegram_display_name(client, user.id),
+                score=int(user.score),
+            )
+        )
+
+    return ScoreSettlementReportPayload(
+        total_score_settled=int(result.total_score_settled),
+        daily_top=tuple(daily_top),
+        overall_top=tuple(overall_top),
+        is_manual=is_manual,
+    )

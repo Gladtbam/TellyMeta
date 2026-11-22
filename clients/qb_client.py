@@ -4,7 +4,11 @@ from typing import override
 import httpx2
 from loguru import logger
 
-from clients.base_client import AuthenticatedClient
+from clients.base_client import (
+    AuthenticatedClient,
+    RequestErrorHook,
+    RequestRecoveredHook,
+)
 from models.qbittorrent import BuildInfo, Preference, TorrentProperties
 
 
@@ -15,8 +19,15 @@ class QbittorrentClient(AuthenticatedClient):
         username: str | None,
         password: str | None,
         api_key: str | None,
+        *,
+        on_request_error: RequestErrorHook | None = None,
+        on_request_recovered: RequestRecoveredHook | None = None,
     ):
-        super().__init__(client)
+        super().__init__(
+            client,
+            on_request_error=on_request_error,
+            on_request_recovered=on_request_recovered,
+        )
         self.username = username
         self.password = password
         self.api_key = api_key
@@ -29,9 +40,37 @@ class QbittorrentClient(AuthenticatedClient):
         data = {"username": self.username, "password": self.password}
         if self._client is None:
             logger.warning("Qbittorrent 客户端未初始化。请先调用 login()。")
-        response = await self._client.post("/api/v2/auth/login", data=data)
-        response.raise_for_status()
-        return response.text  # Returns the session cookie on successful login
+            raise RuntimeError("Qbittorrent 客户端未初始化。请先调用 login()。")
+        operation = "POST /api/v2/auth/login"
+        try:
+            response = await self._client.post("/api/v2/auth/login", data=data)
+            response.raise_for_status()
+            await self._notify_request_recovered(operation=operation)
+            return response.text  # Returns the session cookie on successful login
+        except httpx2.TimeoutException as e:
+            await self._notify_request_error(
+                operation=operation,
+                status_code=None,
+                error_message=str(e) or type(e).__name__,
+            )
+            raise
+        except httpx2.HTTPStatusError as e:
+            if e.response.status_code >= 500 or e.response.status_code in (401, 403):
+                await self._notify_request_error(
+                    operation=operation,
+                    status_code=e.response.status_code,
+                    error_message=(
+                        f"HTTP {e.response.status_code}: {e.response.text[:300]}"
+                    ),
+                )
+            raise
+        except httpx2.RequestError as e:
+            await self._notify_request_error(
+                operation=operation,
+                status_code=None,
+                error_message=str(e) or type(e).__name__,
+            )
+            raise
 
     @override
     async def _apply_auth(self) -> dict:

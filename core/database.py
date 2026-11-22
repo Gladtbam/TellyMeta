@@ -1,6 +1,8 @@
 import sqlite3
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from fastapi import HTTPException
 from loguru import logger
@@ -117,21 +119,38 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
             await session.close()  # 关闭会话
 
 
-async def backup_database() -> None:
-    """备份数据库（仅 SQLite 模式执行本地文件备份）"""
+@dataclass(frozen=True, slots=True)
+class DatabaseBackupResult:
+    """SQLite 数据库备份执行结果，用于区分跳过、成功与真实失败。"""
+
+    status: Literal["ok", "skipped", "failed"]
+    backup_path: str = ""
+    error_message: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """非失败（包括非 SQLite 跳过与备份成功）返回 True。"""
+        return self.status != "failed"
+
+
+async def backup_database() -> DatabaseBackupResult:
+    """备份数据库（仅 SQLite 模式执行本地文件备份）。
+
+    Returns:
+        ``DatabaseBackupResult`` 对象，显式区分非 SQLite 跳过、成功与真实失败。
+    """
     if not IS_SQLITE:
         logger.debug("当前使用非 SQLite 数据库，跳过本地文件备份")
-        return
+        return DatabaseBackupResult(status="skipped")
 
     import aiosqlite
 
     backup_dir = DATA_DIR / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-
     backup_file = backup_dir / f"tellymeta_{datetime.now().strftime('%Y%m%d')}.db"
     db_path = DATA_DIR / "tellymeta.db"
 
     try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
         async with (
             aiosqlite.connect(db_path) as src_db,
             aiosqlite.connect(backup_file) as dst_db,
@@ -140,7 +159,11 @@ async def backup_database() -> None:
         logger.info("数据库备份成功: {}", backup_file.name)
     except (sqlite3.Error, OSError) as e:
         logger.exception("备份数据库时出错: {}", e)
-        return
+        return DatabaseBackupResult(
+            status="failed",
+            backup_path=str(backup_file),
+            error_message=str(e) or type(e).__name__,
+        )
 
     from repositories.config_repo import ConfigRepository
 
@@ -148,7 +171,7 @@ async def backup_database() -> None:
         "db_backup_retention_days"
     ]
     if retention_days <= 0:
-        return
+        return DatabaseBackupResult(status="ok", backup_path=str(backup_file))
 
     for file in backup_dir.iterdir():
         try:
@@ -162,3 +185,5 @@ async def backup_database() -> None:
                 logger.info("删除过期备份文件: {}", file.name)
         except (FileNotFoundError, PermissionError, OSError) as e:
             logger.exception("删除过期备份文件时出错: {}", e)
+
+    return DatabaseBackupResult(status="ok", backup_path=str(backup_file))

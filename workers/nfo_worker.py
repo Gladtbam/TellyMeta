@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import os
 import re
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,35 @@ from models.sonarr_webhook import (
 )
 from models.tmdb import TmdbEpisode
 from models.tvdb import TvdbData, TvdbEpisodesData
+from services.notification_renderer import NfoProcessFailedPayload
+from services.notification_service import NotificationService
+
+
+async def _emit_nfo_failure(
+    *,
+    target_path: str,
+    nfo_kind: str,
+    error_message: str,
+    server_name: str = "",
+) -> None:
+    """当主应用已初始化时通过统一通知管线发射 NFO 生成异常告警（隔离测试安全跳过）。"""
+    main_mod = sys.modules.get("main")
+    app = getattr(main_mod, "app", None) if main_mod is not None else None
+    if app is None or getattr(app, "state", None) is None:
+        return
+    try:
+        await NotificationService(app).emit(
+            NfoProcessFailedPayload(
+                target_path=target_path,
+                nfo_kind=nfo_kind,
+                error_message=error_message,
+                server_name=server_name,
+            ),
+            source_key=f"nfo:{target_path}",
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("发射 NFO 告警通知失败: {}", exc)
+
 
 VIDEO_EXTENSIONS = {
     ".mp4",
@@ -183,18 +213,37 @@ def _render_nfo_xml(template_name: str, context: dict[str, Any]) -> str | None:
 
 
 async def _generate_and_save_nfo(
-    template_name: str, context: dict[str, Any], file_path: Path
+    template_name: str,
+    context: dict[str, Any],
+    file_path: Path,
+    *,
+    server_name: str = "",
 ) -> bool:
     """通用 NFO 生成与安全保存逻辑：先校验目标路径为 .nfo，再通过同目录临时文件原子写入"""
+    kind = (
+        template_name.removesuffix(".j2").removesuffix(".nfo").strip().lower() or "nfo"
+    )
     try:
         _validate_nfo_target_path(file_path)
     except ValueError as e:
         logger.error("拒绝写入 NFO，已保护原媒体文件不被损坏: {}", e)
+        await _emit_nfo_failure(
+            target_path=str(file_path),
+            nfo_kind=kind,
+            error_message=str(e),
+            server_name=server_name,
+        )
         return False
 
     nfo_content = _render_nfo_xml(template_name, context)
     if not nfo_content:
         logger.error("{} 模板渲染返回空，跳过文件创建", template_name)
+        await _emit_nfo_failure(
+            target_path=str(file_path),
+            nfo_kind=kind,
+            error_message=f"未知或空的 NFO 模板类型: {template_name}",
+            server_name=server_name,
+        )
         return False
 
     tmp_path = file_path.with_name(f".{file_path.name}.{os.getpid()}.tmp")
@@ -209,6 +258,12 @@ async def _generate_and_save_nfo(
             if tmp_path.exists():
                 tmp_path.unlink()
         logger.error("写入 NFO 文件失败 (IO错误): {} - {}", file_path, e)
+        await _emit_nfo_failure(
+            target_path=str(file_path),
+            nfo_kind=kind,
+            error_message=str(e) or type(e).__name__,
+            server_name=server_name,
+        )
         return False
 
 
@@ -293,6 +348,8 @@ async def create_series_nfo_from_resource(
     tmdb: TmdbClient,
     tvdb: TvdbClient | None = None,
     is_override: bool = True,
+    *,
+    server_name: str = "",
 ) -> None:
     """从剧集资源对象创建 NFO"""
     if not series.path:
@@ -303,16 +360,26 @@ async def create_series_nfo_from_resource(
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    tvdb_payload = (
-        await tvdb.series_translations(series.tvdbId)
-        if tvdb and series.tvdbId is not None
-        else None
-    )
-    tmdb_payload = (
-        await tmdb.get_tv_series_details(series.tmdbId)
-        if series.tmdbId is not None
-        else None
-    )
+    try:
+        tvdb_payload = (
+            await tvdb.series_translations(series.tvdbId)
+            if tvdb and series.tvdbId is not None
+            else None
+        )
+        tmdb_payload = (
+            await tmdb.get_tv_series_details(series.tmdbId)
+            if series.tmdbId is not None
+            else None
+        )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("获取剧集 NFO 元数据失败: {} - {}", nfo_path, e)
+        await _emit_nfo_failure(
+            target_path=str(nfo_path),
+            nfo_kind="tvshow",
+            error_message=str(e) or type(e).__name__,
+            server_name=server_name,
+        )
+        return
 
     context = {
         "title": getattr(tvdb_payload, "name", None)
@@ -331,7 +398,7 @@ async def create_series_nfo_from_resource(
         "tmdb_id": series.tmdbId,
     }
 
-    await _generate_and_save_nfo("tvshow", context, nfo_path)
+    await _generate_and_save_nfo("tvshow", context, nfo_path, server_name=server_name)
 
 
 async def create_episode_nfo_from_resource(
@@ -340,6 +407,8 @@ async def create_episode_nfo_from_resource(
     tmdb: TmdbClient,
     tvdb: TvdbClient | None = None,
     is_override: bool = True,
+    *,
+    server_name: str = "",
 ) -> None:
     """从 API 资源对象创建单集 NFO"""
     if not episode.hasFile or not episode.episodeFile or not episode.episodeFile.path:
@@ -350,8 +419,18 @@ async def create_episode_nfo_from_resource(
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    context = await _get_episode_context(tmdb, tvdb, series.tmdbId or 0, episode)
-    await _generate_and_save_nfo("episode", context, nfo_path)
+    try:
+        context = await _get_episode_context(tmdb, tvdb, series.tmdbId or 0, episode)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("获取单集 NFO 元数据失败: {} - {}", nfo_path, e)
+        await _emit_nfo_failure(
+            target_path=str(nfo_path),
+            nfo_kind="episode",
+            error_message=str(e) or type(e).__name__,
+            server_name=server_name,
+        )
+        return
+    await _generate_and_save_nfo("episode", context, nfo_path, server_name=server_name)
 
 
 async def rebuild_sonarr_metadata_task(
@@ -380,14 +459,23 @@ async def rebuild_sonarr_metadata_task(
                 continue
             logger.info("[{}/{}] 处理剧集: {}", index, total, series.title)
 
-            await create_series_nfo_from_resource(series, tmdb_client, tvdb_client)
+            await create_series_nfo_from_resource(
+                series,
+                tmdb_client,
+                tvdb_client,
+                server_name=sonarr_client.server_name,
+            )
 
             episodes = await sonarr_client.get_episode_by_series_id(series.id)
             if episodes:
                 for ep in episodes:
                     if ep.hasFile and ep.episodeFile:
                         await create_episode_nfo_from_resource(
-                            series, ep, tmdb_client, tvdb_client
+                            series,
+                            ep,
+                            tmdb_client,
+                            tvdb_client,
+                            server_name=sonarr_client.server_name,
                         )
                         await asyncio.sleep(0.2)
 
@@ -395,23 +483,35 @@ async def rebuild_sonarr_metadata_task(
 
         logger.info("Sonarr ({}) 元数据重建完成。", sonarr_client.server_name)
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.exception("重建元数据任务异常: {}", e)
+        await _emit_nfo_failure(
+            target_path=f"sonarr:{sonarr_client.server_name}",
+            nfo_kind="tvshow",
+            error_message=str(e) or type(e).__name__,
+            server_name=sonarr_client.server_name,
+        )
 
 
 async def create_series_nfo(
     payload: SonarrWebhookSeriesAddPayload,
     tmdb: TmdbClient,
     tvdb: TvdbClient | None = None,
+    *,
+    server_name: str = "",
 ) -> None:
     """Webhook: 创建剧集 NFO"""
-    await create_series_nfo_from_resource(payload.series, tmdb, tvdb, False)
+    await create_series_nfo_from_resource(
+        payload.series, tmdb, tvdb, False, server_name=server_name
+    )
 
 
 async def create_episode_nfo(
     payload: SonarrWebhookDownloadPayload,
     tmdb: TmdbClient,
     tvdb: TvdbClient | None = None,
+    *,
+    server_name: str = "",
 ) -> None:
     """Webhook: 创建单集 NFO"""
     if not payload.episodes or not payload.episodeFile:
@@ -420,8 +520,18 @@ async def create_episode_nfo(
     episode = payload.episodes[0]
     nfo_path = Path(payload.episodeFile.path).with_suffix(".nfo")
 
-    context = await _get_episode_context(tmdb, tvdb, payload.series.tmdbId, episode)
-    await _generate_and_save_nfo("episode", context, nfo_path)
+    try:
+        context = await _get_episode_context(tmdb, tvdb, payload.series.tmdbId, episode)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("Webhook 获取单集 NFO 元数据失败: {} - {}", nfo_path, e)
+        await _emit_nfo_failure(
+            target_path=str(nfo_path),
+            nfo_kind="episode",
+            error_message=str(e) or type(e).__name__,
+            server_name=server_name,
+        )
+        return
+    await _generate_and_save_nfo("episode", context, nfo_path, server_name=server_name)
 
 
 async def handle_series_add_metadata(
@@ -432,7 +542,7 @@ async def handle_series_add_metadata(
 ) -> None:
     """处理剧集添加事件"""
     async with _temporary_ignore_file(Path(payload.series.path)):
-        await create_series_nfo(payload, tmdb, tvdb)
+        await create_series_nfo(payload, tmdb, tvdb, server_name=client.server_name)
         await asyncio.sleep(60)
 
         logger.info("正在为新添加的剧集 {} 检查现有集数...", payload.series.title)
@@ -446,7 +556,12 @@ async def handle_series_add_metadata(
                             ep.episodeFile.path = mapped_path
 
                         await create_episode_nfo_from_resource(
-                            payload.series, ep, tmdb, tvdb, False
+                            payload.series,
+                            ep,
+                            tmdb,
+                            tvdb,
+                            False,
+                            server_name=client.server_name,
                         )
                         count += 1
 
@@ -456,18 +571,35 @@ async def handle_series_add_metadata(
                         payload.series.title,
                         count,
                     )
-        except OSError as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("为新剧集生成单集 NFO 失败: {}", e)
+            await _emit_nfo_failure(
+                target_path=payload.series.path,
+                nfo_kind="episode",
+                error_message=str(e) or type(e).__name__,
+                server_name=client.server_name,
+            )
 
 
 async def create_movie_nfo(
-    nfo_path: Path, tmdb_id: int, tmdb: TmdbClient | None, is_override: bool = True
+    nfo_path: Path,
+    tmdb_id: int,
+    tmdb: TmdbClient | None,
+    is_override: bool = True,
+    *,
+    server_name: str = "",
 ) -> None:
     """生成电影 NFO（仅允许写入独立 .nfo 文件）"""
     try:
         _validate_nfo_target_path(nfo_path)
     except ValueError as e:
         logger.error("拒绝生成电影 NFO，已保护原文件: {}", e)
+        await _emit_nfo_failure(
+            target_path=str(nfo_path),
+            nfo_kind="movie",
+            error_message=str(e),
+            server_name=server_name,
+        )
         return
     if not tmdb:
         logger.error("TMDB 客户端未配置，无法执行电影元数据重建任务")
@@ -476,7 +608,18 @@ async def create_movie_nfo(
         logger.debug("NFO 文件已存在且未设置覆盖，跳过: {}", nfo_path)
         return
 
-    movie_info = await tmdb.get_movie_details(tmdb_id)
+    try:
+        movie_info = await tmdb.get_movie_details(tmdb_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.error("获取电影 NFO 元数据失败: {} - {}", nfo_path, e)
+        await _emit_nfo_failure(
+            target_path=str(nfo_path),
+            nfo_kind="movie",
+            error_message=str(e) or type(e).__name__,
+            server_name=server_name,
+        )
+        return
+
     context = {
         "title": movie_info.title if movie_info else None,
         "original_title": movie_info.original_title if movie_info else None,
@@ -492,7 +635,7 @@ async def create_movie_nfo(
         "imdb_id": movie_info.imdb_id if movie_info else None,
         "tmdb_id": tmdb_id,
     }
-    await _generate_and_save_nfo("movie", context, nfo_path)
+    await _generate_and_save_nfo("movie", context, nfo_path, server_name=server_name)
 
 
 def _iter_video_files(folder_path: Path) -> list[Path]:
@@ -505,7 +648,10 @@ def _iter_video_files(folder_path: Path) -> list[Path]:
 
 
 async def handle_movie_add_metadata(
-    payload: RadarrWebhookAddedPayload, tmdb: TmdbClient | None
+    payload: RadarrWebhookAddedPayload,
+    tmdb: TmdbClient | None,
+    *,
+    server_name: str = "",
 ) -> None:
     """处理电影添加事件"""
     folder_path = Path(payload.movie.folderPath)
@@ -515,14 +661,27 @@ async def handle_movie_add_metadata(
             video_files = await asyncio.to_thread(_iter_video_files, folder_path)
             for file in video_files:
                 await create_movie_nfo(
-                    file.with_suffix(".nfo"), payload.movie.tmdbId, tmdb, False
+                    file.with_suffix(".nfo"),
+                    payload.movie.tmdbId,
+                    tmdb,
+                    False,
+                    server_name=server_name,
                 )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("为新电影生成 NFO 失败: {}", e)
+            await _emit_nfo_failure(
+                target_path=str(folder_path),
+                nfo_kind="movie",
+                error_message=str(e) or type(e).__name__,
+                server_name=server_name,
+            )
 
 
 async def create_movie_nfo_from_resource(
-    movie: MovieResource, tmdb: TmdbClient
+    movie: MovieResource,
+    tmdb: TmdbClient,
+    *,
+    server_name: str = "",
 ) -> None:
     """从资源创建电影 NFO"""
     if not movie.path or movie.tmdbId is None:
@@ -532,9 +691,20 @@ async def create_movie_nfo_from_resource(
         try:
             video_files = await asyncio.to_thread(_iter_video_files, folder_path)
             for file in video_files:
-                await create_movie_nfo(file.with_suffix(".nfo"), movie.tmdbId, tmdb)
+                await create_movie_nfo(
+                    file.with_suffix(".nfo"),
+                    movie.tmdbId,
+                    tmdb,
+                    server_name=server_name,
+                )
         except OSError as e:
             logger.error("为电影生成 NFO 失败: {}", e)
+            await _emit_nfo_failure(
+                target_path=str(folder_path),
+                nfo_kind="movie",
+                error_message=str(e) or type(e).__name__,
+                server_name=server_name,
+            )
 
 
 async def rebuild_radarr_metadata_task(
@@ -569,8 +739,16 @@ async def rebuild_radarr_metadata_task(
             ):
                 movie.movieFile.path = mapped_path
 
-            await create_movie_nfo_from_resource(movie, tmdb_client)
+            await create_movie_nfo_from_resource(
+                movie, tmdb_client, server_name=radarr_client.server_name
+            )
 
         logger.info("Radarr ({}) 元数据重建完成。", radarr_client.server_name)
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error("重建 Radarr 元数据失败: {}", e)
+        await _emit_nfo_failure(
+            target_path=f"radarr:{radarr_client.server_name}",
+            nfo_kind="movie",
+            error_message=str(e) or type(e).__name__,
+            server_name=radarr_client.server_name,
+        )

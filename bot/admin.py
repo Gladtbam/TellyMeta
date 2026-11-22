@@ -13,7 +13,8 @@ from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
-from services.score_service import ScoreService
+from services.notification_service import NotificationService
+from services.score_service import ScoreService, build_score_settlement_payload
 from services.user_service import UserService
 from services.verification_service import VerificationService
 
@@ -213,29 +214,27 @@ async def settle_handler(
 
     score_service = ScoreService(session, app.state.message_tracker)
     result = await score_service.settle_and_clear_scores()
-    client: TelethonClientWarper = app.state.telethon_client
+    client: TelethonClientWarper | None = getattr(app.state, "telethon_client", None)
 
     if result is None:
         await safe_reply(event, "当前无积分可结算。")
         return
 
-    summary = TelegramMessage.render_markdown(t"""\
-        ✅ 积分结算完成！
-        共结算 **{result.total_score_settled}** 活跃度积分.
-        本次结算详情:
-        """)
-    summary_msg = await client.send_message(settings.telegram_chat_id, summary)
-
-    user_details = []
-    for user_id, score_change in result.user_score_changes.items():  # type: ignore
-        username = await client.get_user_name(user_id)
-        user_details.append(
-            TelegramMessage.render_markdown(
-                t"- [{username}](tg://user?id={user_id}): `+{score_change}`"
-            )
-        )
-    final_summary = summary + "\n".join(user_details)
-    await client.client.edit_message(summary_msg, final_summary)
+    payload = await build_score_settlement_payload(
+        score_service,
+        client,
+        result,
+        is_manual=True,
+    )
+    await NotificationService(app).emit(
+        payload,
+        source_key="score_settlement:manual",
+        session=session,
+    )
+    await safe_reply(
+        event,
+        f"✅ 积分结算完成，共结算 **{result.total_score_settled}** 活跃度积分，结算报告已投递至通知频道。",
+    )
 
 
 @TelethonClientWarper.handler(
