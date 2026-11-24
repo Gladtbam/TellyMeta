@@ -1227,7 +1227,6 @@ class AdminUserActionPayload:
         "score_adjust",
         "traffic_adjust",
         "ban",
-        "unban",
         "kick",
         "delete",
         "other",
@@ -1259,9 +1258,6 @@ class SelfActionReceiptPayload:
         "renew",
         "reset_password",
         "redeem_code",
-        "toggle_auto_renew",
-        "redeem_traffic_pack",
-        "cancel_request",
         "other",
     ]
     server_name: str | None = None
@@ -2717,7 +2713,7 @@ def _render_request_dm_card(
         event,
         title=f"{summary_title}：{media_title}{year_part}",
         telegram_html=html_text,
-        action_url=action_url or "/miniapp.html#requests",
+        action_url=action_url or "miniapp.html?tab=requests#requests",
         dedupe_hint=(f"{event.value}:{request_id}" if request_id is not None else None),
     )
 
@@ -2950,7 +2946,7 @@ def _render_pre_expiry_reminder(
         NotificationEvent.PRE_EXPIRY_REMINDER,
         title=f"临近到期提醒：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"pre_expiry:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3001,7 +2997,7 @@ def _render_auto_renew_success(
         NotificationEvent.AUTO_RENEW_SUCCESS,
         title=f"自动续期成功：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"auto_renew_success:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3065,7 +3061,7 @@ def _render_auto_renew_failed(payload: AutoRenewFailedPayload) -> RenderedNotifi
         NotificationEvent.AUTO_RENEW_FAILED,
         title=f"自动续期失败：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"auto_renew_failed:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3101,7 +3097,7 @@ def _render_expiry_ban(payload: ExpiryBanPayload) -> RenderedNotification:
         NotificationEvent.EXPIRY_BAN,
         title=f"账号已过期封禁：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"expiry_ban:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3132,7 +3128,7 @@ def _render_grace_delete_reminder(
         NotificationEvent.GRACE_DELETE_REMINDER,
         title=f"删号最后提醒：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"grace_delete:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3163,7 +3159,7 @@ def _render_account_deleted(payload: AccountDeletedPayload) -> RenderedNotificat
         NotificationEvent.ACCOUNT_DELETED,
         title=f"媒体账号已删除：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"account_deleted:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3197,7 +3193,7 @@ def _render_watch_time_renewal_eligible(
         NotificationEvent.WATCH_TIME_RENEWAL_ELIGIBLE,
         title=f"保活续期达标：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"wt_eligible:{payload.server_name}:{payload.media_name}",
     )
 
@@ -3260,7 +3256,7 @@ def _render_billing_cycle_reset(
         NotificationEvent.BILLING_CYCLE_RESET,
         title=f"账期已重置：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"cycle_reset:{payload.server_name}:{payload.media_name}:{reset_str}",
     )
 
@@ -3311,7 +3307,7 @@ def _render_traffic_quota_alert_card(
         event,
         title=f"{summary_title}：{server_name} / {media_name}",
         telegram_html=html_text,
-        action_url=action_url or "/miniapp.html#accounts",
+        action_url=action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=f"{event.value}:{server_name}:{media_name}",
     )
 
@@ -3486,7 +3482,7 @@ def _render_traffic_unsuspended(
         NotificationEvent.TRAFFIC_UNSUSPENDED,
         title=f"超流停用已解除：{payload.server_name} / {payload.media_name}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=(
             f"traffic_unsuspended:{payload.server_name}:{payload.media_name}:{payload.recovery_reason}"
         ),
@@ -3498,7 +3494,6 @@ _ADMIN_ACTION_LABELS: dict[str, tuple[str, str]] = {
     "score_adjust": ("💠", "管理员积分调整通知"),
     "traffic_adjust": ("📶", "管理员当期流量调额通知"),
     "ban": ("🚫", "管理员账号封禁通知"),
-    "unban": ("✅", "管理员账号解封通知"),
     "kick": ("👢", "管理员移出群组通知"),
     "delete": ("🗑️", "管理员删除账号通知"),
     "other": ("🛡️", "管理员账号管理回执"),
@@ -3598,7 +3593,7 @@ def _render_admin_user_action(payload: AdminUserActionPayload) -> RenderedNotifi
         NotificationEvent.ADMIN_USER_ACTION,
         title=f"{header}{scope_suffix}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=(
             f"admin_action:{payload.action_type}:{payload.target_user_id}:{payload.server_name or 'global'}"
         ),
@@ -3610,9 +3605,6 @@ _SELF_ACTION_LABELS: dict[str, str] = {
     "renew": "账号续期成功回执",
     "reset_password": "重置密码安全回执",
     "redeem_code": "激活码核销回执",
-    "toggle_auto_renew": "自动续期状态变更回执",
-    "redeem_traffic_pack": "当期流量包兑换回执",
-    "cancel_request": "求片撤销回执",
     "other": "自助操作回执",
 }
 
@@ -3690,7 +3682,7 @@ def _render_self_action_receipt(
         NotificationEvent.SELF_ACTION_RECEIPT,
         title=f"{header}{title_scope}",
         telegram_html=html_text,
-        action_url=payload.action_url or "/miniapp.html#accounts",
+        action_url=payload.action_url or "miniapp.html?tab=accounts#accounts",
         dedupe_hint=(
             f"self_receipt:{payload.action_type}:{payload.server_name or 'global'}:{payload.media_name or ''}"
         ),

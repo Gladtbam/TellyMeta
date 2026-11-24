@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import errors
 
 from bot.media import run_subtitle_upload_flow
 from clients.radarr_client import RadarrClient
@@ -62,7 +61,11 @@ from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from routes.settings_api import query_recent_ops_logs_page
 from services.account_service import AccountService
-from services.notification_service import get_or_create_notification_runtime
+from services.notification_renderer import SelfActionReceiptPayload
+from services.notification_service import (
+    NotificationService,
+    get_or_create_notification_runtime,
+)
 from services.request_service import RequestService
 from services.user_service import UserService
 
@@ -96,6 +99,29 @@ def _format_plain_sensitive_text(markdown_text: str) -> str:
     return markdown_text.replace("`", "").replace("**", "").strip()
 
 
+def _build_sensitive_fallback_payload(action: str) -> SelfActionReceiptPayload:
+    """构造敏感操作脱敏站内兜底载荷（绝不携带明文密码或激活码）。"""
+    if action == "signup":
+        return SelfActionReceiptPayload(
+            action_type="register",
+            summary="媒体账号已注册（系统不留存明文密码）。",
+        )
+    if action == "reset_password":
+        return SelfActionReceiptPayload(
+            action_type="reset_password",
+            summary="媒体账号密码已重置（系统不留存明文密码）。",
+        )
+    if action == "redeem_code":
+        return SelfActionReceiptPayload(
+            action_type="redeem_code",
+            summary="激活码已核销（系统不留存明文凭据）。",
+        )
+    return SelfActionReceiptPayload(
+        action_type="other",
+        summary="安全敏感操作已完成（系统不留存明文凭据）。",
+    )
+
+
 async def _deliver_sensitive_result(
     client: TelethonClientWarper,
     user_id: int,
@@ -104,26 +130,41 @@ async def _deliver_sensitive_result(
     dm_success_notice: str,
     dm_failed_prefix: str,
     *,
+    app: Any | None = None,
+    session: AsyncSession | None = None,
+    server_id: int | None = None,
     skip_inbox_fallback: bool = True,
 ) -> dict[str, Any]:
-    """优先通过 Telegram 私聊交付敏感结果；私聊失败时降级为 Mini App 本人一次性展示。
+    """优先通过统一通知管线发送私聊敏感结果；失败时降级为 Mini App 本人一次性展示。
 
     Note:
         由于请求发起方已在 Mini App 当前会话内等待响应，私聊失败时会当场回传
-        ``one_time_result`` 前端一次性弹窗，因此显式标记 ``skip_inbox_fallback=True``：
-        绝不写入 ``NotificationInboxItem``，避免站内重复提醒与明文凭据落库。
+        ``one_time_result`` 前端一次性弹窗，因此显式传 ``skip_inbox_fallback=True``
+        给 ``NotificationService.deliver_direct_dm``：绝不写入 ``NotificationInboxItem``，
+        避免站内重复提醒与明文凭据落库。
     """
-    dm_delivered = True
-    try:
-        await client.send_message(user_id, raw_message, parse_mode="markdown")
-    except (errors.RPCError, ValueError) as e:
-        dm_delivered = False
+    target_app = (
+        app
+        if app is not None
+        else SimpleNamespace(state=SimpleNamespace(telethon_client=client))
+    )
+    dm_delivered, err_detail = await NotificationService(target_app).deliver_direct_dm(
+        user_id=user_id,
+        message=raw_message,
+        parse_mode="markdown",
+        client=client,
+        skip_inbox_fallback=skip_inbox_fallback,
+        fallback_payload=_build_sensitive_fallback_payload(action),
+        server_id=server_id,
+        session=session,
+    )
+    if not dm_delivered:
         logger.warning(
             "Telegram 私聊交付敏感结果失败，降级为前端一次性展示（skip_inbox_fallback={}）: user_id={}, action={}, err={}",
             skip_inbox_fallback,
             user_id,
             action,
-            e,
+            err_detail,
         )
 
     if dm_delivered:
@@ -203,6 +244,9 @@ async def _execute_idempotent_sensitive_action(
     operation: Callable[[], Awaitable[Any]],
     dm_success_notice: str,
     dm_failed_prefix: str,
+    *,
+    session: AsyncSession | None = None,
+    server_id: int | None = None,
 ) -> dict[str, Any]:
     """执行带并发互斥与网络重试幂等保护的敏感操作。"""
 
@@ -217,6 +261,9 @@ async def _execute_idempotent_sensitive_action(
             raw_message=result.message,
             dm_success_notice=dm_success_notice,
             dm_failed_prefix=dm_failed_prefix,
+            app=request.app,
+            session=session,
+            server_id=server_id,
             skip_inbox_fallback=True,
         )
 
@@ -747,29 +794,11 @@ async def admin_kick_user(
     try:
         user_service = UserService(request.app, session)
         operator_name = await _resolve_api_operator_name(user_service, admin_id)
-        target_name = await user_service.resolve_user_display_name(target_user_id)
-        srv_name, media_name, ctx_srv = await user_service.snapshot_user_media_summary(
-            target_user_id
-        )
-
-        with contextlib.suppress(Exception):
-            await client.kick_and_ban_participant(target_user_id)
-
-        result = await user_service.delete_account(
+        result = await user_service.kick_and_cleanup_user(
             target_user_id,
-            "both",
+            client=client,
             operator_name=operator_name,
-            emit_notification=False,
-        )
-        # 与删号合并为单次 kick 通知，避免重复发出 delete 回执
-        await user_service.notify_admin_ban_or_kick(
-            action_type="kick",
-            target_user_id=target_user_id,
-            operator_name=operator_name,
-            target_name=target_name,
-            server_name=srv_name,
-            media_name=media_name,
-            context_server=ctx_srv,
+            suppress_kick_error=True,
         )
         return AdminActionResponse(
             success=True,
@@ -876,6 +905,7 @@ async def redeem_code(
         ),
         dm_success_notice="兑换成功！详细信息已发送到您的 Telegram 私聊。",
         dm_failed_prefix="兑换成功",
+        session=session,
     )
 
 
@@ -932,6 +962,8 @@ async def signup_account(
         operation=_do_signup,
         dm_success_notice="注册成功！详细信息已发送到您的 Telegram 私聊。",
         dm_failed_prefix="注册成功",
+        session=session,
+        server_id=server_id,
     )
 
 
@@ -974,6 +1006,8 @@ async def reset_account_password(
         ),
         dm_success_notice="密码重置成功，新密码已发送到您的 Telegram 私聊。",
         dm_failed_prefix="密码重置成功",
+        session=session,
+        server_id=server_id,
     )
 
 
@@ -1113,6 +1147,8 @@ async def generate_account_code(
         operation=lambda: service.generate_code(user_id, code_type, server_id),
         dm_success_notice="邀请码已生成，详情已发送到您的 Telegram 私聊。",
         dm_failed_prefix="邀请码生成成功",
+        session=session,
+        server_id=server_id,
     )
 
 

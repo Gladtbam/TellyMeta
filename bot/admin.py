@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import FastAPI
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon import Button, errors, events
+from telethon import Button, events
 from telethon.tl.types import InlineButtonTypeWebView, KeyboardInlineButton
 
 from bot.decorators import provide_db_session, require_admin, require_real_reply
@@ -92,17 +92,20 @@ async def info_handler(
             )
             return
 
-        # 未配置机器人用户名时，降级发送到管理员私聊
-        try:
-            await client.send_message(
-                admin_id,
-                TelegramMessage.render_markdown(t"""\
-                    📋 **用户资料卡片**
+        # 未配置机器人用户名时，通过统一管线降级发送到管理员私聊
+        dm_ok, dm_err = await NotificationService(app).deliver_direct_dm(
+            user_id=admin_id,
+            message=TelegramMessage.render_markdown(t"""\
+                📋 **用户资料卡片**
 
-                    目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)
-                    请点击下方按钮打开卡片并执行管理操作："""),
-                buttons=web_app_buttons,
-            )
+                目标用户: [{target_name}](tg://user?id={target_user_id}) (`{target_user_id}`)
+                请点击下方按钮打开卡片并执行管理操作："""),
+            parse_mode="md",
+            buttons=web_app_buttons,
+            client=client,
+            skip_inbox_fallback=True,
+        )
+        if dm_ok:
             await safe_reply(
                 event,
                 TelegramMessage.render_markdown(
@@ -110,9 +113,10 @@ async def info_handler(
                 ),
                 delete_after=30,
             )
-
-        except (errors.RPCError, ValueError) as e:
-            logger.warning("未能向管理员发送私聊消息（可能未私聊启动过机器人）: {}", e)
+        else:
+            logger.warning(
+                "未能向管理员发送私聊消息（可能未私聊启动过机器人）: {}", dm_err
+            )
             user_service = UserService(app, session)
             result = await user_service.get_user_info(target_user_id)
             await safe_reply(
@@ -248,7 +252,7 @@ async def settle_handler(
     )
     await safe_reply(
         event,
-        f"✅ 积分结算完成，共结算 **{result.total_score_settled}** 活跃度积分，结算报告已投递至通知频道。",
+        f"✅ 积分结算完成，共结算 **{result.total_score_settled}** 活跃度积分，结算报告已按通知路由投递。",
     )
 
 
@@ -301,26 +305,11 @@ async def kick_handler(
         operator_name = await user_service.resolve_user_display_name(
             getattr(event, "sender_id", None), fallback="管理员"
         )
-        target_name = await user_service.resolve_user_display_name(target_user_id)
-        srv_name, media_name, ctx_srv = await user_service.snapshot_user_media_summary(
-            target_user_id
-        )
-        await client.kick_and_ban_participant(target_user_id)
-        result = await user_service.delete_account(
+        result = await user_service.kick_and_cleanup_user(
             target_user_id,
-            "both",
+            client=client,
             operator_name=operator_name,
-            emit_notification=False,
-        )
-        # /kick 与删号合并为单次 kick 通知事件，避免重复发送 delete 回执
-        await user_service.notify_admin_ban_or_kick(
-            action_type="kick",
-            target_user_id=target_user_id,
-            operator_name=operator_name,
-            target_name=target_name,
-            server_name=srv_name,
-            media_name=media_name,
-            context_server=ctx_srv,
+            suppress_kick_error=False,
         )
         await safe_reply(event, "已踢出用户。\n" + result.message)
     elif isinstance(event, events.CallbackQuery.Event):

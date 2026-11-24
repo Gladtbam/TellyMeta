@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import inspect
 import json
-import re
+import sys
 import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -27,7 +27,6 @@ from telethon.errors import RPCError
 import core.database as _db_module
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
-from core.telegram_message import TelegramMessage
 from models.events import (
     DEFAULT_GLOBAL_ROUTE_TARGETS,
     NotificationAudience,
@@ -37,6 +36,7 @@ from models.events import (
     NotificationTargetType,
     get_event_spec,
 )
+from models.jellyfin_webhook import ItemEvent as JellyfinItemEvent
 from repositories.notification_repo import (
     NotificationInboxRepository,
     NotificationRouteRepository,
@@ -46,20 +46,71 @@ from repositories.notification_repo import (
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
 from services.notification_renderer import (
+    EmbyLibraryNewPayload,
+    EpisodeDetail,
     ExternalServerErrorPayload,
     ExternalServerRecoveredPayload,
+    JellyfinLibraryNewPayload,
     NotificationPayload,
     NotificationRenderer,
+    RadarrDownloadPayload,
+    RadarrMovieAddPayload,
     RenderedNotification,
+    RequestApprovedPayload,
+    RequestCompletedPayload,
+    RequestRejectedPayload,
+    RequestSubmitPayload,
+    SonarrDownloadPayload,
+    SonarrSeriesAddPayload,
     SystemTestPayload,
+    TelegramDeliveryDegradedPayload,
 )
 
 settings = get_settings()
 _ORIG_DB_ASYNC_SESSION = _db_module.async_session
 async_session = _db_module.async_session
 
-# 收敛兼容期旧模板渲染产生的多余空行
-_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+
+def resolve_active_app() -> Any | None:
+    """安全读取已加载的全局 FastAPI 应用实例，未初始化或隔离测试时返回 None。"""
+    main_mod = sys.modules.get("main")
+    if main_mod is None:
+        return None
+    app = getattr(main_mod, "app", None)
+    if app is None or getattr(app, "state", None) is None:
+        return None
+    return app
+
+
+async def resolve_tg_display_name(app_or_client: Any, user_id: int | None) -> str:
+    """安全解析 Telegram 用户展示名称（兼容 app / client / 同步或异步 mock）。
+
+    Args:
+        app_or_client: FastAPI 应用实例、state 替身或 Telethon 客户端包装器。
+        user_id: 目标 Telegram 用户 ID；为 ``None`` 时直接返回空字符串。
+
+    Returns:
+        去除首尾空白的展示名；无法解析时返回空字符串。
+    """
+    if user_id is None:
+        return ""
+    state = getattr(app_or_client, "state", None)
+    client = (
+        getattr(state, "telethon_client", None) if state is not None else app_or_client
+    )
+    getter = getattr(client, "get_user_name", None) if client is not None else None
+    if not callable(getter):
+        return ""
+    try:
+        res = getter(user_id)
+        if inspect.isawaitable(res):
+            res = await res
+        if isinstance(res, str) and res.strip():
+            return res.strip()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return ""
+    return ""
+
 
 # 永久不可达错误：触发后立即放弃重试，若为用户私聊则立即转入站内兜底收件箱
 _PERMANENT_TELEGRAM_ERRORS: tuple[type[BaseException], ...] = (
@@ -111,77 +162,59 @@ def _get_field(obj: Any, name: str, default: Any = None) -> Any:
     return getattr(obj, name, default)
 
 
-def _truncate_text(value: Any, limit: int) -> str:
-    """将文本安全裁剪至指定长度并附加省略号。"""
-    if value is None:
-        return ""
-    text = str(value).strip()
-    if len(text) <= limit:
-        return text
-    return f"{text[: max(0, limit - 3)].rstrip()}..."
-
-
-def _collapse_blank_lines(text: str) -> str:
-    """收敛连续三个及以上的换行符为单个空行并去除首尾空白。"""
-    return _MULTI_NEWLINE_RE.sub("\n\n", text).strip()
-
-
-def _render_custom_format_html(cf_info: Any) -> str:
-    """将 Arr 自定义格式评分与命中名称列表安全渲染为 HTML 片段。"""
+def _extract_compat_custom_format(
+    cf_info: Any,
+) -> tuple[int | None, tuple[str, ...]]:
+    """从兼容渲染字典或模型对象中提取 Arr 自定义格式评分与命中名称元组。"""
     if not cf_info:
-        return ""
-    lines: list[str] = []
-    score = _get_field(cf_info, "customFormatScore")
-    if score is not None and score != 0:
-        lines.append(TelegramMessage.render_html(t"分数: <b>{score}</b>"))
+        return None, ()
+    raw_score = _get_field(cf_info, "customFormatScore")
+    score = int(raw_score) if isinstance(raw_score, int) else None
     formats = _get_field(cf_info, "customFormats") or []
-    if formats:
-        chips = " ".join(
-            TelegramMessage.render_html(t"<code>{_get_field(cf, 'name', cf)}</code>")
-            for cf in formats
-        )
-        lines.append(f"格式: {chips}")
-    return "\n".join(lines)
+    names = tuple(
+        str(_get_field(cf, "name", cf)).strip()
+        for cf in formats
+        if str(_get_field(cf, "name", cf)).strip()
+    )
+    return score, names
 
 
-def _render_library_new_html(
+def resolve_server_route_precedence(
     *,
-    server_name: Any,
-    series_name: Any,
-    name: Any,
-    year: Any,
-    media_type: Any,
-    overview: Any,
-) -> str:
-    """统一渲染 Emby / Jellyfin 媒体入库通知的 Telegram HTML。"""
-    series_line = (
-        TelegramMessage.render_html(t"剧集: <b>{series_name}</b>")
-        if series_name
-        else ""
-    )
-    year_part = TelegramMessage.render_html(t" ({year})") if year else ""
-    title_line = (
-        TelegramMessage.render_html(t"标题: <b>{name}</b>{year_part:raw}")
-        if name
-        else ""
-    )
-    type_line = TelegramMessage.render_html(t"类型: {media_type}") if media_type else ""
-    overview_short = _truncate_text(overview, 120)
-    overview_block = (
-        TelegramMessage.render_html(t"\n描述:\n{overview_short}")
-        if overview_short
-        else ""
-    )
-    body = TelegramMessage.render_html(
-        t"🆕 <b>媒体库更新</b>\n\n"
-        t"{series_line:raw}\n"
-        t"{title_line:raw}\n"
-        t"{type_line:raw}\n"
-        t"{overview_block:raw}\n\n"
-        t"来源: <code>{server_name}</code>\n\n"
-        t"#入库"
-    )
-    return _collapse_blank_lines(body)
+    server_override: Any | None,
+    global_route: Any | None,
+    legacy_topic_id: int | None,
+    category: NotificationRouteCategory,
+) -> tuple[str, Any | None]:
+    """按单服覆盖 -> 全局非禁用路由 -> 遗留话题 -> 全局禁用路由的优先级解析生效来源。
+
+    Args:
+        server_override: 单服覆盖路由对象或 DTO。
+        global_route: 全局默认路由对象或 DTO。
+        legacy_topic_id: ``ServerInstance`` 上的遗留话题 ID。
+        category: 当前通知路由类别。
+
+    Returns:
+        ``(source, chosen_route)``，其中 ``source`` 为 ``server_override``、``global`` 或 ``legacy_topic``。
+    """
+    if server_override is not None:
+        return "server_override", server_override
+    if (
+        global_route is not None
+        and NotificationTargetType(global_route.target_type)
+        != NotificationTargetType.DISABLED
+    ):
+        return "global", global_route
+    if (
+        category
+        in (
+            NotificationRouteCategory.MEDIA_LIBRARY,
+            NotificationRouteCategory.MEDIA_REQUEST,
+        )
+        and legacy_topic_id
+    ):
+        return "legacy_topic", None
+    return "global", global_route
 
 
 def _safe_int_ids(raw: Any) -> list[int]:
@@ -534,6 +567,7 @@ class NotificationRuntime:
         file: Any = None,
         buttons: Sequence[Any] | None = None,
         reply_to: int | None = None,
+        parse_mode: str | None = "html",
     ) -> Any:
         """按目标 chat_id 加锁并执行最小发送间隔节流后调用 Telethon 发送消息。"""
         lock = self._chat_locks.setdefault(chat_id, asyncio.Lock())
@@ -552,7 +586,7 @@ class NotificationRuntime:
                     file=file,
                     buttons=buttons,
                     reply_to=reply_to,
-                    parse_mode="html",
+                    parse_mode=parse_mode,
                     link_preview=False,
                 )
             finally:
@@ -599,13 +633,64 @@ class NotificationRuntime:
                 exc,
             )
 
+    async def _emit_telegram_delivery_degraded(
+        self, job: _DeliveryJob, *, error_message: str
+    ) -> None:
+        """非个人私聊通道在终态投递失败时，向 ops_alert 发射带冷却的通知投递降级告警。
+
+        说明：
+            - ``user_dm`` 终态失败由站内收件箱兜底承接，不作为系统降级事件刷屏；
+            - ``ops_alert`` 自身的失败由当前批次 ``_record_ops_outcome`` 直接记录，避免自激二次告警；
+            - 若当前失败事件本身已是 ``TELEGRAM_DELIVERY_DEGRADED``，直接跳过以防递归自激。
+        """
+        if (
+            job.target is None
+            or job.target.is_user_dm
+            or job.category == NotificationRouteCategory.OPS_ALERT
+            or job.event == NotificationEvent.TELEGRAM_DELIVERY_DEGRADED
+        ):
+            return
+        failure_count = 1 + job.flood_attempts + job.transient_attempts
+        payload = TelegramDeliveryDegradedPayload(
+            target_label=job.target.label,
+            event_type=job.event.value,
+            failure_count=failure_count,
+            error_message=error_message,
+        )
+        source_key = f"tg_degraded:{job.target.label}"
+        try:
+            factory = self.resolve_session_factory(job.fallback_session_factory)
+            if factory is not None:
+                async with factory() as diag_session:
+                    await NotificationService(self.app).emit(
+                        payload,
+                        server_id=job.server_id,
+                        source_key=source_key,
+                        session=diag_session,
+                    )
+            else:
+                await NotificationService(self.app).emit(
+                    payload,
+                    server_id=job.server_id,
+                    source_key=source_key,
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "发射 TELEGRAM_DELIVERY_DEGRADED 告警失败: target={}, err={}",
+                job.target.label,
+                exc,
+            )
+
     async def _handle_terminal_failure(
         self, job: _DeliveryJob, *, error_message: str
     ) -> None:
-        """统一收尾不可恢复或已耗尽重试的任务：写私聊兜底、记录运维结果并释放计数。"""
+        """统一收尾不可恢复或已耗尽重试的任务：写私聊兜底、记录运维结果，并在非私聊通道失败时上报降级。"""
         try:
             await self._persist_inbox_fallback(job, error_message=error_message)
             await self._record_ops_outcome(job, success=False, error=error_message)
+            await self._emit_telegram_delivery_degraded(
+                job, error_message=error_message
+            )
         finally:
             self._finish_job()
 
@@ -842,6 +927,7 @@ class NotificationService:
     ) -> _ResolvedRouteConfig | None:
         """按单服覆盖 -> 全局非禁用路由 -> 遗留话题字段 -> 全局禁用路由的顺序查询生效配置。"""
         route_repo = NotificationRouteRepository(db)
+        server_route = None
         if server_id is not None:
             server_route = await route_repo.get_route(
                 scope_type=NotificationRouteScope.SERVER,
@@ -849,8 +935,6 @@ class NotificationService:
                 server_id=server_id,
                 fresh=True,
             )
-            if server_route is not None:
-                return self._route_to_resolved_config(server_route)
 
         global_route = await route_repo.get_route(
             scope_type=NotificationRouteScope.GLOBAL,
@@ -858,17 +942,15 @@ class NotificationService:
             server_id=None,
             fresh=True,
         )
+        legacy_topic: int | None = None
         if (
-            global_route is not None
-            and NotificationTargetType(global_route.target_type)
-            != NotificationTargetType.DISABLED
-        ):
-            return self._route_to_resolved_config(global_route)
-
-        # 未迁移或测试构造的旧服务器未写 NotificationRoute 时，回退读取 ServerInstance 遗留话题字段
-        if server_id is not None and category in (
-            NotificationRouteCategory.MEDIA_LIBRARY,
-            NotificationRouteCategory.MEDIA_REQUEST,
+            server_route is None
+            and server_id is not None
+            and category
+            in (
+                NotificationRouteCategory.MEDIA_LIBRARY,
+                NotificationRouteCategory.MEDIA_REQUEST,
+            )
         ):
             server = await ServerRepository(db).get_by_id(server_id)
             if server is not None:
@@ -877,11 +959,17 @@ class NotificationService:
                     if category == NotificationRouteCategory.MEDIA_LIBRARY
                     else server.request_notify_topic_id
                 )
-                if legacy_topic:
-                    return self._synthesize_legacy_topic_route(int(legacy_topic))
 
-        if global_route is not None:
-            return self._route_to_resolved_config(global_route)
+        source, chosen = resolve_server_route_precedence(
+            server_override=server_route,
+            global_route=global_route,
+            legacy_topic_id=legacy_topic,
+            category=category,
+        )
+        if source == "legacy_topic" and legacy_topic:
+            return self._synthesize_legacy_topic_route(int(legacy_topic))
+        if chosen is not None:
+            return self._route_to_resolved_config(chosen)
         return None
 
     async def _resolve_route_config(
@@ -967,23 +1055,25 @@ class NotificationService:
 
         targets: list[_DeliveryTarget] = []
         if route_cfg.target_type == NotificationTargetType.MAIN_CHAT:
-            targets.append(
-                _DeliveryTarget(
-                    chat_id=settings.telegram_chat_id,
-                    reply_to=None,
-                    label=f"main_chat:{settings.telegram_chat_id}",
+            if settings.telegram_chat_id:
+                targets.append(
+                    _DeliveryTarget(
+                        chat_id=settings.telegram_chat_id,
+                        reply_to=None,
+                        label=f"main_chat:{settings.telegram_chat_id}",
+                    )
                 )
-            )
         elif route_cfg.target_type == NotificationTargetType.FORUM_TOPIC:
             if route_cfg.target_topic_id:
                 chat_id = route_cfg.target_chat_id or settings.telegram_chat_id
-                targets.append(
-                    _DeliveryTarget(
-                        chat_id=chat_id,
-                        reply_to=route_cfg.target_topic_id,
-                        label=f"forum_topic:{chat_id}:{route_cfg.target_topic_id}",
+                if chat_id:
+                    targets.append(
+                        _DeliveryTarget(
+                            chat_id=chat_id,
+                            reply_to=route_cfg.target_topic_id,
+                            label=f"forum_topic:{chat_id}:{route_cfg.target_topic_id}",
+                        )
                     )
-                )
         elif route_cfg.target_type == NotificationTargetType.CHAT_OR_CHANNEL:
             if route_cfg.target_chat_id:
                 targets.append(
@@ -1685,205 +1775,266 @@ class NotificationService:
         )
         return first_sent
 
+    async def deliver_direct_dm(
+        self,
+        *,
+        user_id: int,
+        message: str,
+        parse_mode: str | None = "html",
+        buttons: Sequence[Any] | None = None,
+        file: Any = None,
+        client: TelethonClientWarper | Any | None = None,
+        skip_inbox_fallback: bool = False,
+        fallback_payload: NotificationPayload | None = None,
+        server_id: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> tuple[bool, str | None]:
+        """同步向指定用户发送私聊消息，统一经由共享节流管线投递并按需执行脱敏站内兜底。
+
+        Args:
+            user_id: 目标 Telegram 用户 ID。
+            message: 已渲染完成的待发送消息正文。
+            parse_mode: Telegram 解析模式（默认 ``"html"``，敏感凭据或旧式交互卡片可传 ``"markdown"`` / ``"md"``）。
+            buttons: 可选内联按钮列表。
+            file: 可选附件或海报媒体。
+            client: 可选显式传入的 Telethon 客户端；为空时回退 ``runtime.get_telethon_client()``。
+            skip_inbox_fallback: 为 ``True`` 时私聊失败后禁止写入站内兜底收件箱（如同步弹窗已当场返回凭据）。
+            fallback_payload: 允许站内兜底时用于生成脱敏收件箱摘要的强类型载荷。
+            server_id: 关联服务器实例 ID。
+            session: 可选异步数据库会话，用于派生兜底落库连接工厂。
+
+        Returns:
+            ``(delivered, error_message)`` 二元组；投递成功时 ``error_message`` 为 ``None``。
+        """
+        active_client = (
+            client if client is not None else self.runtime.get_telethon_client()
+        )
+        if active_client is None:
+            err_msg = "Telethon client unavailable"
+            await self._maybe_persist_direct_dm_fallback(
+                user_id=user_id,
+                server_id=server_id,
+                skip_inbox_fallback=skip_inbox_fallback,
+                fallback_payload=fallback_payload,
+                session=session,
+                error_message=err_msg,
+            )
+            return False, err_msg
+
+        try:
+            await self.runtime.send_with_chat_pacing(
+                active_client,
+                chat_id=user_id,
+                message=message,
+                file=file,
+                buttons=buttons,
+                parse_mode=parse_mode,
+            )
+            return True, None
+        except (RPCError, ValueError, TypeError, OSError) as exc:
+            err_msg = str(exc) or type(exc).__name__
+            await self._maybe_persist_direct_dm_fallback(
+                user_id=user_id,
+                server_id=server_id,
+                skip_inbox_fallback=skip_inbox_fallback,
+                fallback_payload=fallback_payload,
+                session=session,
+                error_message=err_msg,
+            )
+            return False, err_msg
+
+    async def _maybe_persist_direct_dm_fallback(
+        self,
+        *,
+        user_id: int,
+        server_id: int | None,
+        skip_inbox_fallback: bool,
+        fallback_payload: NotificationPayload | None,
+        session: AsyncSession | None,
+        error_message: str,
+    ) -> None:
+        """当同步私聊失败且未跳过站内兜底时，将脱敏载荷写入站内收件箱。"""
+        if skip_inbox_fallback or fallback_payload is None:
+            return
+        spec = get_event_spec(fallback_payload.event)
+        rendered = NotificationRenderer.render(fallback_payload)
+        job = _DeliveryJob(
+            event=spec.event,
+            category=spec.category,
+            severity=spec.severity.value,
+            is_mandatory=spec.is_mandatory,
+            rendered=rendered,
+            target=_DeliveryTarget(
+                chat_id=user_id,
+                reply_to=None,
+                label=f"user_dm:{user_id}",
+                is_user_dm=True,
+            ),
+            user_id=user_id,
+            server_id=server_id,
+            source_key=f"direct_dm:{user_id}",
+            skip_inbox_fallback=False,
+            created_at=self.runtime.clock(),
+            fallback_session_factory=self._derive_session_factory(session),
+        )
+        await self.runtime._persist_inbox_fallback(job, error_message=error_message)
+
     # ------------------------------------------------------------------
-    # 兼容层：供 Tickets 05~07 逐步迁移存量调用点前保持安全可用
+    # 兼容层：将旧字典上下文委托给强类型渲染器并经统一限流管线发送
     # ------------------------------------------------------------------
 
-    async def _render(
+    def _build_compat_payload(
         self, event_type: NotificationEvent, context: dict[str, Any]
-    ) -> str | None:
-        """兼容方法：将既有字典上下文渲染为安全转义的 Telegram HTML。"""
-        server_name = context.get("server_name", "")
+    ) -> NotificationPayload | None:
+        """将旧版字典上下文映射为强类型载荷对象，供兼容渲染路径复用统一渲染器。"""
+        server_name = str(context.get("server_name", "") or "")
 
         if event_type == NotificationEvent.REQUEST_SUBMIT:
-            user_id = context.get("user_id", "")
-            user_name = context.get("user_name", "")
-            media_title = context.get("media_title", "")
-            media_year = context.get("media_year", "")
-            overview_short = _truncate_text(context.get("overview", ""), 100)
-            prefix = context.get("prefix", "")
-            tmdb_id = context.get("tmdb_id", "")
-            return _collapse_blank_lines(
-                TelegramMessage.render_html(
-                    t"🎬 <b>收到新的求片请求</b>\n\n"
-                    t'👤 <b>申请人</b>: <code>(<a href="tg://user?id={user_id}">{user_name}</a>)</code>\n'
-                    t"🎬 <b>标题</b>: {media_title} ({media_year})\n"
-                    t"🖥️ <b>服务器</b>: {server_name}\n"
-                    t"📝 <b>简介</b>: {overview_short}\n\n"
-                    t"{prefix}: {tmdb_id}\n\n"
-                    t"#求片 #待审核"
-                )
+            prefix = str(context.get("prefix", "") or "TMDB")
+            return RequestSubmitPayload(
+                server_name=server_name,
+                user_id=int(context.get("user_id") or 0),
+                user_name=str(context.get("user_name", "") or ""),
+                media_title=str(context.get("media_title", "") or ""),
+                media_year=context.get("media_year"),
+                media_type=prefix,
+                media_id=context.get("tmdb_id", ""),
+                overview=context.get("overview"),
             )
 
         if event_type == NotificationEvent.REQUEST_APPROVED:
-            media_title = context.get("media_title", "")
-            media_year = context.get("media_year", "")
-            return TelegramMessage.render_html(
-                t"✅ <b>求片已批准</b>\n\n"
-                t"您请求的 <b>{media_title}</b> ({media_year}) 已通过审核。\n"
-                t"服务器: <code>{server_name}</code>\n\n"
-                t"系统已自动将其加入下载队列，请耐心等待下载完成。"
+            return RequestApprovedPayload(
+                server_name=server_name,
+                media_title=str(context.get("media_title", "") or ""),
+                media_year=context.get("media_year"),
             )
 
         if event_type == NotificationEvent.REQUEST_REJECTED:
-            media_title = context.get("media_title", "")
-            media_year = context.get("media_year", "")
-            reason = context.get("reason", "")
-            return TelegramMessage.render_html(
-                t"❌ <b>求片被拒绝</b>\n\n"
-                t"很抱歉，您请求的 <b>{media_title}</b> ({media_year}) 未能通过审核。\n"
-                t"服务器: <code>{server_name}</code>\n\n"
-                t"<b>拒绝原因:</b>\n"
-                t"{reason}\n\n"
-                t"如有疑问，请联系管理员。"
+            return RequestRejectedPayload(
+                server_name=server_name,
+                media_title=str(context.get("media_title", "") or ""),
+                media_year=context.get("media_year"),
+                reason=str(context.get("reason", "") or ""),
             )
 
         if event_type == NotificationEvent.REQUEST_COMPLETED:
-            media_title = context.get("media_title", "")
-            media_year = context.get("media_year", "")
-            return TelegramMessage.render_html(
-                t"🎉 <b>影片已入库！</b>\n\n"
-                t"<b>{media_title}</b> ({media_year}) 现已就绪。\n"
-                t"服务器: <code>{server_name}</code>\n\n"
-                t"祝您观影愉快！"
+            return RequestCompletedPayload(
+                server_name=server_name,
+                media_title=str(context.get("media_title", "") or ""),
+                media_year=context.get("media_year"),
             )
 
         if event_type == NotificationEvent.SONARR_DOWNLOAD:
             series = context.get("series")
-            series_title = _get_field(series, "title", "")
-            episodes = context.get("episodes") or []
-            ep_lines = "\n".join(
-                TelegramMessage.render_html(
-                    t"单集: S{_get_field(ep, 'seasonNumber', '')}E{_get_field(ep, 'episodeNumber', '')} - {_get_field(ep, 'title', '')}"
+            episodes = [
+                EpisodeDetail(
+                    season_number=int(
+                        _get_field(
+                            ep, "seasonNumber", _get_field(ep, "season_number", 0)
+                        )
+                        or 0
+                    ),
+                    episode_number=int(
+                        _get_field(
+                            ep, "episodeNumber", _get_field(ep, "episode_number", 0)
+                        )
+                        or 0
+                    ),
+                    title=str(_get_field(ep, "title", "") or ""),
                 )
-                for ep in episodes
+                for ep in (context.get("episodes") or [])
+            ]
+            cf_score, cf_names = _extract_compat_custom_format(
+                context.get("customFormatInfo")
             )
-            quality = _get_field(context.get("episodeFile"), "quality", "")
-            cf_block = _render_custom_format_html(context.get("customFormatInfo"))
-            upgrade_line = "✨ <b>画质洗版升级</b>" if context.get("isUpgrade") else ""
-            return _collapse_blank_lines(
-                TelegramMessage.render_html(
-                    t"📥 <b>剧集下载完成</b>\n\n"
-                    t"剧集: <b>{series_title}</b>\n"
-                    t"{ep_lines:raw}\n"
-                    t"质量: {quality}\n\n"
-                    t"{cf_block:raw}\n\n"
-                    t"{upgrade_line:raw}\n"
-                    t"来源: <code>{server_name}</code>\n\n"
-                    t"#Sonarr #下载完成"
-                )
+            return SonarrDownloadPayload(
+                server_name=server_name,
+                series_title=str(_get_field(series, "title", "") or ""),
+                episodes=episodes,
+                quality=str(
+                    _get_field(context.get("episodeFile"), "quality", "") or ""
+                ),
+                custom_format_score=cf_score,
+                custom_formats=cf_names,
+                is_upgrade=bool(context.get("isUpgrade")),
             )
 
         if event_type == NotificationEvent.SONARR_SERIES_ADD:
             series = context.get("series")
-            title = _get_field(series, "title", "")
-            year = _get_field(series, "year", "")
-            genres = _get_field(series, "genres") or []
-            genres_line = (
-                TelegramMessage.render_html(
-                    t"类型: {', '.join(str(g) for g in genres)}"
-                )
-                if genres
-                else ""
-            )
-            series_path = _get_field(series, "path", "")
-            return _collapse_blank_lines(
-                TelegramMessage.render_html(
-                    t"📺 <b>新增订阅剧集</b>\n\n"
-                    t"标题: <b>{title}</b> ({year})\n"
-                    t"{genres_line:raw}\n"
-                    t"路径: <code>{series_path}</code>\n"
-                    t"来源: <code>{server_name}</code>\n\n"
-                    t"#Sonarr #新订阅"
-                )
+            genres = [str(g) for g in (_get_field(series, "genres") or [])]
+            return SonarrSeriesAddPayload(
+                server_name=server_name,
+                title=str(_get_field(series, "title", "") or ""),
+                year=_get_field(series, "year"),
+                genres=genres,
+                path=str(_get_field(series, "path", "") or ""),
             )
 
         if event_type == NotificationEvent.RADARR_DOWNLOAD:
             movie = context.get("movie")
-            title = _get_field(movie, "title", "")
-            year = _get_field(movie, "year", "")
-            quality = _get_field(context.get("movieFile"), "quality", "")
-            cf_block = _render_custom_format_html(context.get("customFormatInfo"))
-            upgrade_line = "✨ <b>画质洗版升级</b>" if context.get("isUpgrade") else ""
-            overview_short = _truncate_text(_get_field(movie, "overview"), 80)
-            overview_line = (
-                TelegramMessage.render_html(t"简介: {overview_short}")
-                if overview_short
-                else ""
+            cf_score, cf_names = _extract_compat_custom_format(
+                context.get("customFormatInfo")
             )
-            return _collapse_blank_lines(
-                TelegramMessage.render_html(
-                    t"📥 <b>电影下载完成</b>\n\n"
-                    t"标题: <b>{title}</b> ({year})\n"
-                    t"质量: {quality}\n\n"
-                    t"{cf_block:raw}\n\n"
-                    t"{upgrade_line:raw}\n"
-                    t"{overview_line:raw}\n"
-                    t"来源: <code>{server_name}</code>\n\n"
-                    t"#Radarr #下载完成"
-                )
+            return RadarrDownloadPayload(
+                server_name=server_name,
+                title=str(_get_field(movie, "title", "") or ""),
+                year=_get_field(movie, "year"),
+                quality=str(_get_field(context.get("movieFile"), "quality", "") or ""),
+                custom_format_score=cf_score,
+                custom_formats=cf_names,
+                is_upgrade=bool(context.get("isUpgrade")),
+                overview=_get_field(movie, "overview"),
             )
 
         if event_type == NotificationEvent.RADARR_MOVIE_ADD:
             movie = context.get("movie")
-            title = _get_field(movie, "title", "")
-            year = _get_field(movie, "year", "")
-            genres = _get_field(movie, "genres") or []
-            genres_line = (
-                TelegramMessage.render_html(
-                    t"类型: {', '.join(str(g) for g in genres)}"
-                )
-                if genres
-                else ""
-            )
-            overview_short = _truncate_text(_get_field(movie, "overview"), 100)
-            overview_line = (
-                TelegramMessage.render_html(t"简介: {overview_short}")
-                if overview_short
-                else ""
-            )
-            tmdb_id = _get_field(movie, "tmdbId", "")
-            return _collapse_blank_lines(
-                TelegramMessage.render_html(
-                    t"🎬 <b>新增订阅电影</b>\n\n"
-                    t"标题: <b>{title}</b> ({year})\n"
-                    t"{genres_line:raw}\n"
-                    t"{overview_line:raw}\n"
-                    t"TMDB ID: <code>{tmdb_id}</code>\n"
-                    t"来源: <code>{server_name}</code>\n\n"
-                    t"#Radarr #新增订阅"
-                )
+            genres = [str(g) for g in (_get_field(movie, "genres") or [])]
+            return RadarrMovieAddPayload(
+                server_name=server_name,
+                title=str(_get_field(movie, "title", "") or ""),
+                year=_get_field(movie, "year"),
+                genres=genres,
+                overview=_get_field(movie, "overview"),
+                tmdb_id=_get_field(movie, "tmdbId"),
             )
 
         if event_type == NotificationEvent.EMBY_LIBRARY_NEW:
             item = context.get("item")
-            return _render_library_new_html(
+            return EmbyLibraryNewPayload(
                 server_name=server_name,
+                name=str(_get_field(item, "name", "") or ""),
                 series_name=_get_field(item, "series_name"),
-                name=_get_field(item, "name", ""),
                 year=_get_field(item, "production_year"),
-                media_type=_get_field(item, "type", ""),
+                item_type=str(_get_field(item, "type", "") or ""),
                 overview=_get_field(item, "overview"),
             )
 
         if event_type == NotificationEvent.JELLYFIN_LIBRARY_NEW:
             item = context.get("item")
             fallback_name = item if isinstance(item, str) else ""
-            return _render_library_new_html(
+            return JellyfinLibraryNewPayload(
                 server_name=server_name,
+                item=item if isinstance(item, JellyfinItemEvent) else None,
+                name=str(_get_field(item, "name", fallback_name) or ""),
                 series_name=_get_field(item, "series_name"),
-                name=_get_field(item, "name", fallback_name),
                 year=_get_field(item, "year"),
-                media_type=_get_field(item, "item_type", ""),
+                item_type=str(_get_field(item, "item_type", "") or ""),
                 overview=_get_field(item, "overview"),
             )
 
         if event_type == NotificationEvent.SYSTEM_TEST:
-            return TelegramMessage.render_html(
-                t"🔔 <b>系统通知测试</b>\n\n来源: <code>{server_name}</code>"
-            )
+            return SystemTestPayload(server_name=server_name)
 
         return None
+
+    async def _render(
+        self, event_type: NotificationEvent, context: dict[str, Any]
+    ) -> str | None:
+        """兼容方法：将既有字典上下文委托至 ``NotificationRenderer`` 生成安全转义的 Telegram HTML。"""
+        payload = self._build_compat_payload(event_type, context)
+        if payload is None:
+            return None
+        return NotificationRenderer.render(payload).telegram_html
 
     async def send_to_topic(
         self,
@@ -1893,7 +2044,7 @@ class NotificationService:
         buttons: list | None = None,
         **kwargs: Any,
     ) -> Any:
-        """兼容方法：直接发送通知到指定的 Topic 或 Channel。"""
+        """兼容方法：通过统一限流管线发送通知事件到指定的 Topic 或 Channel。"""
         client = self.runtime.get_telethon_client()
         if not topic_id or client is None:
             return None
@@ -1912,14 +2063,14 @@ class NotificationService:
             target_reply = topic_id
 
         try:
-            sent_msg = await client.send_message(
+            sent_msg = await self.runtime.send_with_chat_pacing(
+                client,
                 chat_id=target_chat,
                 message=message_text,
                 file=image,
                 buttons=buttons,
                 reply_to=target_reply,
                 parse_mode="html",
-                link_preview=False,
             )
             logger.info("已发送通知：{}（目标：{}）", event_type.value, topic_id)
             return sent_msg
@@ -1937,7 +2088,7 @@ class NotificationService:
         image: Any = None,
         **kwargs: Any,
     ) -> bool:
-        """兼容方法：发送模板通知给特定用户 (私聊)，返回是否发送成功。"""
+        """兼容方法：向特定用户私聊发送通知事件，返回是否发送成功。"""
         client = self.runtime.get_telethon_client()
         if client is None:
             return False
@@ -1945,41 +2096,49 @@ class NotificationService:
         message_text = await self._render(event_type, kwargs)
         if not message_text:
             logger.warning(
-                "用户私聊通知模板渲染为空: user_id={}, event={}",
+                "用户私聊通知渲染结果为空: user_id={}, event={}",
                 user_id,
                 event_type.value,
             )
             return False
 
-        try:
-            await client.send_message(
-                chat_id=user_id, message=message_text, file=image, parse_mode="html"
-            )
+        ok, err = await self.deliver_direct_dm(
+            user_id=user_id,
+            message=message_text,
+            file=image,
+            parse_mode="html",
+            client=client,
+            skip_inbox_fallback=True,
+        )
+        if ok:
             logger.debug("发送的用户通知：{} -> 用户 {}", event_type.value, user_id)
-            return True
-        except (RPCError, ValueError, TypeError, OSError) as e:
+        else:
             logger.error(
-                "无法向 {} 发送用户通知 ({})：{}", user_id, event_type.value, e
+                "无法向 {} 发送用户通知 ({})：{}", user_id, event_type.value, err
             )
-            return False
+        return ok
 
     async def send_text_to_user(
         self, user_id: int, message_text: str, image: Any = None
     ) -> bool:
-        """兼容方法：发送自定义文本通知给特定用户 (私聊)，返回是否发送成功。"""
+        """兼容方法：通过统一限流管线发送自定义文本通知给特定用户 (私聊)，返回是否发送成功。"""
         client = self.runtime.get_telethon_client()
         if not message_text or client is None:
             return False
 
-        try:
-            await client.send_message(
-                chat_id=user_id, message=message_text, file=image, parse_mode="html"
-            )
+        ok, err = await self.deliver_direct_dm(
+            user_id=user_id,
+            message=message_text,
+            file=image,
+            parse_mode="html",
+            client=client,
+            skip_inbox_fallback=True,
+        )
+        if ok:
             logger.debug("发送的用户文本通知 -> 用户 {}", user_id)
-            return True
-        except (RPCError, ValueError, TypeError, OSError) as e:
-            logger.error("无法向 {} 发送用户文本通知：{}", user_id, e)
-            return False
+        else:
+            logger.error("无法向 {} 发送用户文本通知：{}", user_id, err)
+        return ok
 
 
 def attach_external_client_hooks(
@@ -2011,6 +2170,7 @@ def attach_external_client_hooks(
     async def _on_error(
         operation: str, status_code: int | None, error_message: str
     ) -> None:
+        """外部客户端请求异常时向统一管线发射带同源冷却的告警事件。"""
         await NotificationService(app).emit(
             ExternalServerErrorPayload(
                 server_name=server_name,
@@ -2024,6 +2184,7 @@ def attach_external_client_hooks(
         )
 
     async def _on_recovered(operation: str) -> None:
+        """外部客户端故障自愈后发射恢复事件并解除同源告警冷却。"""
         await NotificationService(app).emit(
             ExternalServerRecoveredPayload(
                 server_name=server_name,

@@ -23,6 +23,16 @@ class QbittorrentClient(AuthenticatedClient):
         on_request_error: RequestErrorHook | None = None,
         on_request_recovered: RequestRecoveredHook | None = None,
     ):
+        """初始化 qBittorrent WebUI 异步客户端。
+
+        Args:
+            client: 底层异步 HTTP 客户端实例。
+            username: WebUI 登录用户名（配置 ``api_key`` 时可为空）。
+            password: WebUI 登录密码。
+            api_key: 反代或 API Key 鉴权凭据；非空时跳过表单登录。
+            on_request_error: 请求异常时触发的运维告警钩子。
+            on_request_recovered: 请求恢复正常时触发的恢复通知钩子。
+        """
         super().__init__(
             client,
             on_request_error=on_request_error,
@@ -34,6 +44,11 @@ class QbittorrentClient(AuthenticatedClient):
 
     @override
     async def _login(self) -> str | None:
+        """执行 qBittorrent 认证登录，触发异常/恢复钩子并返回会话凭据文本。
+
+        Returns:
+            使用 API Key 认证时标记已登录并返回 ``None``；表单登录成功时返回会话 Cookie 文本。
+        """
         if self.api_key:
             self._is_logged_in = True
             return None
@@ -46,30 +61,13 @@ class QbittorrentClient(AuthenticatedClient):
             response = await self._client.post("/api/v2/auth/login", data=data)
             response.raise_for_status()
             await self._notify_request_recovered(operation=operation)
-            return response.text  # Returns the session cookie on successful login
-        except httpx2.TimeoutException as e:
-            await self._notify_request_error(
-                operation=operation,
-                status_code=None,
-                error_message=str(e) or type(e).__name__,
-            )
-            raise
-        except httpx2.HTTPStatusError as e:
-            if e.response.status_code >= 500 or e.response.status_code in (401, 403):
-                await self._notify_request_error(
-                    operation=operation,
-                    status_code=e.response.status_code,
-                    error_message=(
-                        f"HTTP {e.response.status_code}: {e.response.text[:300]}"
-                    ),
-                )
-            raise
-        except httpx2.RequestError as e:
-            await self._notify_request_error(
-                operation=operation,
-                status_code=None,
-                error_message=str(e) or type(e).__name__,
-            )
+            return response.text  # 登录成功时返回会话 Cookie 文本
+        except (
+            httpx2.TimeoutException,
+            httpx2.HTTPStatusError,
+            httpx2.RequestError,
+        ) as e:
+            await self._notify_http_exception(operation, e)
             raise
 
     @override

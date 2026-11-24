@@ -8,6 +8,7 @@ from bot.utils import safe_reply
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from repositories.config_repo import ConfigRepository
+from services.notification_service import NotificationService
 from services.user_service import UserService
 
 settings = get_settings()
@@ -60,11 +61,12 @@ async def checkin_handler(
         await safe_reply(event, result.message)
 
     if result.private_message:
-        try:
-            await client.send_message(user_id, str(result.private_message))
-        except (
-            errors.UserIsBlockedError,
-            errors.PeerIdInvalidError,
-            errors.RPCError,
-        ) as e:
-            logger.warning("向用户 {} 发送签到私聊消息失败: {}", user_id, e)
+        ok, err = await NotificationService(app).deliver_direct_dm(
+            user_id=user_id,
+            message=str(result.private_message),
+            parse_mode="markdown",
+            client=client,
+            skip_inbox_fallback=True,
+        )
+        if not ok:
+            logger.warning("向用户 {} 发送签到私聊消息失败: {}", user_id, err)

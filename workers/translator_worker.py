@@ -1,5 +1,4 @@
 import re
-import sys
 from datetime import datetime, timedelta
 from typing import Any, cast
 
@@ -13,18 +12,7 @@ from models.protocols import BaseItem
 from models.tmdb import TmdbEpisode
 from services.media_service import MediaService
 from services.notification_renderer import TranslatorErrorPayload
-from services.notification_service import NotificationService
-
-
-def _resolve_active_app() -> Any | None:
-    """安全读取已加载的全局 FastAPI 应用实例，未初始化时返回 None。"""
-    main_mod = sys.modules.get("main")
-    if main_mod is None:
-        return None
-    app = getattr(main_mod, "app", None)
-    if app is None or getattr(app, "state", None) is None:
-        return None
-    return app
+from services.notification_service import NotificationService, resolve_active_app
 
 
 async def _emit_translator_error(
@@ -117,7 +105,7 @@ async def _get_tmdb_episode_info(
 
 async def translate_media_item(server_id: int, item_id: str) -> None:
     """翻译 Emby/Jellyfin 媒体项的名称、排序名称和概述字段，并在异常时发射运维告警。"""
-    app = _resolve_active_app()
+    app = resolve_active_app()
     if app is None:
         logger.warning(
             "应用尚未初始化，跳过翻译任务: server_id={}, item_id={}", server_id, item_id
@@ -313,7 +301,7 @@ async def add_translate_media_item(server_id: int, item_id: str, days: int) -> N
         item_id (str): 媒体项的唯一标识符。
         days (int): 延迟天数。
     """
-    app = _resolve_active_app()
+    app = resolve_active_app()
     if app is None:
         return
     scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)
@@ -338,7 +326,7 @@ async def cancel_translate_media_item(server_id: int, item_id: str) -> None:
         server_id (int): 服务器 ID。
         item_id (str): 媒体项的唯一标识符。
     """
-    app = _resolve_active_app()
+    app = resolve_active_app()
     if app is None:
         return
     scheduler: AsyncIOScheduler | None = getattr(app.state, "scheduler", None)

@@ -42,10 +42,72 @@ from services.notification_renderer import (
     RequestSubmitPayload,
     render_request_topic_card_status,
 )
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, resolve_tg_display_name
 from services.user_service import Result
 
 settings = get_settings()
+
+
+async def sync_request_topic_card_status(
+    notification_service: Any,
+    req: MediaRequest,
+    *,
+    stage: Literal[
+        "approved", "rejected", "failed", "expired", "canceled", "completed"
+    ],
+    server_name: str,
+    media_title: str,
+    economy: EffectiveEconomyContext,
+    session: AsyncSession | None = None,
+    user_name: str | None = None,
+    approver_name: str | None = None,
+    detail_text: str | None = None,
+) -> None:
+    """若求片存在 ``topic_message_id``，非致命回写群内原审核卡片并清空过期按钮。
+
+    Args:
+        notification_service: 统一通知服务实例。
+        req: 求片 ORM 记录。
+        stage: 终结或入库阶段标识。
+        server_name: 目标媒体服务器名称。
+        media_title: 展示用的媒体标题。
+        economy: ADR-0004 有效经济开关快照。
+        session: 可选异步数据库会话。
+        user_name: 可选申请人展示名。
+        approver_name: 可选审核管理员展示名。
+        detail_text: 可选失败/拒绝/超时详情说明。
+    """
+    if not req.topic_message_id:
+        return
+    edit_fn = getattr(notification_service, "edit_route_message", None)
+    if not callable(edit_fn):
+        return
+    card_html = render_request_topic_card_status(
+        stage=stage,
+        request_id=req.id,
+        user_id=req.user_id,
+        server_name=server_name,
+        media_title=media_title,
+        media_type=req.media_type,
+        media_id=req.media_id,
+        reserved_cost=req.reserved_cost,
+        approver_name=approver_name,
+        detail_text=detail_text,
+        user_name=user_name,
+        economy=economy,
+    )
+    with contextlib.suppress(errors.RPCError, ValueError, TypeError, OSError):
+        res = edit_fn(
+            category=NotificationRouteCategory.MEDIA_REQUEST,
+            server_id=req.arr_id,
+            message_id=req.topic_message_id,
+            new_content=card_html,
+            clear_buttons=True,
+            parse_mode="html",
+            session=session,
+        )
+        if inspect.isawaitable(res):
+            await res
 
 
 class RequestService:
@@ -461,16 +523,8 @@ class RequestService:
 
     async def _safe_get_user_name(self, user_id: int) -> str | None:
         """非致命读取申请人展示名称，供编辑原审核卡片时显示。"""
-        getter = getattr(self.client, "get_user_name", None)
-        if not callable(getter):
-            return None
-        try:
-            res = getter(user_id)
-            if inspect.isawaitable(res):
-                res = await res
-            return str(res) if res else None
-        except errors.RPCError, ValueError, TypeError, OSError, AttributeError:
-            return None
+        name = await resolve_tg_display_name(self.client, user_id)
+        return name or None
 
     async def _sync_topic_card_status(
         self,
@@ -488,30 +542,18 @@ class RequestService:
         if not req.topic_message_id:
             return
         user_name = await self._safe_get_user_name(req.user_id)
-        card_html = render_request_topic_card_status(
+        await sync_request_topic_card_status(
+            self.notification_service,
+            req,
             stage=stage,
-            request_id=req.id,
-            user_id=req.user_id,
             server_name=server_name,
             media_title=req.title or str(req.media_id),
-            media_type=req.media_type,
-            media_id=req.media_id,
-            reserved_cost=req.reserved_cost,
+            economy=economy,
+            session=self.request_repo.session,
+            user_name=user_name,
             approver_name=approver_name,
             detail_text=detail_text,
-            user_name=user_name,
-            economy=economy,
         )
-        with contextlib.suppress(errors.RPCError, ValueError, TypeError, OSError):
-            await self.notification_service.edit_route_message(
-                category=NotificationRouteCategory.MEDIA_REQUEST,
-                server_id=req.arr_id,
-                message_id=req.topic_message_id,
-                new_content=card_html,
-                clear_buttons=True,
-                parse_mode="html",
-                session=self.request_repo.session,
-            )
 
     async def _emit_requester_dm(
         self,

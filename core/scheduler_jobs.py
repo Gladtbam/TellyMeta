@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,7 +26,7 @@ from services.notification_renderer import (
     OrphanSessionsSummaryPayload,
     StartupCalibrationSummaryPayload,
 )
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, resolve_active_app
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -305,17 +304,6 @@ def schedule_account_lifecycle_jobs(
     # 新的 pre_expiry_check，避免重复发送临近到期私聊轰炸；到期保活抢救仍由 expiry_ban 兜底。
 
 
-def _resolve_active_app() -> Any | None:
-    """安全读取已初始化的全局 FastAPI 应用实例，未初始化时返回 None。"""
-    main_mod = sys.modules.get("main")
-    if main_mod is None:
-        return None
-    app = getattr(main_mod, "app", None)
-    if app is None or getattr(app, "state", None) is None:
-        return None
-    return app
-
-
 async def _emit_ops_notification(
     app: Any | None,
     payload: NotificationPayload,
@@ -325,7 +313,7 @@ async def _emit_ops_notification(
     session: Any | None = None,
 ) -> None:
     """安全通过统一通知管线发射运维告警或摘要（应用未就绪或发送异常时不中断定时任务）。"""
-    target_app = app if app is not None else _resolve_active_app()
+    target_app = app if app is not None else resolve_active_app()
     if target_app is None or getattr(target_app, "state", None) is None:
         return
     try:
@@ -937,7 +925,8 @@ async def cleanup_inactive_users() -> None:
                         logger.error("用户 {} 清理失败: {}", uid, result.message)
                         failed_users.append(f"{uid}: {result.message}")
 
-            if cleaned_users:
+            # 清理或失败任一非零时均发射汇总，避免全量清理失败被静默吞掉
+            if cleaned_users or failed_users:
                 await _emit_ops_notification(
                     app,
                     CleanupInactiveSummaryPayload(
@@ -1065,9 +1054,19 @@ async def recover_and_calibrate_account_lifecycles(app: FastAPI) -> dict[str, in
             account_service = AccountService(app, session)
             summary = await account_service.calibrate_account_lifecycles()
             logger.info("媒体账号生命周期调度校准完成: {}", summary)
+            # 含回填与孤立任务清理在内的任意实际变更均发一次启动校准摘要
             if any(
                 summary.get(k, 0) > 0
-                for k in ("resets", "unsuspended", "auto_renewed", "banned", "deleted")
+                for k in (
+                    "resets",
+                    "unsuspended",
+                    "auto_renewed",
+                    "banned",
+                    "deleted",
+                    "backfilled_anchors",
+                    "backfilled_delete_at",
+                    "orphan_jobs_removed",
+                )
             ):
                 details: list[str] = []
                 if summary.get("auto_renewed", 0) > 0:

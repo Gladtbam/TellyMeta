@@ -1,6 +1,7 @@
 import base64
 import contextlib
 import textwrap
+from types import SimpleNamespace
 
 import aiofiles.tempfile
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
+from services.notification_service import NotificationService
 from services.request_service import RequestService
 from services.subtitle_service import SubtitleService
 
@@ -316,17 +318,38 @@ async def run_subtitle_upload_flow(
                     await response_msg.delete()
 
         except errors.AlreadyInConversationError:
-            await client.send_message(
-                chat_id,
-                "⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
+            app_obj = getattr(telethon_client, "app", None) or SimpleNamespace(
+                state=SimpleNamespace(telethon_client=telethon_client)
+            )
+            await NotificationService(app_obj).deliver_direct_dm(
+                user_id=chat_id,
+                message="⚠️ 错误：当前已有正在进行的会话。\n请先完成它，或发送 /cancel 指令。",
+                parse_mode="md",
+                client=telethon_client,
+                skip_inbox_fallback=True,
             )
         except TimeoutError:
-            await client.send_message(chat_id, "⏳ 操作超时，字幕上传会话已结束。")
+            app_obj = getattr(telethon_client, "app", None) or SimpleNamespace(
+                state=SimpleNamespace(telethon_client=telethon_client)
+            )
+            await NotificationService(app_obj).deliver_direct_dm(
+                user_id=chat_id,
+                message="⏳ 操作超时，字幕上传会话已结束。",
+                parse_mode="md",
+                client=telethon_client,
+                skip_inbox_fallback=True,
+            )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(t"Conversation error: {e}")
-            await client.send_message(
-                chat_id,
-                TelegramMessage.render_markdown(t"❌ 发生未知错误: {e!s}"),
+            app_obj = getattr(telethon_client, "app", None) or SimpleNamespace(
+                state=SimpleNamespace(telethon_client=telethon_client)
+            )
+            await NotificationService(app_obj).deliver_direct_dm(
+                user_id=chat_id,
+                message=TelegramMessage.render_markdown(t"❌ 发生未知错误: {e!s}"),
+                parse_mode="md",
+                client=telethon_client,
+                skip_inbox_fallback=True,
             )
 
     if session is not None:

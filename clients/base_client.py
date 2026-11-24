@@ -54,6 +54,13 @@ class BaseClient:
         on_request_error: RequestErrorHook | None = None,
         on_request_recovered: RequestRecoveredHook | None = None,
     ):
+        """初始化 HTTP 客户端基类。
+
+        Args:
+            client: 底层异步 HTTP 客户端实例。
+            on_request_error: 请求连续失败或返回异常状态码时的异步告警回调。
+            on_request_recovered: 故障恢复后首次成功响应时的异步恢复回调。
+        """
         self._client = client
         self._on_request_error: RequestErrorHook | None = on_request_error
         self._on_request_recovered: RequestRecoveredHook | None = on_request_recovered
@@ -108,6 +115,46 @@ class BaseClient:
         if self._client:
             await self._client.aclose()
 
+    async def _notify_http_exception(
+        self,
+        operation: str,
+        exc: httpx2.TimeoutException | httpx2.HTTPStatusError | httpx2.RequestError,
+        *,
+        suppress_auth_error: bool = False,
+        is_cf_block: bool = False,
+    ) -> None:
+        """统一将超时、5xx 或鉴权失败等 HTTP 异常分派至错误监控钩子。"""
+        if isinstance(exc, httpx2.TimeoutException):
+            await self._notify_request_error(
+                operation=operation,
+                status_code=None,
+                error_message=str(exc) or type(exc).__name__,
+            )
+            return
+        if isinstance(exc, httpx2.HTTPStatusError):
+            will_relogin = (
+                suppress_auth_error
+                and exc.response.status_code in (401, 403)
+                and not is_cf_block
+            )
+            if not will_relogin and (
+                exc.response.status_code >= 500
+                or exc.response.status_code in (401, 403)
+            ):
+                await self._notify_request_error(
+                    operation=operation,
+                    status_code=exc.response.status_code,
+                    error_message=(
+                        f"HTTP {exc.response.status_code}: {exc.response.text[:300]}"
+                    ),
+                )
+            return
+        await self._notify_request_error(
+            operation=operation,
+            status_code=None,
+            error_message=str(exc) or type(exc).__name__,
+        )
+
     async def _request(
         self,
         method: str,
@@ -124,10 +171,12 @@ class BaseClient:
             method (str): HTTP方法，如'GET', 'POST', 'DELETE'等。
             url (str): 请求的URL路径。
             response_model (type[T], optional): 用于验证响应数据的Pydantic模型类。
+            parser (Callable[[Any], T_parser], optional): 自定义响应 JSON 解析回调，优先级高于 ``response_model``。
+            raw (bool): 为 True 时直接返回原始 ``httpx2.Response`` 对象。
             _suppress_auth_error (bool): 为 True 时由子类先行尝试 401/403 重登录后再决定是否触发异常钩子。
             **kwargs: 传递给httpx请求方法的其他参数，如params, json, headers等。
         Returns:
-            T | None: 如果请求成功且响应验证通过，返回模型对象，否则返回None。
+            httpx2.Response | T | T_parser | None: 依参数返回原始响应、自定义解析结果、校验模型实例或 None。
         """
         if self._client is None:
             raise RuntimeError("HTTP 客户端未初始化。首先调用 login()。")
@@ -183,11 +232,7 @@ class BaseClient:
             except httpx2.TimeoutException as e:
                 if attempt == max_retries:
                     logger.error("请求超时（已重试{}次）：{}", max_retries, e)
-                    await self._notify_request_error(
-                        operation=operation,
-                        status_code=None,
-                        error_message=str(e) or type(e).__name__,
-                    )
+                    await self._notify_http_exception(operation, e)
                     raise
                 logger.warning(
                     t"请求超时，正在进行第 {attempt + 1}/{max_retries} 次重试... URL: {url}"
@@ -202,30 +247,16 @@ class BaseClient:
                     logger.error(
                         "HTTP 错误：{} -{}", e.response.status_code, e.response.text
                     )
-                will_relogin = (
-                    _suppress_auth_error
-                    and e.response.status_code in (401, 403)
-                    and not is_cf_block
+                await self._notify_http_exception(
+                    operation,
+                    e,
+                    suppress_auth_error=_suppress_auth_error,
+                    is_cf_block=is_cf_block,
                 )
-                if not will_relogin and (
-                    e.response.status_code >= 500
-                    or e.response.status_code in (401, 403)
-                ):
-                    await self._notify_request_error(
-                        operation=operation,
-                        status_code=e.response.status_code,
-                        error_message=(
-                            f"HTTP {e.response.status_code}: {e.response.text[:300]}"
-                        ),
-                    )
                 raise
             except httpx2.RequestError as e:
                 logger.error("请求错误：{}", e)
-                await self._notify_request_error(
-                    operation=operation,
-                    status_code=None,
-                    error_message=str(e) or type(e).__name__,
-                )
+                await self._notify_http_exception(operation, e)
                 raise
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("未知错误：{}", e)
@@ -421,6 +452,13 @@ class AuthenticatedClient(BaseClient):
         on_request_error: RequestErrorHook | None = None,
         on_request_recovered: RequestRecoveredHook | None = None,
     ):
+        """初始化支持自动重登录的认证客户端基类。
+
+        Args:
+            client: 底层异步 HTTP 客户端实例。
+            on_request_error: 请求失败时的异步异常钩子。
+            on_request_recovered: 故障恢复时的异步恢复钩子。
+        """
         super().__init__(
             client,
             on_request_error=on_request_error,

@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import os
 import re
-import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,7 @@ from models.sonarr_webhook import (
 from models.tmdb import TmdbEpisode
 from models.tvdb import TvdbData, TvdbEpisodesData
 from services.notification_renderer import NfoProcessFailedPayload
-from services.notification_service import NotificationService
+from services.notification_service import NotificationService, resolve_active_app
 
 
 async def _emit_nfo_failure(
@@ -40,9 +39,8 @@ async def _emit_nfo_failure(
     server_name: str = "",
 ) -> None:
     """当主应用已初始化时通过统一通知管线发射 NFO 生成异常告警（隔离测试安全跳过）。"""
-    main_mod = sys.modules.get("main")
-    app = getattr(main_mod, "app", None) if main_mod is not None else None
-    if app is None or getattr(app, "state", None) is None:
+    app = resolve_active_app()
+    if app is None:
         return
     try:
         await NotificationService(app).emit(

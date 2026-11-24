@@ -89,6 +89,7 @@ from services.account_service import AccountService, format_traffic_release_summ
 from services.notification_service import (
     NotificationService,
     get_or_create_notification_runtime,
+    resolve_server_route_precedence,
 )
 from services.settings_service import SettingsServices
 from services.traffic_service import invalidate_traffic_server_cache
@@ -518,6 +519,60 @@ _SERVER_ROUTE_CATEGORY_ORDER: tuple[NotificationRouteCategory, ...] = (
 )
 
 
+async def _sync_changed_legacy_topic_route(
+    route_repo: NotificationRouteRepository,
+    *,
+    server_id: int,
+    category: NotificationRouteCategory,
+    topic_val: int,
+) -> None:
+    """在服务器更新接口显式修改遗留话题 ID 时，同步刷新对应单服覆盖路由并保留可选事件。"""
+    existing = await route_repo.get_route(
+        scope_type=NotificationRouteScope.SERVER,
+        server_id=server_id,
+        category=category,
+    )
+    if topic_val == 0:
+        if existing is not None:
+            await route_repo.delete_server_route(server_id=server_id, category=category)
+        return
+
+    preserved_events = (
+        sorted(
+            NotificationRouteRepository.parse_enabled_events(
+                existing.enabled_events_json
+            )
+        )
+        if existing is not None
+        else []
+    )
+    preserved_escalate = (
+        bool(existing.escalate_admin_dm) if existing is not None else False
+    )
+    if topic_val > 0:
+        await route_repo.upsert_route(
+            scope_type=NotificationRouteScope.SERVER,
+            server_id=server_id,
+            category=category,
+            target_type=NotificationTargetType.FORUM_TOPIC,
+            target_chat_id=existing.target_chat_id if existing is not None else None,
+            target_topic_id=int(topic_val),
+            escalate_admin_dm=preserved_escalate,
+            enabled_events=preserved_events,
+        )
+    else:
+        await route_repo.upsert_route(
+            scope_type=NotificationRouteScope.SERVER,
+            server_id=server_id,
+            category=category,
+            target_type=NotificationTargetType.CHAT_OR_CHANNEL,
+            target_chat_id=int(topic_val),
+            target_topic_id=None,
+            escalate_admin_dm=preserved_escalate,
+            enabled_events=preserved_events,
+        )
+
+
 def _route_orm_to_dto(route: NotificationRoute) -> NotificationRouteDto:
     """将数据库 ``NotificationRoute`` 记录转换为前端可消费的 ``NotificationRouteDto``。"""
     scope: str = (
@@ -684,25 +739,22 @@ async def get_notification_routes(
 
             override = server_overrides.get((srv.id, cat.value))
             global_dto = global_lookup[cat.value]
-            if override is not None:
+            source, chosen = resolve_server_route_precedence(
+                server_override=override,
+                global_route=global_dto,
+                legacy_topic_id=legacy_topic,
+                category=cat,
+            )
+            if source == "server_override" and chosen is not None:
                 categories_state[cat.value] = ServerCategoryRouteStateDto(
                     category=cat.value,
                     source="server_override",
                     is_override=True,
-                    effective=override,
-                    override=override,
+                    effective=chosen,
+                    override=chosen,
                     legacy_topic_id=legacy_topic,
                 )
-            elif global_dto.target_type != NotificationTargetType.DISABLED.value:
-                categories_state[cat.value] = ServerCategoryRouteStateDto(
-                    category=cat.value,
-                    source="global",
-                    is_override=False,
-                    effective=global_dto,
-                    override=None,
-                    legacy_topic_id=legacy_topic,
-                )
-            elif legacy_topic:
+            elif source == "legacy_topic" and legacy_topic:
                 categories_state[cat.value] = ServerCategoryRouteStateDto(
                     category=cat.value,
                     source="legacy_topic",
@@ -720,7 +772,7 @@ async def get_notification_routes(
                     category=cat.value,
                     source="global",
                     is_override=False,
-                    effective=global_dto,
+                    effective=chosen or global_dto,
                     override=None,
                     legacy_topic_id=legacy_topic,
                 )
@@ -788,23 +840,46 @@ async def upsert_notification_route(
     response_model=NotificationRouteDeleteResponse,
 )
 async def delete_server_notification_route(
+    request: Request,
     server_id: int,
     category: NotificationRouteCategory,
     session: AsyncSession = Depends(get_db),
 ) -> NotificationRouteDeleteResponse:
-    """删除指定服务器的通知覆盖路由，使其恢复继承全局默认规则。"""
-    server = await ServerRepository(session).get_by_id(server_id)
+    """删除指定服务器的通知覆盖路由，并清理对应遗留话题字段使其真正恢复继承全局默认规则。"""
+    server_repo = ServerRepository(session)
+    server = await server_repo.get_by_id(server_id)
     if server is None:
         raise HTTPException(status_code=404, detail="目标服务器不存在")
 
     deleted = await NotificationRouteRepository(session).delete_server_route(
         server_id, category
     )
+    # 同步清理迁移后仍保留的遗留话题列，避免全局路由为 disabled 时错误回退至旧话题
+    legacy_cleared = False
+    if category == NotificationRouteCategory.MEDIA_LIBRARY and (
+        server.notify_topic_id is not None
+    ):
+        await server_repo.update_notify_config(server_id, notify_topic_id=None)
+        legacy_cleared = True
+        for attr in ("media_clients", "sonarr_clients", "radarr_clients"):
+            client_map = getattr(getattr(request.app, "state", None), attr, None)
+            if isinstance(client_map, dict) and server_id in client_map:
+                client_map[server_id].notify_topic_id = None
+    elif category == NotificationRouteCategory.MEDIA_REQUEST and (
+        server.request_notify_topic_id is not None
+    ):
+        await server_repo.update_notify_config(server_id, request_notify_topic_id=None)
+        legacy_cleared = True
+        for attr in ("sonarr_clients", "radarr_clients"):
+            client_map = getattr(getattr(request.app, "state", None), attr, None)
+            if isinstance(client_map, dict) and server_id in client_map:
+                client_map[server_id].request_notify_topic_id = None
+
     return NotificationRouteDeleteResponse(
         success=True,
         deleted=deleted,
         message="已清除单服覆盖，恢复继承全局默认路由"
-        if deleted
+        if (deleted or legacy_cleared)
         else "该服务器当前未配置此类别的独立覆盖路由",
     )
 
@@ -1194,13 +1269,38 @@ async def update_server(
         }
         update_dict["path_mappings"] = json.dumps(mapping_dict)
 
-    # 高级配置
+    # 高级配置：先记录旧值；仅在遗留话题字段实际发生修改时才同步单服通知路由，避免常规保存误覆盖高级路由规则
+    prev_notify_topic = current_server.notify_topic_id if current_server else None
+    prev_request_topic = (
+        current_server.request_notify_topic_id if current_server else None
+    )
+    route_repo = NotificationRouteRepository(session)
     if data.notify_topic_id is not None:
         await repo.update_notify_config(server_id, notify_topic_id=data.notify_topic_id)
+        if (
+            "notify_topic_id" in data.model_fields_set
+            and data.notify_topic_id != prev_notify_topic
+        ):
+            await _sync_changed_legacy_topic_route(
+                route_repo,
+                server_id=server_id,
+                category=NotificationRouteCategory.MEDIA_LIBRARY,
+                topic_val=data.notify_topic_id,
+            )
     if data.request_notify_topic_id is not None:
         await repo.update_notify_config(
             server_id, request_notify_topic_id=data.request_notify_topic_id
         )
+        if (
+            "request_notify_topic_id" in data.model_fields_set
+            and data.request_notify_topic_id != prev_request_topic
+        ):
+            await _sync_changed_legacy_topic_route(
+                route_repo,
+                server_id=server_id,
+                category=NotificationRouteCategory.MEDIA_REQUEST,
+                topic_val=data.request_notify_topic_id,
+            )
 
     # 注册策略
     policy_kwargs = {}

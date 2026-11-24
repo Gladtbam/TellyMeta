@@ -2,6 +2,7 @@ import asyncio
 import inspect
 from collections import deque
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,6 @@ from models.emby_webhook import (
     UserAuthenticationFailedEvent,
     UserLockedOutEvent,
 )
-from models.events import NotificationRouteCategory
 from models.jellyfin_webhook import (
     AuthenticationEvent,
     GenericEvent,
@@ -111,9 +111,9 @@ from services.notification_renderer import (
     SonarrGrabPayload,
     SonarrRenamePayload,
     SonarrSeriesAddPayload,
-    render_request_topic_card_status,
 )
 from services.notification_service import NotificationService
+from services.request_service import sync_request_topic_card_status
 from services.traffic_service import record_traffic_webhook_session
 from services.watch_time_service import (
     NormalizedPlaybackEvent,
@@ -234,26 +234,32 @@ async def _safe_get_item_info(client: Any, item_id: str) -> Any:
     return info
 
 
+@dataclass(frozen=True, slots=True)
+class _ArrivalMediaContext:
+    """入库媒体标识解析上下文，收敛媒体项字段并消除跨函数散装参数。"""
+
+    item_id: str
+    item_type: str
+    series_id: str | None
+    payload_providers: Mapping[str, Any] | None
+    jellyfin_extra: bool
+    fallback_title: str
+    fallback_year: int | None
+
+
 async def _resolve_arrival_media_identifiers(
     client: Any,
-    *,
-    item_id: str,
-    item_type: str,
-    series_id: str | None,
-    payload_providers: Mapping[str, Any] | None,
-    jellyfin_extra: bool,
-    fallback_title: str,
-    fallback_year: int | None,
+    ctx: _ArrivalMediaContext,
 ) -> tuple[int | None, int | None, str, int | None]:
     """解析入库媒体的 TMDB/TVDB ID；剧集单集与季优先回查父级 Series 防止使用单集 ID。"""
-    lower_type = item_type.strip().lower()
+    lower_type = ctx.item_type.strip().lower()
     tmdb_id: int | None = None
     tvdb_id: int | None = None
-    title = fallback_title
-    year = fallback_year
+    title = ctx.fallback_title
+    year = ctx.fallback_year
 
-    if lower_type in ("episode", "season") and series_id:
-        series_info = await _safe_get_item_info(client, str(series_id))
+    if lower_type in ("episode", "season") and ctx.series_id:
+        series_info = await _safe_get_item_info(client, str(ctx.series_id))
         if series_info is not None:
             provider_map = getattr(series_info, "ProviderIds", None) or getattr(
                 series_info, "provider_ids", None
@@ -272,11 +278,11 @@ async def _resolve_arrival_media_identifiers(
 
     if tmdb_id is None and tvdb_id is None:
         tmdb_id, tvdb_id = _extract_provider_ids_from_mapping(
-            payload_providers, jellyfin_extra=jellyfin_extra
+            ctx.payload_providers, jellyfin_extra=ctx.jellyfin_extra
         )
 
-    if tmdb_id is None and tvdb_id is None and item_id:
-        item_info = await _safe_get_item_info(client, str(item_id))
+    if tmdb_id is None and tvdb_id is None and ctx.item_id:
+        item_info = await _safe_get_item_info(client, str(ctx.item_id))
         if item_info is not None:
             provider_map = getattr(item_info, "ProviderIds", None) or getattr(
                 item_info, "provider_ids", None
@@ -292,13 +298,7 @@ async def _complete_matching_requests_on_arrival(
     notify_service: NotificationService,
     server_instance: ServerInstance,
     client: MediaService,
-    item_id: str,
-    item_type: str,
-    series_id: str | None,
-    payload_providers: Mapping[str, Any] | None,
-    jellyfin_extra: bool,
-    fallback_title: str,
-    fallback_year: int | None,
+    media_ctx: _ArrivalMediaContext,
 ) -> None:
     """在 Emby/Jellyfin 真实入库时原子认领已批准求片，单次触发 REQUEST_COMPLETED 并同步审核卡片。"""
     if not isinstance(session, AsyncSession):
@@ -308,16 +308,9 @@ async def _complete_matching_requests_on_arrival(
         return
 
     tmdb_id, tvdb_id, title, year = await _resolve_arrival_media_identifiers(
-        client,
-        item_id=item_id,
-        item_type=item_type,
-        series_id=series_id,
-        payload_providers=payload_providers,
-        jellyfin_extra=jellyfin_extra,
-        fallback_title=fallback_title,
-        fallback_year=fallback_year,
+        client, media_ctx
     )
-    lower_type = item_type.strip().lower()
+    lower_type = media_ctx.item_type.strip().lower()
     exact_matches: list[tuple[str, int]] = []
     non_radarr_tmdb_id: int | None = None
     if lower_type == "movie":
@@ -350,7 +343,7 @@ async def _complete_matching_requests_on_arrival(
                 server_name=client.server_name,
                 media_title=media_title,
                 media_year=year,
-                item_type=item_type or None,
+                item_type=media_ctx.item_type or None,
                 reserved_cost=req.reserved_cost,
                 request_id=req.id,
                 economy=economy,
@@ -359,32 +352,16 @@ async def _complete_matching_requests_on_arrival(
             server_id=req.media_server_id,
             session=session,
         )
-        if req.topic_message_id:
-            edit_fn = getattr(notify_service, "edit_route_message", None)
-            if callable(edit_fn):
-                card_html = render_request_topic_card_status(
-                    stage="completed",
-                    request_id=req.id,
-                    user_id=req.user_id,
-                    server_name=client.server_name,
-                    media_title=media_title,
-                    media_type=req.media_type,
-                    media_id=req.media_id,
-                    reserved_cost=req.reserved_cost,
-                    approver_name=req.approver_name,
-                    economy=economy,
-                )
-                res = edit_fn(
-                    category=NotificationRouteCategory.MEDIA_REQUEST,
-                    server_id=req.arr_id,
-                    message_id=req.topic_message_id,
-                    new_content=card_html,
-                    clear_buttons=True,
-                    parse_mode="html",
-                    session=session,
-                )
-                if inspect.isawaitable(res):
-                    await res
+        await sync_request_topic_card_status(
+            notify_service,
+            req,
+            stage="completed",
+            server_name=client.server_name,
+            media_title=media_title,
+            economy=economy,
+            session=session,
+            approver_name=req.approver_name,
+        )
 
 
 _AUTH_RISK_THRESHOLD = 3
@@ -754,7 +731,14 @@ async def sonarr_webhook(
                     create_episode_nfo(payload, tmdb_client, tvdb_client)
                 )
             if task_queue and should_mkv and mkv_local_path:
-                await task_queue.put((mkv_local_path, client.notify_topic_id))
+                await task_queue.put(
+                    (
+                        mkv_local_path,
+                        client.notify_topic_id,
+                        server_instance.id,
+                        client.server_name,
+                    )
+                )
             elif mkv_diag:
                 logger.warning(mkv_diag)
                 unmapped_remote_path = remote_path
@@ -843,7 +827,14 @@ async def radarrarr_webhook(
             if mapped_path := client.to_local_path(remote_path):
                 payload.movieFile.path = mapped_path
             if task_queue and should_mkv and mkv_local_path:
-                await task_queue.put((mkv_local_path, client.notify_topic_id))
+                await task_queue.put(
+                    (
+                        mkv_local_path,
+                        client.notify_topic_id,
+                        server_instance.id,
+                        client.server_name,
+                    )
+                )
             elif mkv_diag:
                 logger.warning(mkv_diag)
                 unmapped_remote_path = remote_path
@@ -1031,13 +1022,15 @@ async def emby_webhook(
             notify_service=notify_service,
             server_instance=server_instance,
             client=client,
-            item_id=payload.item.id,
-            item_type=payload.item.type,
-            series_id=payload.item.series_id,
-            payload_providers=payload.item.provider_ids,
-            jellyfin_extra=False,
-            fallback_title=payload.item.series_name or payload.item.name,
-            fallback_year=payload.item.production_year,
+            media_ctx=_ArrivalMediaContext(
+                item_id=payload.item.id,
+                item_type=payload.item.type,
+                series_id=payload.item.series_id,
+                payload_providers=payload.item.provider_ids,
+                jellyfin_extra=False,
+                fallback_title=payload.item.series_name or payload.item.name,
+                fallback_year=payload.item.production_year,
+            ),
         )
     elif isinstance(payload, LibraryDeletedEvent):
         if ai_client:
@@ -1173,13 +1166,15 @@ async def jellyfin(
             notify_service=notify_service,
             server_instance=server_instance,
             client=client,
-            item_id=payload.item_id,
-            item_type=payload.item_type,
-            series_id=payload.series_id,
-            payload_providers=payload.model_extra,
-            jellyfin_extra=True,
-            fallback_title=payload.series_name or payload.name,
-            fallback_year=payload.year,
+            media_ctx=_ArrivalMediaContext(
+                item_id=payload.item_id,
+                item_type=payload.item_type,
+                series_id=payload.series_id,
+                payload_providers=payload.model_extra,
+                jellyfin_extra=True,
+                fallback_title=payload.series_name or payload.name,
+                fallback_year=payload.year,
+            ),
         )
     elif payload.notification_type == NotificationType.ITEM_DELETED and isinstance(
         payload, ItemEvent

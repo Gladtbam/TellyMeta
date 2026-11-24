@@ -1,5 +1,4 @@
 import contextlib
-import inspect
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from random import choice, choices, randint
@@ -964,7 +963,7 @@ class UserService:
         return Result(success=True, message=message)
 
     async def _safe_resolve_user_name(self, user_id: int | None) -> str:
-        """安全解析 Telegram 用户展示名（兼容同步/异步/缺失测试替身）。
+        """安全解析 Telegram 用户展示名（委托统一共享解析器）。
 
         Args:
             user_id: 目标 Telegram 用户 ID。
@@ -972,21 +971,9 @@ class UserService:
         Returns:
             非空用户名字符串；解析失败时返回空字符串。
         """
-        if user_id is None:
-            return ""
-        client = getattr(getattr(self.app, "state", None), "telethon_client", None)
-        getter = getattr(client, "get_user_name", None) if client is not None else None
-        if not callable(getter):
-            return ""
-        try:
-            res = getter(user_id)
-            if inspect.isawaitable(res):
-                res = await res
-            if isinstance(res, str) and res.strip():
-                return res.strip()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return ""
-        return ""
+        from services.notification_service import resolve_tg_display_name
+
+        return await resolve_tg_display_name(self.app, user_id)
 
     async def _emit_admin_user_action(
         self,
@@ -1101,6 +1088,53 @@ class UserService:
             # 踢出删号或未入库用户不存在 TelegramUser 外键记录，跳过站内落箱防止 FK 失败
             skip_inbox_fallback=(not tg_exists),
         )
+
+    async def kick_and_cleanup_user(
+        self,
+        target_user_id: int,
+        *,
+        client: Any,
+        operator_name: str = "管理员",
+        suppress_kick_error: bool = False,
+    ) -> Result:
+        """统一执行管理员踢出群组、删除关联账号并发送合并 kick 审计通知。
+
+        Args:
+            target_user_id: 目标 Telegram 用户 ID。
+            client: Telethon 客户端包装实例，用于踢出群成员。
+            operator_name: 执行操作的管理员展示名。
+            suppress_kick_error: 为 ``True`` 时容忍 Telegram 踢群失败并继续清理本地记录（API 入口使用）。
+
+        Returns:
+            关联账号清理的 ``Result`` 对象。
+        """
+        target_name = await self.resolve_user_display_name(target_user_id)
+        srv_name, media_name, ctx_srv = await self.snapshot_user_media_summary(
+            target_user_id
+        )
+        if suppress_kick_error:
+            with contextlib.suppress(Exception):
+                await client.kick_and_ban_participant(target_user_id)
+        else:
+            await client.kick_and_ban_participant(target_user_id)
+
+        result = await self.delete_account(
+            target_user_id,
+            "both",
+            operator_name=operator_name,
+            emit_notification=False,
+        )
+        # 与删号合并为单次 kick 通知，避免重复发出 delete 回执
+        await self.notify_admin_ban_or_kick(
+            action_type="kick",
+            target_user_id=target_user_id,
+            operator_name=operator_name,
+            target_name=target_name,
+            server_name=srv_name,
+            media_name=media_name,
+            context_server=ctx_srv,
+        )
+        return result
 
     async def warn_user(
         self,

@@ -3,6 +3,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx2
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -117,9 +118,10 @@ async def lifespan(app: FastAPI):
                         mappings = json.loads(server.path_mappings)
                     except (json.JSONDecodeError, TypeError, ValueError) as e:
                         logger.error("解析服务器 {} 的路径映射失败: {}", server.name, e)
+                ext_client: Any = None
                 match server.server_type:
                     case ServerType.SONARR:
-                        sonarr_client = SonarrClient(
+                        ext_client = SonarrClient(
                             client=httpx2.AsyncClient(
                                 base_url=server.url,
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -131,16 +133,9 @@ async def lifespan(app: FastAPI):
                             notify_topic_id=server.notify_topic_id,
                             request_notify_topic_id=server.request_notify_topic_id,
                         )
-                        attach_external_client_hooks(
-                            sonarr_client,
-                            app=app,
-                            server_id=server.id,
-                            server_name=server.name,
-                            server_type=str(server.server_type),
-                        )
-                        app.state.sonarr_clients[server.id] = sonarr_client
+                        app.state.sonarr_clients[server.id] = ext_client
                     case ServerType.RADARR:
-                        radarr_client = RadarrClient(
+                        ext_client = RadarrClient(
                             client=httpx2.AsyncClient(
                                 base_url=server.url,
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -152,16 +147,9 @@ async def lifespan(app: FastAPI):
                             notify_topic_id=server.notify_topic_id,
                             request_notify_topic_id=server.request_notify_topic_id,
                         )
-                        attach_external_client_hooks(
-                            radarr_client,
-                            app=app,
-                            server_id=server.id,
-                            server_name=server.name,
-                            server_type=str(server.server_type),
-                        )
-                        app.state.radarr_clients[server.id] = radarr_client
+                        app.state.radarr_clients[server.id] = ext_client
                     case ServerType.JELLYFIN:
-                        jf_client = JellyfinClient(
+                        ext_client = JellyfinClient(
                             client=httpx2.AsyncClient(
                                 base_url=f"{server.url}",
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -171,16 +159,9 @@ async def lifespan(app: FastAPI):
                             server_name=server.name,
                             notify_topic_id=server.notify_topic_id,
                         )
-                        attach_external_client_hooks(
-                            jf_client,
-                            app=app,
-                            server_id=server.id,
-                            server_name=server.name,
-                            server_type=str(server.server_type),
-                        )
-                        app.state.media_clients[server.id] = jf_client
+                        app.state.media_clients[server.id] = ext_client
                     case ServerType.EMBY:
-                        emby_client = EmbyClient(
+                        ext_client = EmbyClient(
                             client=httpx2.AsyncClient(
                                 base_url=f"{server.url}/emby",
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -190,17 +171,10 @@ async def lifespan(app: FastAPI):
                             server_name=server.name,
                             notify_topic_id=server.notify_topic_id,
                         )
-                        attach_external_client_hooks(
-                            emby_client,
-                            app=app,
-                            server_id=server.id,
-                            server_name=server.name,
-                            server_type=str(server.server_type),
-                        )
-                        app.state.media_clients[server.id] = emby_client
+                        app.state.media_clients[server.id] = ext_client
                     case ServerType.QBITTORRENT:
                         # 使用 username 时将 api_key 视为登录密码，否则视为 API Key
-                        qb_client = QbittorrentClient(
+                        ext_client = QbittorrentClient(
                             client=httpx2.AsyncClient(
                                 base_url=server.url,
                                 timeout=httpx2.Timeout(10.0, read=30.0),
@@ -212,14 +186,16 @@ async def lifespan(app: FastAPI):
                                 None if server.qb_username else (server.api_key or None)
                             ),
                         )
-                        attach_external_client_hooks(
-                            qb_client,
-                            app=app,
-                            server_id=server.id,
-                            server_name=server.name,
-                            server_type=str(server.server_type),
-                        )
-                        app.state.qb_clients[server.id] = qb_client
+                        app.state.qb_clients[server.id] = ext_client
+                # 为所有启用的外部客户端统一挂载异常冷却与恢复自愈通知钩子
+                if ext_client is not None:
+                    attach_external_client_hooks(
+                        ext_client,
+                        app=app,
+                        server_id=server.id,
+                        server_name=server.name,
+                        server_type=str(server.server_type),
+                    )
         finally:
             await session.close()
 

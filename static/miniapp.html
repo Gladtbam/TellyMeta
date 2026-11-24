@@ -522,35 +522,35 @@
                         🔒 必达通知不可关闭（含过期封禁、删号预警/确认、超流停用/解封、求片结果与安全回执）；下方可选提醒支持随时启停。
                     </div>
                     <div class="card" style="margin-bottom:0; border:1px solid var(--secondary-bg-color);">
-                        <div class="item">
+                        <div class="item" id="pref-row-watch-time">
                             <div class="item-content">
                                 <span class="item-title" style="font-size:15px;">时长保活达标祝贺</span>
-                                <span class="item-subtitle" style="font-size:12px;">当本周期观看度达到免积分保活门槛时发送提醒</span>
+                                <span class="item-subtitle" id="pref-sub-watch-time" style="font-size:12px;">当本周期观看度达到免积分保活门槛时发送提醒</span>
                             </div>
                             <label class="switch"><input type="checkbox" id="pref-allow_watch_time_milestone" onchange="updateNotificationPreference('allow_watch_time_milestone', this)"><span class="slider"></span></label>
                         </div>
-                        <div class="item">
+                        <div class="item" id="pref-row-pre-expiry">
                             <div class="item-content">
                                 <span class="item-title" style="font-size:15px;">临近到期提前提醒</span>
                                 <span class="item-subtitle" style="font-size:12px;">媒体账号即将到期前发送提前续期提醒</span>
                             </div>
                             <label class="switch"><input type="checkbox" id="pref-allow_pre_expiry_reminder" onchange="updateNotificationPreference('allow_pre_expiry_reminder', this)"><span class="slider"></span></label>
                         </div>
-                        <div class="item">
+                        <div class="item" id="pref-row-traffic-80">
                             <div class="item-content">
                                 <span class="item-title" style="font-size:15px;">流量 80% 预警</span>
                                 <span class="item-subtitle" style="font-size:12px;">当期基础配额消耗达到 80% 时发送预警</span>
                             </div>
                             <label class="switch"><input type="checkbox" id="pref-allow_traffic_80_alert" onchange="updateNotificationPreference('allow_traffic_80_alert', this)"><span class="slider"></span></label>
                         </div>
-                        <div class="item">
+                        <div class="item" id="pref-row-cycle-reset">
                             <div class="item-content">
                                 <span class="item-title" style="font-size:15px;">账期重置通知</span>
                                 <span class="item-subtitle" style="font-size:12px;">自然月配额周期重置完成时发送通知（默认关闭）</span>
                             </div>
                             <label class="switch"><input type="checkbox" id="pref-allow_cycle_reset" onchange="updateNotificationPreference('allow_cycle_reset', this)"><span class="slider"></span></label>
                         </div>
-                        <div class="item">
+                        <div class="item" id="pref-row-self-receipt">
                             <div class="item-content">
                                 <span class="item-title" style="font-size:15px;">自助操作回执</span>
                                 <span class="item-subtitle" style="font-size:12px;">在 Mini App 执行常规操作后发送私聊回执</span>
@@ -658,6 +658,7 @@
                 Number(data.unread_notification_count || 0),
                 Boolean(data.has_unread_mandatory_notification)
             );
+            renderNotificationPreferences(_notificationState.preferences || {});
 
             const { pointsOn, checkinOn, renewCostOn } = resolveVisibleEconomyFlags(data);
 
@@ -1019,7 +1020,7 @@
                 }
             }
             const rawUrl = (item && item.action_url) ? String(item.action_url).trim() : '';
-            if (rawUrl && (/^(account\.html|miniapp\.html)\?/.test(rawUrl) || rawUrl.startsWith('/webapp/'))) {
+            if (rawUrl && (/^(account\.html|miniapp\.html)([?#].*)?$/.test(rawUrl) || rawUrl.startsWith('/webapp/'))) {
                 return rawUrl;
             }
             return null;
@@ -1086,10 +1087,34 @@
         }
 
         /**
-         * 同步填充 5 项个人可选提醒偏好复选框状态。
+         * 同步填充 5 项个人可选提醒偏好复选框状态，并按 ADR-0004 动态隐藏已关闭能力开关与消除误导文案。
          * @param {object} prefs 偏好开关映射对象。
          */
         function renderNotificationPreferences(prefs) {
+            const safePrefs = prefs || {};
+            const accounts = Array.isArray(_appData?.media_accounts) ? _appData.media_accounts : [];
+            const pointsEnabled = _appData ? Boolean(_appData.enable_points ?? true) : true;
+            const watchTimeEnabled = _appData
+                ? (Boolean(_appData.enable_watch_time) || accounts.some(a => Boolean(a.enable_watch_time)))
+                : true;
+            const trafficEnabled = _appData
+                ? (Boolean(_appData.enable_traffic) || accounts.some(a => Boolean(a.enable_traffic)))
+                : true;
+
+            const watchRow = document.getElementById('pref-row-watch-time');
+            const watchSub = document.getElementById('pref-sub-watch-time');
+            if (watchRow) watchRow.style.display = watchTimeEnabled ? 'flex' : 'none';
+            if (watchSub) {
+                watchSub.textContent = pointsEnabled
+                    ? '当本周期观看度达到免积分保活门槛时发送提醒'
+                    : '当本周期有效播放时长达到保活门槛时发送提醒';
+            }
+
+            const traffic80Row = document.getElementById('pref-row-traffic-80');
+            const cycleResetRow = document.getElementById('pref-row-cycle-reset');
+            if (traffic80Row) traffic80Row.style.display = trafficEnabled ? 'flex' : 'none';
+            if (cycleResetRow) cycleResetRow.style.display = trafficEnabled ? 'flex' : 'none';
+
             [
                 'allow_watch_time_milestone',
                 'allow_pre_expiry_reminder',
@@ -1098,8 +1123,8 @@
                 'allow_self_action_receipt'
             ].forEach(key => {
                 const el = document.getElementById(`pref-${key}`);
-                if (el && prefs[key] !== undefined) {
-                    el.checked = Boolean(prefs[key]);
+                if (el && safePrefs[key] !== undefined) {
+                    el.checked = Boolean(safePrefs[key]);
                 }
             });
         }
