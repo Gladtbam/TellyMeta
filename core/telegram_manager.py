@@ -1,3 +1,5 @@
+import contextlib
+import inspect
 from collections.abc import Callable
 from datetime import datetime
 from functools import partial
@@ -36,6 +38,29 @@ settings = get_settings()
 
 DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _normalize_edit_buttons(buttons: MarkupLike | None) -> MarkupLike | None:
+    """规范化编辑消息时的按钮参数，避免向 EditMessageRequest 传入空按钮结构。
+
+    Telegram MTProto 的 ``messages.editMessage`` 在携带空 ``ReplyInlineMarkup(rows=[])``
+    或由空列表生成的空 ``ReplyKeyboardMarkup(rows=[])`` 时会返回 ``REPLY_MARKUP_INVALID``；
+    显式传入 ``None``（不设置 ``reply_markup`` 字段）才会安全清除原消息的内联按钮。
+    """
+    if buttons is None:
+        return None
+    if isinstance(buttons, ReplyInlineMarkup):
+        has_buttons = any(getattr(row, "buttons", None) for row in (buttons.rows or ()))
+        return buttons if has_buttons else None
+    if isinstance(buttons, (list, tuple)):
+        non_empty_rows = [
+            row
+            for row in buttons
+            if (isinstance(row, (list, tuple)) and len(row) > 0)
+            or (not isinstance(row, (list, tuple)) and row is not None)
+        ]
+        return cast(MarkupLike, non_empty_rows) if non_empty_rows else None
+    return buttons
 
 
 class TelethonClientWarper:
@@ -289,6 +314,22 @@ class TelethonClientWarper:
             logger.error("无法删除消息 {}：{}", message_id, e)
             raise
 
+    async def _resolve_existing_inline_markup(
+        self, chat_id: str | int, message_id: int
+    ) -> ReplyInlineMarkup | None:
+        """读取目标消息当前附带的内联按钮，供未显式改写或清空按钮时保留原布局。"""
+        get_messages = getattr(self.client, "get_messages", None)
+        if not inspect.iscoroutinefunction(get_messages):
+            return None
+        with contextlib.suppress(errors.RPCError, ValueError, TypeError):
+            existing_msg = await get_messages(chat_id, ids=message_id)
+            existing_markup = getattr(existing_msg, "reply_markup", None)
+            if isinstance(existing_markup, ReplyInlineMarkup):
+                normalized = _normalize_edit_buttons(existing_markup)
+                if isinstance(normalized, ReplyInlineMarkup):
+                    return normalized
+        return None
+
     async def edit_message(
         self,
         chat_id: str | int,
@@ -306,20 +347,27 @@ class TelethonClientWarper:
             message_id: 要编辑的消息 ID。
             new_content: 新的消息文本内容。
             buttons: 可选的新内联按钮布局；未传入且 ``clear_buttons=False`` 时保留原按钮。
-            clear_buttons: 为 ``True`` 时显式传入空内联标记，清空原消息附带的内联按钮。
+            clear_buttons: 为 ``True`` 时不携带 ``reply_markup``（传 ``None``），清空原消息附带的内联按钮。
             parse_mode: 文本解析模式，默认启用 ``"markdown"`` 以支持用户提及链接。
         """
         if not self.client.is_connected():
             await self.connect()
-        effective_buttons: MarkupLike | None = (
-            ReplyInlineMarkup(rows=[]) if clear_buttons else buttons
-        )
+        if clear_buttons:
+            # MTProto EditMessageRequest 传 ReplyInlineMarkup(rows=[]) 会触发 REPLY_MARKUP_INVALID；
+            # 传 None 使底层不携带 reply_markup 字段，从而移除原有内联键盘。
+            effective_buttons: MarkupLike | None = None
+        elif buttons is not None:
+            effective_buttons = _normalize_edit_buttons(buttons)
+        else:
+            effective_buttons = await self._resolve_existing_inline_markup(
+                chat_id, message_id
+            )
         try:
             return await self.client.edit_message(
                 chat_id,
                 message_id,
                 new_content,
-                buttons=cast(MarkupLike | None, effective_buttons),
+                buttons=effective_buttons,
                 parse_mode=parse_mode,
             )
         except errors.MessageEditTimeExpiredError as e:
