@@ -378,6 +378,111 @@
             color: var(--hint-color);
             font-size: 14px;
         }
+
+        /* 通知路由矩阵与运维告警样式 */
+        .route-card {
+            padding: 14px 16px;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .route-card:last-child {
+            border-bottom: none;
+        }
+
+        .route-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .route-badge {
+            font-size: 11px;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .badge-info {
+            color: #2481cc;
+            background: rgba(36, 129, 204, 0.12);
+        }
+
+        .badge-warning {
+            color: #ff9500;
+            background: rgba(255, 149, 0, 0.14);
+        }
+
+        .badge-critical {
+            color: var(--destructive-text-color);
+            background: rgba(255, 59, 48, 0.12);
+        }
+
+        .badge-muted {
+            color: var(--hint-color);
+            background: var(--secondary-bg-color);
+        }
+
+        .badge-success {
+            color: #34c759;
+            background: rgba(52, 199, 89, 0.12);
+        }
+
+        .route-fields-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .checkbox-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: var(--secondary-bg-color);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .route-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .bind-code-chip {
+            background: var(--secondary-bg-color);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            border: 1px solid rgba(36, 129, 204, 0.35);
+            color: var(--link-color);
+            display: inline-block;
+            margin-top: 6px;
+        }
+
+        .ops-log-item {
+            padding: 12px 16px;
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+        }
+
+        .ops-log-item:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 
@@ -489,6 +594,51 @@
                         <span class="item-subtitle" id="ops-summary">加载中...</span>
                     </div>
                     <span class="item-arrow">›</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-title">通知路由矩阵</div>
+        <div class="section">
+            <div class="section-hint" id="route-main-chat-hint" style="display:none; color:var(--destructive-text-color);">
+                ⚠️ 当前未配置主群 <code>telegram_chat_id</code>，<code>main_chat</code> 与未指定群组 ID 的话题路由将无法实际投递。
+            </div>
+            <div class="card" id="notification-routes-matrix">
+                <div class="state-text">正在加载通知路由矩阵...</div>
+            </div>
+            <div class="section-hint">
+                说明：每类通知支持主群、论坛话题、独立群组/频道与（运维/审计）管理员私聊；单服可在「媒体服务器 → 高级」单独覆盖或禁用。
+            </div>
+        </div>
+
+        <div class="section-title">近 30 天运维告警</div>
+        <div class="section">
+            <div class="card" style="padding:12px 16px; margin-bottom:10px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <select id="ops-log-filter-severity" class="form-select" onchange="loadOpsLogs(0)">
+                        <option value="">全部级别</option>
+                        <option value="critical">严重 (critical)</option>
+                        <option value="warning">警告 (warning)</option>
+                        <option value="info">信息 (info)</option>
+                    </select>
+                    <select id="ops-log-filter-server" class="form-select" onchange="loadOpsLogs(0)">
+                        <option value="">全部服务器</option>
+                    </select>
+                </div>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <input type="text" id="ops-log-filter-event" class="form-input" placeholder="事件标识筛选（如 external_server_error）"
+                        style="font-size:14px;">
+                    <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="loadOpsLogs(0)">刷新</button>
+                </div>
+            </div>
+            <div class="card" id="ops-logs-list">
+                <div class="state-text">正在加载运维告警...</div>
+            </div>
+            <div id="ops-logs-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding:0 4px;">
+                <span class="item-subtitle" id="ops-logs-total" style="margin-top:0;">共 0 条</span>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn btn-sm" id="ops-logs-prev" onclick="changeOpsLogsPage(-1)">上一页</button>
+                    <button type="button" class="btn btn-sm" id="ops-logs-next" onclick="changeOpsLogsPage(1)">下一页</button>
                 </div>
             </div>
         </div>
@@ -1229,13 +1379,12 @@
                 </div>
 
                 <div id="tab-content-advanced" class="tab-content">
-                    <div class="form-group" id="notify-topic-group">
-                        <label class="form-label">常规通知频道</label>
-                        <div id="notify-topic-wrapper"></div>
-                    </div>
-                    <div class="form-group" id="req-topic-group">
-                        <label class="form-label">求片通知频道</label>
-                        <div id="req-topic-wrapper"></div>
+                    <div id="srv-route-overrides-section" style="margin-bottom:15px;">
+                        <div class="form-label">单服通知覆盖路由</div>
+                        <div class="section-hint" id="srv-route-new-hint" style="margin:0 0 10px 0; display:none;">
+                            新增服务器保存后，可在编辑弹窗的「高级」页签配置单服覆盖路由（未覆盖时继承全局通知矩阵）。
+                        </div>
+                        <div id="srv-route-overrides-list"></div>
                     </div>
                     <div class="item" id="arr-nfo-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
                         <span>启用 NFO 生成功能</span>
@@ -1324,6 +1473,19 @@
 
         let currentServerId = null;
         let topicData = { is_forum: false, topics: [] };
+        let notificationRoutesData = null;
+        let opsLogsState = { offset: 0, limit: 10, total: 0 };
+
+        /**
+         * 对动态文本执行 HTML 转义，防止渲染路由与运维告警日志时发生 XSS 注入。
+         * @param {*} text 待转义的原始文本。
+         * @returns {string} 转义后的安全 HTML 字符串。
+         */
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text == null ? '' : String(text);
+            return div.innerHTML;
+        }
 
         function copyCommand(text) {
             if (navigator.clipboard) {
@@ -1368,8 +1530,8 @@
          * 加载管理后台系统开关、管理员、媒体服务器与群组话题初始配置。
          */
         async function loadData() {
-            const [sys, admins, servers, topics] = await Promise.allSettled([
-                api('/system'), api('/admins'), api('/servers'), api('/topics')
+            const [sys, admins, servers, topics, routes] = await Promise.allSettled([
+                api('/system'), api('/admins'), api('/servers'), api('/topics'), api('/notification_routes')
             ]);
             if (topics.status === 'fulfilled') topicData = topics.value;
             if (sys.status === 'fulfilled') {
@@ -1461,6 +1623,15 @@
             }
             renderServers(servers.status === 'fulfilled' ? servers.value : []);
             renderAdmins(admins.status === 'fulfilled' ? admins.value : []);
+            if (routes.status === 'fulfilled') {
+                notificationRoutesData = routes.value;
+                renderNotificationRoutesMatrix();
+            } else {
+                const matrixEl = document.getElementById('notification-routes-matrix');
+                if (matrixEl) matrixEl.innerHTML = '<div class="state-text">通知路由矩阵加载失败，请刷新重试</div>';
+            }
+            populateOpsServerFilter();
+            loadOpsLogs(opsLogsState.offset);
         }
 
         // 积分细粒度子开关元数据定义，供状态刷新与开关联动复用
@@ -2037,7 +2208,6 @@
             document.getElementById('srv-tabs').style.display = isQb ? 'none' : 'flex';
             document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
             document.getElementById('tab-paths').style.display = isArr ? 'block' : 'none';
-            document.getElementById('req-topic-group').style.display = isArr ? 'block' : 'none';
             document.getElementById('arr-nfo-group').style.display = isArr ? 'flex' : 'none';
             if (document.getElementById('srv-nsfw-btn')) {
                 document.getElementById('srv-nsfw-btn').style.display = (isMedia && isEdit) ? 'inline-block' : 'none';
@@ -2129,8 +2299,7 @@
             if (document.getElementById('path-mappings-list')) document.getElementById('path-mappings-list').innerHTML = '';
             applyDefaultUserPolicyForm(null);
 
-            fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', 0, '{保存后生成的ID}', 'notify');
-            fillTopicSelect('req-topic-wrapper', 'srv-req-topic', 0, '{保存后生成的ID}', 'request');
+            renderServerRouteOverrides(null, 'emby');
             fillQbServerSelect(null);
             onServerTypeChange();
             updateServerPolicyFields();
@@ -2167,10 +2336,9 @@
             document.getElementById('srv-webhook-header').value = token ? `X-Webhook-Token: ${token}` : '';
             document.getElementById('srv-webhook-token').value = token;
 
-            fillTopicSelect('notify-topic-wrapper', 'srv-notify-topic', s.notify_topic_id, s.id, 'notify');
-            fillTopicSelect('req-topic-wrapper', 'srv-req-topic', s.request_notify_topic_id, s.id, 'request')
             fillQbServerSelect(s.qb_server_id);
             onServerTypeChange();
+            renderServerRouteOverrides(s.id, s.server_type);
 
             const isMedia = ['emby', 'jellyfin'].includes(s.server_type);
             const isArr = ['sonarr', 'radarr'].includes(s.server_type);
@@ -2441,15 +2609,11 @@
                 return Boolean(el && el.style.display !== 'none');
             };
 
-            const notifyTopicEl = document.getElementById('srv-notify-topic');
-            const notifyId = notifyTopicEl ? (parseInt(notifyTopicEl.value) || 0) : 0;
-
             const payload = {
                 name: document.getElementById('srv-name').value,
                 url: document.getElementById('srv-url').value,
                 api_key: document.getElementById('srv-key').value,
                 is_enabled: document.getElementById('srv-enabled').checked,
-                notify_topic_id: notifyId,
             };
 
             const type = document.getElementById('srv-type').value;
@@ -2519,7 +2683,6 @@
             } else {
                 const qbSelVal = document.getElementById('srv-qb-server').value;
                 payload.qb_server_id = qbSelVal ? parseInt(qbSelVal, 10) : null;
-                payload.request_notify_topic_id = parseInt(document.getElementById('srv-req-topic').value) || 0;
                 payload.allow_nfo = document.getElementById('srv-allow-nfo').checked;
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({
                     remote: div.querySelector('.remote').value,
@@ -2764,6 +2927,481 @@
         if (defaultPolicySectionEl) {
             defaultPolicySectionEl.addEventListener('change', updateServerPolicyFields);
             defaultPolicySectionEl.addEventListener('input', updateServerPolicyFields);
+        }
+
+        // --- 通知路由矩阵、单服覆盖与近 30 天运维告警 ---
+        const GLOBAL_ROUTE_CATEGORY_DEFAULTS = [
+            { category: 'media_library', label: '媒体入库与 Arr 动态' },
+            { category: 'media_request', label: '求片审核卡片' },
+            { category: 'account_lifecycle', label: '账号生命周期与管理审计' },
+            { category: 'ops_alert', label: '系统运维告警' },
+            { category: 'community', label: '社区积分与群组治理' }
+        ];
+
+        const ROUTE_TARGET_LABELS = {
+            disabled: '禁用 (disabled)',
+            main_chat: '主群 (main_chat)',
+            forum_topic: '论坛话题 (forum_topic)',
+            chat_or_channel: '独立群组 / 频道 (chat_or_channel)',
+            admin_dm_group: '管理员私聊组 (admin_dm_group)'
+        };
+
+        /**
+         * 从指定输入框解析可空整数值，用于提交可选 chat_id / topic_id。
+         * @param {string} id DOM 输入框 ID。
+         * @returns {number|null} 解析后的整数或 null。
+         */
+        function parseNullableInt(id) {
+            const raw = (document.getElementById(id)?.value || '').trim();
+            if (!raw) return null;
+            const parsed = parseInt(raw, 10);
+            return Number.isNaN(parsed) ? null : parsed;
+        }
+
+        /**
+         * 格式化 ISO 时间字符串为可读本地时间文本。
+         * @param {string|null|undefined} isoStr ISO 时间字符串。
+         * @returns {string} 格式化后的时间字符串。
+         */
+        function formatAlertDateTime(isoStr) {
+            if (!isoStr) return '';
+            const d = new Date(isoStr);
+            if (Number.isNaN(d.getTime())) return String(isoStr);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        /**
+         * 渲染全局 5 大类通知路由矩阵，支持目标切换、可选事件勾选、保存、测试发送与 /bind global 指令复制。
+         */
+        function renderNotificationRoutesMatrix() {
+            const container = document.getElementById('notification-routes-matrix');
+            const chatHint = document.getElementById('route-main-chat-hint');
+            if (!container || !notificationRoutesData) return;
+
+            if (chatHint) {
+                chatHint.style.display = notificationRoutesData.telegram_chat_id_configured ? 'none' : 'block';
+            }
+
+            const routeByCat = {};
+            (notificationRoutesData.global_routes || []).forEach(r => { routeByCat[r.category] = r; });
+            const metas = (notificationRoutesData.categories && notificationRoutesData.categories.length)
+                ? notificationRoutesData.categories
+                : GLOBAL_ROUTE_CATEGORY_DEFAULTS;
+
+            container.innerHTML = metas.map(meta => {
+                const cat = meta.category;
+                const route = routeByCat[cat] || { target_type: 'disabled', enabled_events: [], escalate_admin_dm: false };
+                const optionsHtml = (meta.allowed_target_types || []).map(tt => {
+                    const selected = route.target_type === tt ? 'selected' : '';
+                    return `<option value="${escapeHtml(tt)}" ${selected}>${escapeHtml(ROUTE_TARGET_LABELS[tt] || tt)}</option>`;
+                }).join('');
+
+                const optEvents = meta.optional_events || [];
+                const enabledSet = new Set(route.enabled_events || []);
+                const eventsHtml = optEvents.length ? `
+                    <div class="checkbox-group" id="route-global-${escapeHtml(cat)}-events">
+                        ${optEvents.map(ev => `
+                            <label class="checkbox-pill">
+                                <input type="checkbox" data-route-event="${escapeHtml(ev.event)}" ${enabledSet.has(ev.event) ? 'checked' : ''}>
+                                <span>${escapeHtml(ev.label)}</span>
+                            </label>
+                        `).join('')}
+                    </div>
+                ` : '';
+
+                const escalateHtml = meta.supports_escalate_admin_dm ? `
+                    <div class="item" style="padding:6px 0 0 0; border:none; background:transparent;">
+                        <span style="font-size:13px; color:var(--hint-color);">高危故障额外抄送管理员私聊 (escalate_admin_dm)</span>
+                        <label class="switch">
+                            <input type="checkbox" id="route-global-${escapeHtml(cat)}-escalate" ${route.escalate_admin_dm ? 'checked' : ''}>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                ` : '';
+
+                const bindCmd = `/bind global ${cat}`;
+                return `
+                    <div class="route-card" data-global-route-cat="${escapeHtml(cat)}">
+                        <div class="route-header">
+                            <div>
+                                <div class="item-title" style="font-size:15px; font-weight:600;">${escapeHtml(meta.label)} <code style="font-size:12px;">${escapeHtml(cat)}</code></div>
+                                <div class="item-subtitle" style="font-size:12px;">${escapeHtml(meta.description)}</div>
+                            </div>
+                            <span class="route-badge badge-info">${escapeHtml(route.target_type)}</span>
+                        </div>
+                        <select class="form-select" id="route-global-${escapeHtml(cat)}-target-type" onchange="onGlobalRouteTargetChange('${escapeHtml(cat)}')">
+                            ${optionsHtml}
+                        </select>
+                        <div class="route-fields-grid" id="route-global-${escapeHtml(cat)}-params">
+                            <div id="route-global-${escapeHtml(cat)}-chat-wrap">
+                                <label class="form-label">目标群组 / 频道 ID（负数）</label>
+                                <input type="number" class="form-input" id="route-global-${escapeHtml(cat)}-chat-id"
+                                    value="${route.target_chat_id ?? ''}" placeholder="如 -100123456（话题留空走主群）">
+                            </div>
+                            <div id="route-global-${escapeHtml(cat)}-topic-wrap">
+                                <label class="form-label">论坛话题 ID（正整数）</label>
+                                <input type="number" min="1" class="form-input" id="route-global-${escapeHtml(cat)}-topic-id"
+                                    value="${route.target_topic_id ?? ''}" placeholder="正整数 Topic ID">
+                            </div>
+                        </div>
+                        ${escalateHtml}
+                        ${eventsHtml}
+                        <div>
+                            <code class="bind-code-chip" onclick="copyCommand('${escapeHtml(bindCmd)}')">📋 复制话题绑定指令：${escapeHtml(bindCmd)}</code>
+                        </div>
+                        <div class="route-actions">
+                            <button type="button" class="btn btn-sm" style="background:var(--button-color); color:#fff;" onclick="saveGlobalRoute('${escapeHtml(cat)}')">保存</button>
+                            <button type="button" class="btn btn-sm" onclick="testGlobalRoute('${escapeHtml(cat)}')">🧪 测试发送</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            metas.forEach(meta => onGlobalRouteTargetChange(meta.category));
+        }
+
+        /**
+         * 根据全局路由目标类型切换 target_chat_id / target_topic_id 输入框可见性。
+         * @param {string} cat 路由类别标识。
+         */
+        function onGlobalRouteTargetChange(cat) {
+            const targetType = document.getElementById(`route-global-${cat}-target-type`)?.value || 'disabled';
+            const paramsWrap = document.getElementById(`route-global-${cat}-params`);
+            const chatWrap = document.getElementById(`route-global-${cat}-chat-wrap`);
+            const topicWrap = document.getElementById(`route-global-${cat}-topic-wrap`);
+            const showChat = targetType === 'forum_topic' || targetType === 'chat_or_channel';
+            const showTopic = targetType === 'forum_topic';
+            if (paramsWrap) paramsWrap.style.display = showChat ? 'grid' : 'none';
+            if (chatWrap) chatWrap.style.display = showChat ? 'block' : 'none';
+            if (topicWrap) topicWrap.style.display = showTopic ? 'block' : 'none';
+        }
+
+        /**
+         * 收集指定全局类别的表单数据（目标类型、参数、抄送开关与可选事件列表）。
+         * @param {string} cat 路由类别标识。
+         * @returns {object} 路由保存与测试复用载荷。
+         */
+        function collectGlobalRoutePayload(cat) {
+            const targetType = document.getElementById(`route-global-${cat}-target-type`)?.value || 'disabled';
+            const targetChatId = parseNullableInt(`route-global-${cat}-chat-id`);
+            const targetTopicId = parseNullableInt(`route-global-${cat}-topic-id`);
+            const escalateEl = document.getElementById(`route-global-${cat}-escalate`);
+            const enabledEvents = Array.from(
+                document.querySelectorAll(`#route-global-${cat}-events input[data-route-event]:checked`)
+            ).map(el => el.getAttribute('data-route-event')).filter(Boolean);
+            return {
+                scope_type: 'global',
+                server_id: null,
+                category: cat,
+                target_type: targetType,
+                target_chat_id: targetChatId,
+                target_topic_id: targetTopicId,
+                escalate_admin_dm: Boolean(escalateEl && escalateEl.checked),
+                enabled_events: enabledEvents
+            };
+        }
+
+        /**
+         * 保存单条全局默认通知路由配置并刷新矩阵视图。
+         * @param {string} cat 路由类别标识。
+         */
+        async function saveGlobalRoute(cat) {
+            const payload = collectGlobalRoutePayload(cat);
+            const res = await api('/notification_routes', 'PUT', payload);
+            notificationRoutesData = await api('/notification_routes');
+            renderNotificationRoutesMatrix();
+            if (currentServerId) {
+                const srv = allServers.find(x => x.id === currentServerId);
+                if (srv) renderServerRouteOverrides(srv.id, srv.server_type);
+            }
+            tg.showAlert('✅ ' + (res.message || '通知路由已保存'));
+        }
+
+        /**
+         * 使用当前表单配置向指定全局路由类别发送一条 SYSTEM_TEST 实测通知。
+         * @param {string} cat 路由类别标识。
+         */
+        async function testGlobalRoute(cat) {
+            const payload = collectGlobalRoutePayload(cat);
+            const res = await api('/notifications/test', 'POST', {
+                category: payload.category,
+                target_type: payload.target_type,
+                target_chat_id: payload.target_chat_id,
+                target_topic_id: payload.target_topic_id,
+                escalate_admin_dm: payload.escalate_admin_dm
+            });
+            const targetsText = (res.delivered_targets || []).length
+                ? `\n投递目标：${res.delivered_targets.join(', ')}`
+                : '';
+            const prefix = res.success ? '✅ ' : '⚠️ ';
+            tg.showAlert(prefix + (res.message || '') + targetsText);
+        }
+
+        /**
+         * 在服务器弹窗「高级」页签渲染单服覆盖路由配置面板（支持继承全局/禁用/话题/群组频道与单服测试发送）。
+         * @param {number|null} serverId 服务器 ID（新建模式为 null）。
+         * @param {string} serverType 服务器类型（emby/jellyfin/sonarr/radarr/qbittorrent）。
+         */
+        function renderServerRouteOverrides(serverId, serverType) {
+            const newHint = document.getElementById('srv-route-new-hint');
+            const listEl = document.getElementById('srv-route-overrides-list');
+            if (!listEl) return;
+
+            if (!serverId) {
+                if (newHint) newHint.style.display = 'block';
+                listEl.innerHTML = '';
+                return;
+            }
+            if (newHint) newHint.style.display = 'none';
+
+            const srvOverview = (notificationRoutesData?.servers || []).find(s => s.server_id === serverId);
+            const metasByCat = {};
+            (notificationRoutesData?.categories || []).forEach(m => { metasByCat[m.category] = m; });
+            const allowedCats = ['sonarr', 'radarr'].includes(serverType)
+                ? ['media_library', 'media_request', 'ops_alert']
+                : ['media_library', 'media_request', 'account_lifecycle', 'ops_alert'];
+
+            listEl.innerHTML = allowedCats.map(cat => {
+                const state = srvOverview?.categories?.[cat];
+                const meta = metasByCat[cat] || { label: cat, optional_events: [] };
+                const mode = state?.is_override ? (state.override?.target_type || 'disabled') : 'inherit';
+                const activeCfg = state?.is_override ? state.override : null;
+                const sourceText = state?.source === 'server_override'
+                    ? '<span class="route-badge badge-info">显式单服覆盖</span>'
+                    : (state?.source === 'legacy_topic'
+                        ? `<span class="route-badge badge-warning">回退遗留话题: ${escapeHtml(state.legacy_topic_id)}</span>`
+                        : '<span class="route-badge badge-muted">继承全局默认</span>');
+
+                const optEvents = meta.optional_events || [];
+                const enabledSet = new Set(activeCfg?.enabled_events || []);
+                const eventsHtml = optEvents.length ? `
+                    <div class="checkbox-group" id="srv-route-${escapeHtml(cat)}-events">
+                        ${optEvents.map(ev => `
+                            <label class="checkbox-pill">
+                                <input type="checkbox" data-route-event="${escapeHtml(ev.event)}" ${enabledSet.has(ev.event) ? 'checked' : ''}>
+                                <span>${escapeHtml(ev.label)}</span>
+                            </label>
+                        `).join('')}
+                    </div>
+                ` : '';
+
+                const bindType = cat === 'media_library' ? 'notify' : (cat === 'media_request' ? 'request' : null);
+                const bindHint = bindType ? `
+                    <div>
+                        <code class="bind-code-chip" onclick="copyCommand('/bind ${serverId} ${bindType}')">📋 话题快捷绑定：/bind ${serverId} ${bindType}</code>
+                    </div>
+                ` : '';
+
+                return `
+                    <div class="card" style="padding:12px; margin-bottom:10px; border:1px solid var(--secondary-bg-color);">
+                        <div class="route-header">
+                            <span style="font-size:14px; font-weight:600;">${escapeHtml(meta.label)}</span>
+                            ${sourceText}
+                        </div>
+                        <select class="form-select" id="srv-route-${escapeHtml(cat)}-mode" onchange="onServerRouteModeChange('${escapeHtml(cat)}')">
+                            <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>跟随全局默认 (inherit)</option>
+                            <option value="disabled" ${mode === 'disabled' ? 'selected' : ''}>禁用该服此通知 (disabled)</option>
+                            <option value="forum_topic" ${mode === 'forum_topic' ? 'selected' : ''}>指定论坛话题 (forum_topic)</option>
+                            <option value="chat_or_channel" ${mode === 'chat_or_channel' ? 'selected' : ''}>独立群组 / 频道 (chat_or_channel)</option>
+                        </select>
+                        <div class="route-fields-grid" id="srv-route-${escapeHtml(cat)}-params">
+                            <div id="srv-route-${escapeHtml(cat)}-chat-wrap">
+                                <label class="form-label">目标群组 / 频道 ID（负数）</label>
+                                <input type="number" class="form-input" id="srv-route-${escapeHtml(cat)}-chat-id"
+                                    value="${activeCfg?.target_chat_id ?? ''}" placeholder="如 -100123456">
+                            </div>
+                            <div id="srv-route-${escapeHtml(cat)}-topic-wrap">
+                                <label class="form-label">论坛话题 ID（正整数）</label>
+                                <input type="number" min="1" class="form-input" id="srv-route-${escapeHtml(cat)}-topic-id"
+                                    value="${activeCfg?.target_topic_id ?? ''}" placeholder="正整数 Topic ID">
+                            </div>
+                        </div>
+                        ${eventsHtml}
+                        ${bindHint}
+                        <div class="route-actions">
+                            <button type="button" class="btn btn-sm" style="background:var(--button-color); color:#fff;" onclick="saveServerRouteOverride('${escapeHtml(cat)}')">保存覆盖</button>
+                            <button type="button" class="btn btn-sm" onclick="testServerRoute('${escapeHtml(cat)}')">🧪 测试发送</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            allowedCats.forEach(cat => onServerRouteModeChange(cat));
+        }
+
+        /**
+         * 同步单服覆盖路由模式下参数与可选事件复选框的显隐状态。
+         * @param {string} cat 路由类别标识。
+         */
+        function onServerRouteModeChange(cat) {
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            const paramsWrap = document.getElementById(`srv-route-${cat}-params`);
+            const chatWrap = document.getElementById(`srv-route-${cat}-chat-wrap`);
+            const topicWrap = document.getElementById(`srv-route-${cat}-topic-wrap`);
+            const eventsWrap = document.getElementById(`srv-route-${cat}-events`);
+            const showChat = mode === 'forum_topic' || mode === 'chat_or_channel';
+            const showTopic = mode === 'forum_topic';
+            if (paramsWrap) paramsWrap.style.display = showChat ? 'grid' : 'none';
+            if (chatWrap) chatWrap.style.display = showChat ? 'block' : 'none';
+            if (topicWrap) topicWrap.style.display = showTopic ? 'block' : 'none';
+            if (eventsWrap) eventsWrap.style.display = (mode === 'inherit' || mode === 'disabled') ? 'none' : 'flex';
+        }
+
+        /**
+         * 保存或清除单台服务器的指定类别覆盖路由；选择 inherit 时调用 DELETE 恢复全局继承。
+         * @param {string} cat 路由类别标识。
+         */
+        async function saveServerRouteOverride(cat) {
+            if (!currentServerId) return;
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            let res;
+            if (mode === 'inherit') {
+                res = await api(`/notification_routes/server/${currentServerId}/${encodeURIComponent(cat)}`, 'DELETE');
+            } else {
+                const enabledEvents = Array.from(
+                    document.querySelectorAll(`#srv-route-${cat}-events input[data-route-event]:checked`)
+                ).map(el => el.getAttribute('data-route-event')).filter(Boolean);
+                res = await api('/notification_routes', 'PUT', {
+                    scope_type: 'server',
+                    server_id: currentServerId,
+                    category: cat,
+                    target_type: mode,
+                    target_chat_id: parseNullableInt(`srv-route-${cat}-chat-id`),
+                    target_topic_id: parseNullableInt(`srv-route-${cat}-topic-id`),
+                    escalate_admin_dm: false,
+                    enabled_events: enabledEvents
+                });
+            }
+            notificationRoutesData = await api('/notification_routes');
+            const srv = allServers.find(x => x.id === currentServerId);
+            renderServerRouteOverrides(currentServerId, srv?.server_type || 'emby');
+            tg.showAlert('✅ ' + (res.message || '单服路由已更新'));
+        }
+
+        /**
+         * 测试当前服务器指定通知类别路由的投递连通性。
+         * @param {string} cat 路由类别标识。
+         */
+        async function testServerRoute(cat) {
+            if (!currentServerId) return;
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            const body = { category: cat, server_id: currentServerId };
+            if (mode !== 'inherit') {
+                body.target_type = mode;
+                body.target_chat_id = parseNullableInt(`srv-route-${cat}-chat-id`);
+                body.target_topic_id = parseNullableInt(`srv-route-${cat}-topic-id`);
+            }
+            const res = await api('/notifications/test', 'POST', body);
+            const targetsText = (res.delivered_targets || []).length
+                ? `\n投递目标：${res.delivered_targets.join(', ')}`
+                : '';
+            tg.showAlert((res.success ? '✅ ' : '⚠️ ') + (res.message || '') + targetsText);
+        }
+
+        /**
+         * 使用当前服务器列表填充近 30 天运维告警的服务器下拉筛选框。
+         */
+        function populateOpsServerFilter() {
+            const sel = document.getElementById('ops-log-filter-server');
+            if (!sel) return;
+            const prev = sel.value;
+            sel.innerHTML = '<option value="">全部服务器</option>';
+            (allServers || []).forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = String(s.id);
+                opt.textContent = s.name;
+                sel.appendChild(opt);
+            });
+            if (prev) sel.value = prev;
+        }
+
+        /**
+         * 分页加载近 30 天运维告警日志列表。
+         * @param {number} offset 分页偏移量。
+         */
+        async function loadOpsLogs(offset = 0) {
+            const listEl = document.getElementById('ops-logs-list');
+            if (!listEl) return;
+            const safeOffset = Math.max(0, offset);
+            const params = new URLSearchParams({
+                limit: String(opsLogsState.limit),
+                offset: String(safeOffset)
+            });
+            const severity = (document.getElementById('ops-log-filter-severity')?.value || '').trim();
+            const serverId = (document.getElementById('ops-log-filter-server')?.value || '').trim();
+            const eventType = (document.getElementById('ops-log-filter-event')?.value || '').trim();
+            if (severity) params.set('severity', severity);
+            if (serverId) params.set('server_id', serverId);
+            if (eventType) params.set('event_type', eventType);
+
+            try {
+                const data = await api(`/notifications/ops_logs?${params.toString()}`);
+                opsLogsState.offset = data.offset;
+                opsLogsState.total = data.total;
+                renderOpsLogs(data);
+            } catch (_err) {
+                listEl.innerHTML = '<div class="state-text">运维告警加载失败</div>';
+            }
+        }
+
+        /**
+         * 按上一页/下一页偏移翻页查看运维告警记录。
+         * @param {number} delta 页码增量（-1 或 +1）。
+         */
+        function changeOpsLogsPage(delta) {
+            const nextOffset = opsLogsState.offset + delta * opsLogsState.limit;
+            if (nextOffset < 0 || nextOffset >= opsLogsState.total) return;
+            loadOpsLogs(nextOffset);
+        }
+
+        /**
+         * 安全转义并渲染近 30 天运维告警卡片与分页按钮状态。
+         * @param {object} data `/notifications/ops_logs` 分页响应对象。
+         */
+        function renderOpsLogs(data) {
+            const listEl = document.getElementById('ops-logs-list');
+            const totalEl = document.getElementById('ops-logs-total');
+            const prevBtn = document.getElementById('ops-logs-prev');
+            const nextBtn = document.getElementById('ops-logs-next');
+            if (!listEl) return;
+
+            const items = data.items || [];
+            if (totalEl) {
+                totalEl.textContent = `共 ${data.total} 条（第 ${Math.floor(data.offset / data.limit) + 1} 页）`;
+            }
+            if (prevBtn) prevBtn.disabled = data.offset <= 0;
+            if (nextBtn) nextBtn.disabled = (data.offset + items.length) >= data.total;
+
+            if (!items.length) {
+                listEl.innerHTML = '<div class="state-text">近 30 天内暂无匹配的运维告警记录</div>';
+                return;
+            }
+
+            listEl.innerHTML = items.map(item => {
+                const sev = item.severity || 'warning';
+                const badgeCls = sev === 'critical' ? 'badge-critical' : (sev === 'info' ? 'badge-info' : 'badge-warning');
+                const srvLabel = item.server_name ? ` · ${escapeHtml(item.server_name)}` : '';
+                const targetsText = (item.delivered_targets || []).length
+                    ? `投递: ${escapeHtml(item.delivered_targets.join(', '))}`
+                    : `状态: ${escapeHtml(item.delivery_status)}`;
+                const errHtml = item.error_message
+                    ? `<div class="item-subtitle" style="color:var(--destructive-text-color);">错误: ${escapeHtml(item.error_message)}</div>`
+                    : '';
+                return `
+                    <div class="ops-log-item">
+                        <div class="route-header" style="margin-bottom:4px;">
+                            <span style="font-size:14px; font-weight:600;">${escapeHtml(item.title)}</span>
+                            <span class="route-badge ${badgeCls}">${escapeHtml(sev)}</span>
+                        </div>
+                        <div class="item-subtitle" style="margin-top:2px; white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.body_text)}</div>
+                        <div class="item-subtitle" style="font-size:12px;">
+                            ${escapeHtml(formatAlertDateTime(item.created_at))} · <code>${escapeHtml(item.event_type)}</code>${srvLabel} · ${targetsText}
+                        </div>
+                        ${errHtml}
+                    </div>
+                `;
+            }).join('');
         }
 
         loadData();

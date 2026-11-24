@@ -10,6 +10,13 @@ from core.economy_policy import (
     DEFAULT_TRAFFIC_PACK_SIZE_GIB,
 )
 from core.user_policy import DefaultUserPolicySpec
+from models.events import (
+    ADMIN_DM_ALLOWED_CATEGORIES,
+    NotificationRouteCategory,
+    NotificationRouteScope,
+    NotificationTargetType,
+    get_optional_events_for_category,
+)
 from repositories.config_repo import DEFAULT_TRAFFIC_PACK_UNIT_BYTES
 
 DefaultUserPolicyDto = DefaultUserPolicySpec
@@ -580,6 +587,8 @@ class UserInfoDto(BaseModel):
     enable_points_warn: bool = True
     enable_watch_time: bool = True
     enable_traffic: bool = False
+    unread_notification_count: int = 0
+    has_unread_mandatory_notification: bool = False
     media_accounts: list[MediaAccountDto]
     available_servers: list[AvailableServerDto] = []
 
@@ -654,3 +663,355 @@ class DefaultUserPolicySyncResponse(BaseModel):
     synced_count: int = 0
     skipped_count: int = 0
     failed_count: int = 0
+
+
+# --- Notification Routing, Inbox, Preferences & Ops Logs ---
+
+
+def _validate_route_target_params(
+    *,
+    scope_type: NotificationRouteScope,
+    server_id: int | None,
+    category: NotificationRouteCategory,
+    target_type: NotificationTargetType,
+    target_chat_id: int | None,
+    target_topic_id: int | None,
+) -> tuple[int | None, int | None]:
+    """统一校验纯 Telegram 通知路由目标参数合法性并返回规范化后的 (chat_id, topic_id)。"""
+    if scope_type == NotificationRouteScope.GLOBAL and server_id is not None:
+        raise ValueError("全局路由规则不允许指定 server_id")
+    if scope_type == NotificationRouteScope.SERVER and (
+        server_id is None or server_id <= 0
+    ):
+        raise ValueError("单服覆盖路由规则必须提供有效的 server_id")
+
+    if target_type == NotificationTargetType.DISABLED:
+        return None, None
+    if target_type == NotificationTargetType.MAIN_CHAT:
+        return None, None
+    if target_type == NotificationTargetType.FORUM_TOPIC:
+        if target_topic_id is None or target_topic_id <= 0:
+            raise ValueError("话题路由 (forum_topic) 必须提供正整数 target_topic_id")
+        if target_chat_id is not None and target_chat_id >= 0:
+            raise ValueError(
+                "指定话题所在群组时，target_chat_id 必须为负数群组 ID（留空表示使用主群）"
+            )
+        return target_chat_id, int(target_topic_id)
+    if target_type == NotificationTargetType.CHAT_OR_CHANNEL:
+        if target_chat_id is None or target_chat_id >= 0:
+            raise ValueError(
+                "独立群组/频道路由 (chat_or_channel) 必须提供负数 target_chat_id (< 0)"
+            )
+        return int(target_chat_id), None
+    if target_type == NotificationTargetType.ADMIN_DM_GROUP:
+        if scope_type != NotificationRouteScope.GLOBAL:
+            raise ValueError("admin_dm_group 仅允许配置在全局默认路由中")
+        if category not in ADMIN_DM_ALLOWED_CATEGORIES:
+            raise ValueError(
+                "admin_dm_group 仅适用于 ops_alert 与 account_lifecycle 路由类别"
+            )
+        return None, None
+    raise ValueError(f"不支持的目标类型: {target_type}")
+
+
+class OptionalEventOptionDto(BaseModel):
+    """路由类别下默认关闭的可选事件描述"""
+
+    event: str
+    label: str
+    severity: str
+
+
+class RouteCategoryMetaDto(BaseModel):
+    """通知路由类别元数据描述"""
+
+    category: str
+    label: str
+    description: str
+    allowed_target_types: list[str]
+    supports_escalate_admin_dm: bool = False
+    optional_events: list[OptionalEventOptionDto] = Field(default_factory=list)
+
+
+class NotificationRouteDto(BaseModel):
+    """单条通知路由规则 DTO"""
+
+    id: int | None = None
+    scope_type: Literal["global", "server"]
+    server_id: int | None = None
+    category: str
+    target_type: str
+    target_chat_id: int | None = None
+    target_topic_id: int | None = None
+    escalate_admin_dm: bool = False
+    enabled_events: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class NotificationRouteUpsertDto(BaseModel):
+    """新增或更新全局/单服通知路由规则请求体"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope_type: NotificationRouteScope
+    server_id: int | None = None
+    category: NotificationRouteCategory
+    target_type: NotificationTargetType
+    target_chat_id: int | None = None
+    target_topic_id: int | None = None
+    escalate_admin_dm: bool = False
+    enabled_events: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_route(self) -> NotificationRouteUpsertDto:
+        """校验目标组合、可选事件白名单及高危抄送作用域约束。"""
+        chat_id, topic_id = _validate_route_target_params(
+            scope_type=self.scope_type,
+            server_id=self.server_id,
+            category=self.category,
+            target_type=self.target_type,
+            target_chat_id=self.target_chat_id,
+            target_topic_id=self.target_topic_id,
+        )
+        self.target_chat_id = chat_id
+        self.target_topic_id = topic_id
+
+        allowed_events = {
+            ev.value for ev in get_optional_events_for_category(self.category)
+        }
+        cleaned_events: list[str] = []
+        seen: set[str] = set()
+        for raw_event in self.enabled_events:
+            ev_name = str(raw_event).strip()
+            if not ev_name:
+                continue
+            if ev_name not in allowed_events:
+                raise ValueError(
+                    f"类别 {self.category.value} 不支持可选事件: {ev_name}"
+                )
+            if ev_name not in seen:
+                seen.add(ev_name)
+                cleaned_events.append(ev_name)
+        self.enabled_events = sorted(cleaned_events)
+
+        if self.category != NotificationRouteCategory.OPS_ALERT:
+            self.escalate_admin_dm = False
+        return self
+
+
+class ServerCategoryRouteStateDto(BaseModel):
+    """单台服务器在指定类别下的有效解析态与覆盖来源详情"""
+
+    category: str
+    source: Literal["server_override", "global", "legacy_topic"]
+    is_override: bool
+    effective: NotificationRouteDto
+    override: NotificationRouteDto | None = None
+    legacy_topic_id: int | None = None
+
+
+class ServerRouteOverviewDto(BaseModel):
+    """单台服务器的通知覆盖路由总览"""
+
+    server_id: int
+    server_name: str
+    server_type: str
+    notify_topic_id: int | None = None
+    request_notify_topic_id: int | None = None
+    categories: dict[str, ServerCategoryRouteStateDto]
+
+
+class NotificationRoutesResponse(BaseModel):
+    """管理后台通知路由矩阵全量响应"""
+
+    global_routes: list[NotificationRouteDto]
+    server_routes: list[NotificationRouteDto]
+    servers: list[ServerRouteOverviewDto]
+    categories: list[RouteCategoryMetaDto]
+    optional_events: dict[str, list[OptionalEventOptionDto]]
+    telegram_chat_id_configured: bool
+    telegram_chat_id: int | None = None
+
+
+class NotificationRouteMutationResponse(BaseModel):
+    """通知路由保存响应"""
+
+    success: bool
+    message: str
+    route: NotificationRouteDto
+
+
+class NotificationRouteDeleteResponse(BaseModel):
+    """删除单服覆盖路由响应"""
+
+    success: bool
+    deleted: bool
+    message: str
+
+
+class NotificationRouteTestRequest(BaseModel):
+    """触发 SYSTEM_TEST 通路实测请求体（支持测试已保存或候选路由参数）"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: NotificationRouteCategory
+    server_id: int | None = None
+    target_type: NotificationTargetType | None = None
+    target_chat_id: int | None = None
+    target_topic_id: int | None = None
+    escalate_admin_dm: bool = False
+    message: str = Field(
+        default="这是一条系统通知通路测试消息。",
+        max_length=500,
+    )
+
+    @model_validator(mode="after")
+    def _validate_candidate_target(self) -> NotificationRouteTestRequest:
+        """若传入候选目标参数，复用路由目标规则执行严格校验。"""
+        if self.server_id is not None and self.server_id <= 0:
+            raise ValueError("server_id 必须为正整数")
+        if self.target_type is not None:
+            scope_type = (
+                NotificationRouteScope.SERVER
+                if self.server_id is not None
+                else NotificationRouteScope.GLOBAL
+            )
+            chat_id, topic_id = _validate_route_target_params(
+                scope_type=scope_type,
+                server_id=self.server_id,
+                category=self.category,
+                target_type=self.target_type,
+                target_chat_id=self.target_chat_id,
+                target_topic_id=self.target_topic_id,
+            )
+            self.target_chat_id = chat_id
+            self.target_topic_id = topic_id
+        if self.category != NotificationRouteCategory.OPS_ALERT:
+            self.escalate_admin_dm = False
+        return self
+
+
+class NotificationRouteTestResponse(BaseModel):
+    """SYSTEM_TEST 通路实测响应"""
+
+    success: bool
+    message: str
+    delivered_targets: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class OpsAlertLogDto(BaseModel):
+    """近 30 天系统运维告警日志条目 DTO"""
+
+    id: int
+    source_key: str
+    server_id: int | None = None
+    server_name: str | None = None
+    event_type: str
+    severity: str
+    title: str
+    body_text: str
+    delivered_targets: list[str] = Field(default_factory=list)
+    delivery_status: str
+    error_message: str | None = None
+    created_at: datetime
+
+
+class OpsAlertLogsPageResponse(BaseModel):
+    """分页运维告警日志响应"""
+
+    items: list[OpsAlertLogDto]
+    total: int
+    limit: int
+    offset: int
+
+
+class NotificationInboxItemDto(BaseModel):
+    """Mini App 站内兜底收件箱单条通知 DTO"""
+
+    id: int
+    server_id: int | None = None
+    server_name: str | None = None
+    event_type: str
+    category: str
+    severity: str
+    title: str
+    body_text: str
+    action_url: str | None = None
+    is_mandatory: bool = False
+    is_read: bool = False
+    delivery_error: str | None = None
+    created_at: datetime
+    read_at: datetime | None = None
+
+
+class UserNotificationPreferencesDto(BaseModel):
+    """用户 5 项可选提醒偏好开关视图"""
+
+    allow_watch_time_milestone: bool = True
+    allow_pre_expiry_reminder: bool = True
+    allow_traffic_80_alert: bool = True
+    allow_cycle_reset: bool = False
+    allow_self_action_receipt: bool = True
+
+
+class UserNotificationPreferencesUpdateDto(BaseModel):
+    """更新用户可选提醒偏好开关请求体（严禁未知字段或篡改必达开关）"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    allow_watch_time_milestone: bool | None = None
+    allow_pre_expiry_reminder: bool | None = None
+    allow_traffic_80_alert: bool | None = None
+    allow_cycle_reset: bool | None = None
+    allow_self_action_receipt: bool | None = None
+
+
+class UserNotificationPreferencesResponse(BaseModel):
+    """读写用户通知偏好响应"""
+
+    success: bool = True
+    allow_watch_time_milestone: bool
+    allow_pre_expiry_reminder: bool
+    allow_traffic_80_alert: bool
+    allow_cycle_reset: bool
+    allow_self_action_receipt: bool
+    mandatory_notice_locked: bool = True
+
+
+class MiniAppNotificationsResponse(BaseModel):
+    """Mini App 通知中心聚合响应（近 30 天兜底收件箱、偏好与管理员运维日志）"""
+
+    items: list[NotificationInboxItemDto]
+    unread_count: int
+    has_unread_mandatory: bool
+    preferences: UserNotificationPreferencesDto
+    is_admin: bool = False
+    ops_logs: list[OpsAlertLogDto] = Field(default_factory=list)
+
+
+class NotificationMarkReadDto(BaseModel):
+    """Mini App 标记站内收件箱已读请求体"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: int | None = None
+    mark_all: bool = False
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> NotificationMarkReadDto:
+        """必须指定正整数 item_id 或 mark_all=True，防止无意义空请求。"""
+        if self.mark_all:
+            return self
+        if self.item_id is None or self.item_id <= 0:
+            raise ValueError("请指定有效的 item_id 或设置 mark_all=true")
+        return self
+
+
+class NotificationMarkReadResponse(BaseModel):
+    """标记站内收件箱已读响应"""
+
+    success: bool
+    marked_count: int
+    unread_count: int
+    has_unread_mandatory: bool

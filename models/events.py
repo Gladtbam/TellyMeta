@@ -630,3 +630,47 @@ def get_optional_events_for_category(
         for spec in NOTIFICATION_EVENT_SPECS.values()
         if spec.category == normalized and not spec.default_enabled
     )
+
+
+# 路由类别展示元信息（标题、说明与允许使用的目标类型）
+ROUTE_CATEGORY_LABELS: dict[NotificationRouteCategory, tuple[str, str]] = {
+    NotificationRouteCategory.MEDIA_LIBRARY: (
+        "媒体入库与 Arr 动态",
+        "Emby / Jellyfin 新片入库、Sonarr / Radarr 订阅与下载通知",
+    ),
+    NotificationRouteCategory.MEDIA_REQUEST: (
+        "求片审核卡片",
+        "向管理员发送待审核求片卡片并同步更新批准/拒绝/入库状态",
+    ),
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE: (
+        "账号生命周期与管理审计",
+        "过期封禁、自动删号及管理员操作等管理侧审计同步",
+    ),
+    NotificationRouteCategory.OPS_ALERT: (
+        "系统运维告警",
+        "媒体服/Arr/qB 离线、Arr 健康告警、MKV/NFO/翻译故障与任务摘要",
+    ),
+    NotificationRouteCategory.COMMUNITY: (
+        "社区积分与群组治理",
+        "每日发言积分结算榜单、入群验证拒审与退群自动清理审计",
+    ),
+}
+
+# 默认关闭、需用户在路由白名单中主动勾选启用的可选事件中文标题
+OPTIONAL_EVENT_LABELS: dict[NotificationEvent, str] = {
+    NotificationEvent.SONARR_GRAB: "Sonarr 抓取种子 (Grab)",
+    NotificationEvent.SONARR_RENAME: "Sonarr 文件重命名 (Rename)",
+    NotificationEvent.SONARR_DELETE: "Sonarr 剧集/文件删除 (Delete)",
+    NotificationEvent.RADARR_GRAB: "Radarr 抓取种子 (Grab)",
+    NotificationEvent.RADARR_RENAME: "Radarr 文件重命名 (Rename)",
+    NotificationEvent.RADARR_DELETE: "Radarr 电影/文件删除 (Delete)",
+    NotificationEvent.MEDIA_LIBRARY_DELETED: "Emby/Jellyfin 媒体删除",
+}
+
+# 允许路由到管理员私聊组 (admin_dm_group) 的全局类别集合
+ADMIN_DM_ALLOWED_CATEGORIES: frozenset[NotificationRouteCategory] = frozenset(
+    {
+        NotificationRouteCategory.OPS_ALERT,
+        NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    }
+)

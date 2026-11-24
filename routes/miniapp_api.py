@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -37,17 +38,31 @@ from models.schemas import (
     ChangeScoreDto,
     MediaAccountDto,
     MediaItemDto,
+    MiniAppNotificationsResponse,
+    NotificationInboxItemDto,
+    NotificationMarkReadDto,
+    NotificationMarkReadResponse,
+    OpsAlertLogsPageResponse,
     RequestLibraryDto,
     RequestSubmitDto,
     ToggleResponse,
     TrafficPackRedeemDto,
     TrafficPackRedeemResponse,
     UserInfoDto,
+    UserNotificationPreferencesDto,
+    UserNotificationPreferencesResponse,
+    UserNotificationPreferencesUpdateDto,
 )
 from repositories.config_repo import DEFAULT_TRAFFIC_PACK_UNIT_BYTES
+from repositories.notification_repo import (
+    NotificationInboxRepository,
+    UserNotificationPreferenceRepository,
+)
 from repositories.server_repo import ServerRepository
 from repositories.telegram_repo import TelegramRepository
+from routes.settings_api import query_recent_ops_logs_page
 from services.account_service import AccountService
+from services.notification_service import get_or_create_notification_runtime
 from services.request_service import RequestService
 from services.user_service import UserService
 
@@ -225,6 +240,8 @@ def _build_user_info_dto(
     has_username: bool,
     username: str | None = None,
     full_name: str | None = None,
+    unread_notification_count: int = 0,
+    has_unread_mandatory_notification: bool = False,
 ) -> UserInfoDto:
     """将 ``UserService.get_user_info_data`` 结果统一转换为 ``UserInfoDto``。
 
@@ -270,6 +287,8 @@ def _build_user_info_dto(
         enable_points_warn=bool(data.get("enable_points_warn", True)),
         enable_watch_time=bool(data.get("enable_watch_time", True)),
         enable_traffic=bool(data.get("enable_traffic", False)),
+        unread_notification_count=int(unread_notification_count),
+        has_unread_mandatory_notification=bool(has_unread_mandatory_notification),
         media_accounts=[
             MediaAccountDto(
                 server_id=item["media_user"].server_id,
@@ -378,16 +397,200 @@ async def get_my_info(
             uname = await client.get_user_name(user_id, need_username=True)
             has_username = uname not in (None, False)
 
+        now = get_or_create_notification_runtime(request.app).clock()
+        unread_count, has_mandatory = await NotificationInboxRepository(
+            session
+        ).get_unread_summary(user_id, since=now - timedelta(days=30))
+
         return _build_user_info_dto(
             data,
             int(renew_score),
             is_admin=is_admin,
             is_group_member=is_group_member,
             has_username=has_username,
+            unread_notification_count=unread_count,
+            has_unread_mandatory_notification=has_mandatory,
         )
 
     except Exception as e:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/notifications", response_model=MiniAppNotificationsResponse)
+async def get_my_notifications(
+    request: Request,
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> MiniAppNotificationsResponse:
+    """获取当前成员近 30 天站内兜底收件箱、未读汇总、个人提醒偏好及管理员运维告警。"""
+    now = get_or_create_notification_runtime(request.app).clock()
+    since = now - timedelta(days=30)
+
+    inbox_repo = NotificationInboxRepository(session)
+    pref_repo = UserNotificationPreferenceRepository(session)
+    items = await inbox_repo.list_user_items(
+        user_id,
+        unread_only=unread_only,
+        limit=limit,
+        offset=offset,
+        since=since,
+    )
+    unread_count, has_mandatory = await inbox_repo.get_unread_summary(
+        user_id, since=since
+    )
+    pref_flags = await pref_repo.get_effective_flags(user_id)
+
+    servers = await ServerRepository(session).get_all()
+    server_names = {srv.id: srv.name for srv in servers}
+    item_dtos = [
+        NotificationInboxItemDto(
+            id=item.id,
+            server_id=item.server_id,
+            server_name=(
+                server_names.get(item.server_id) if item.server_id is not None else None
+            ),
+            event_type=str(item.event_type),
+            category=str(item.category),
+            severity=str(item.severity),
+            title=item.title,
+            body_text=item.body_text,
+            action_url=item.action_url,
+            is_mandatory=bool(item.is_mandatory),
+            is_read=bool(item.is_read),
+            delivery_error=item.delivery_error,
+            created_at=item.created_at,
+            read_at=item.read_at,
+        )
+        for item in items
+    ]
+
+    admin_ids = getattr(request.app.state, "admin_ids", set())
+    is_admin = user_id in admin_ids
+    ops_logs = (
+        (await query_recent_ops_logs_page(session, now=now, limit=50, offset=0)).items
+        if is_admin
+        else []
+    )
+
+    return MiniAppNotificationsResponse(
+        items=item_dtos,
+        unread_count=unread_count,
+        has_unread_mandatory=has_mandatory,
+        preferences=UserNotificationPreferencesDto(**pref_flags),
+        is_admin=is_admin,
+        ops_logs=ops_logs,
+    )
+
+
+@router.get(
+    "/notifications/ops_logs",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=OpsAlertLogsPageResponse,
+)
+async def get_miniapp_ops_logs(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    event_type: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    server_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> OpsAlertLogsPageResponse:
+    """管理员在 Mini App 内分页查询近 30 天运维告警记录。"""
+    now = get_or_create_notification_runtime(request.app).clock()
+    return await query_recent_ops_logs_page(
+        session,
+        now=now,
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        severity=severity,
+        server_id=server_id,
+    )
+
+
+@router.post("/notifications/read", response_model=NotificationMarkReadResponse)
+async def mark_my_notifications_read(
+    request: Request,
+    body: NotificationMarkReadDto,
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> NotificationMarkReadResponse:
+    """将当前用户的单条或全部未读站内兜底通知标记为已读（严格限定本人作用域）。"""
+    now = get_or_create_notification_runtime(request.app).clock()
+    since = now - timedelta(days=30)
+    inbox_repo = NotificationInboxRepository(session)
+    marked_count = await inbox_repo.mark_read(
+        user_id,
+        item_id=None if body.mark_all else body.item_id,
+        now=now,
+        since=since,
+    )
+    unread_count, has_mandatory = await inbox_repo.get_unread_summary(
+        user_id, since=since
+    )
+    return NotificationMarkReadResponse(
+        success=True,
+        marked_count=marked_count,
+        unread_count=unread_count,
+        has_unread_mandatory=has_mandatory,
+    )
+
+
+@router.get(
+    "/notifications/preferences",
+    response_model=UserNotificationPreferencesResponse,
+)
+async def get_my_notification_preferences(
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> UserNotificationPreferencesResponse:
+    """获取当前用户的 5 项可选通知提醒偏好设置。"""
+    flags = await UserNotificationPreferenceRepository(session).get_effective_flags(
+        user_id
+    )
+    return UserNotificationPreferencesResponse(
+        success=True,
+        mandatory_notice_locked=True,
+        **flags,
+    )
+
+
+@router.put(
+    "/notifications/preferences",
+    response_model=UserNotificationPreferencesResponse,
+)
+async def update_my_notification_preferences(
+    request: Request,
+    body: UserNotificationPreferencesUpdateDto,
+    user_id: int = Depends(require_group_member),
+    session: AsyncSession = Depends(get_db),
+) -> UserNotificationPreferencesResponse:
+    """更新当前用户的可选通知提醒偏好设置（不影响必达通知投递）。"""
+    now = get_or_create_notification_runtime(request.app).clock()
+    # 防止首次直调偏好接口时因尚未访问 /me 而缺少 TelegramUser 外键记录
+    await TelegramRepository(session).get_or_create(user_id)
+    updated = await UserNotificationPreferenceRepository(session).update_preferences(
+        user_id,
+        allow_watch_time_milestone=body.allow_watch_time_milestone,
+        allow_pre_expiry_reminder=body.allow_pre_expiry_reminder,
+        allow_traffic_80_alert=body.allow_traffic_80_alert,
+        allow_cycle_reset=body.allow_cycle_reset,
+        allow_self_action_receipt=body.allow_self_action_receipt,
+        now=now,
+    )
+    return UserNotificationPreferencesResponse(
+        success=True,
+        allow_watch_time_milestone=bool(updated.allow_watch_time_milestone),
+        allow_pre_expiry_reminder=bool(updated.allow_pre_expiry_reminder),
+        allow_traffic_80_alert=bool(updated.allow_traffic_80_alert),
+        allow_cycle_reset=bool(updated.allow_cycle_reset),
+        allow_self_action_receipt=bool(updated.allow_self_action_receipt),
+        mandatory_notice_locked=True,
+    )
 
 
 @router.get(

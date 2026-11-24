@@ -762,12 +762,22 @@ def get_or_create_notification_runtime(app: FastAPI | Any) -> NotificationRuntim
     return runtime
 
 
+@dataclass(slots=True)
+class NotificationTestReport:
+    """单次 ``SYSTEM_TEST`` 通路实测结果详情。"""
+
+    delivered_targets: list[str]
+    errors: list[str]
+    disabled: bool = False
+
+
 class NotificationService:
     """统一强类型通知入口服务（整合分层路由、偏好过滤、冷却与异步投递）。"""
 
     def __init__(self, app: FastAPI | Any) -> None:
         self.app = app
         self.runtime = get_or_create_notification_runtime(app)
+        self.last_test_report: NotificationTestReport | None = None
 
     @property
     def client(self) -> TelethonClientWarper:
@@ -1385,18 +1395,22 @@ class NotificationService:
             for k in expired:
                 self.runtime._cooldown_entries.pop(k, None)
 
-    async def _send_targets_sync(
+    async def _send_targets_sync_detailed(
         self,
         *,
         rendered: RenderedNotification,
         targets: Sequence[_DeliveryTarget],
-    ) -> Any:
-        """同步向已解析目标列表投递消息并返回首个成功发送的 Telethon Message。"""
+    ) -> tuple[Any, list[str], list[str]]:
+        """同步向已解析目标列表投递消息，并返回首个消息、成功目标列表与错误信息列表。"""
         client = self.runtime.get_telethon_client()
-        if client is None or not targets:
-            return None
+        if client is None:
+            return None, [], ["Telethon 客户端不可用"]
+        if not targets:
+            return None, [], []
 
         first_sent: Any = None
+        delivered_targets: list[str] = []
+        send_errors: list[str] = []
         for target in targets:
             try:
                 sent = await self.runtime.send_with_chat_pacing(
@@ -1407,6 +1421,7 @@ class NotificationService:
                     buttons=rendered.buttons,
                     reply_to=target.reply_to,
                 )
+                delivered_targets.append(target.label)
                 if first_sent is None and sent is not None:
                     first_sent = sent
             except (RPCError, ValueError, TypeError, OSError) as exc:
@@ -1416,6 +1431,19 @@ class NotificationService:
                     target.label,
                     exc,
                 )
+                send_errors.append(f"{target.label}: {exc}")
+        return first_sent, delivered_targets, send_errors
+
+    async def _send_targets_sync(
+        self,
+        *,
+        rendered: RenderedNotification,
+        targets: Sequence[_DeliveryTarget],
+    ) -> Any:
+        """同步向已解析目标列表投递消息并返回首个成功发送的 Telethon Message。"""
+        first_sent, _, _ = await self._send_targets_sync_detailed(
+            rendered=rendered, targets=targets
+        )
         return first_sent
 
     async def emit_sync(
@@ -1593,41 +1621,69 @@ class NotificationService:
         message: str = "这是一条系统通知通路测试消息。",
         session: AsyncSession | None = None,
     ) -> Any:
-        """同步发送 ``SYSTEM_TEST`` 通路测试消息到持久化路由或指定候选目标配置。"""
+        """同步发送 ``SYSTEM_TEST`` 通路测试消息到持久化路由或指定候选目标配置，并记录投递报告。"""
         normalized_cat = NotificationRouteCategory(category)
+        derived_factory = self._derive_session_factory(session)
+        if target_type is None:
+            route_cfg = await self._resolve_route_config(
+                category=normalized_cat,
+                server_id=server_id,
+                session=session,
+                fallback_factory=derived_factory,
+            )
+        else:
+            route_cfg = _ResolvedRouteConfig(
+                target_type=NotificationTargetType(target_type),
+                target_chat_id=target_chat_id,
+                target_topic_id=target_topic_id,
+                escalate_admin_dm=bool(escalate_admin_dm),
+                enabled_events=frozenset(),
+            )
+
+        effective_desc = target_description or route_cfg.target_type.value
         payload = SystemTestPayload(
             server_name=server_name,
             category=normalized_cat.value,
-            target_description=target_description,
+            target_description=effective_desc,
             operator_name=operator_name,
             triggered_at=self.runtime.clock(),
             message=message,
         )
-        if target_type is None:
-            return await self.emit_sync(
-                payload,
-                server_id=server_id,
-                route_category_override=normalized_cat,
-                session=session,
+        if route_cfg.target_type == NotificationTargetType.DISABLED:
+            self.last_test_report = NotificationTestReport(
+                delivered_targets=[],
+                errors=["当前路由目标处于禁用状态 (disabled)"],
+                disabled=True,
             )
+            return None
 
-        derived_factory = self._derive_session_factory(session)
-        route_cfg = _ResolvedRouteConfig(
-            target_type=NotificationTargetType(target_type),
-            target_chat_id=target_chat_id,
-            target_topic_id=target_topic_id,
-            escalate_admin_dm=bool(escalate_admin_dm),
-            enabled_events=frozenset(),
-        )
         targets = await self._resolve_route_targets(
             route_cfg=route_cfg,
             category=normalized_cat,
-            is_critical=False,
+            is_critical=bool(route_cfg.escalate_admin_dm),
             session=session,
             fallback_factory=derived_factory,
         )
+        if not targets:
+            self.last_test_report = NotificationTestReport(
+                delivered_targets=[],
+                errors=[
+                    "未解析到可用的 Telegram 投递目标（请检查主群 ID、话题或管理员配置）"
+                ],
+                disabled=False,
+            )
+            return None
+
         rendered = NotificationRenderer.render(payload)
-        return await self._send_targets_sync(rendered=rendered, targets=targets)
+        first_sent, delivered, send_errors = await self._send_targets_sync_detailed(
+            rendered=rendered, targets=targets
+        )
+        self.last_test_report = NotificationTestReport(
+            delivered_targets=delivered,
+            errors=send_errors,
+            disabled=False,
+        )
+        return first_sent
 
     # ------------------------------------------------------------------
     # 兼容层：供 Tickets 05~07 逐步迁移存量调用点前保持安全可用

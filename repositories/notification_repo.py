@@ -6,7 +6,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import ColumnElement, case, delete, func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -355,11 +355,14 @@ class NotificationInboxRepository:
         unread_only: bool = False,
         limit: int = 50,
         offset: int = 0,
+        since: datetime | None = None,
     ) -> Sequence[NotificationInboxItem]:
         """分页查询用户的站内收件箱通知，按创建时间倒序排列"""
         conditions = [NotificationInboxItem.user_id == user_id]
         if unread_only:
             conditions.append(NotificationInboxItem.is_read.is_(False))
+        if since is not None:
+            conditions.append(NotificationInboxItem.created_at >= since)
         stmt = (
             select(NotificationInboxItem)
             .where(*conditions)
@@ -374,8 +377,16 @@ class NotificationInboxRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
-    async def get_unread_summary(self, user_id: int) -> tuple[int, bool]:
+    async def get_unread_summary(
+        self, user_id: int, *, since: datetime | None = None
+    ) -> tuple[int, bool]:
         """单次查询返回用户的未读通知总数及是否存在未读必达通知"""
+        conditions = [
+            NotificationInboxItem.user_id == user_id,
+            NotificationInboxItem.is_read.is_(False),
+        ]
+        if since is not None:
+            conditions.append(NotificationInboxItem.created_at >= since)
         stmt = select(
             func.count(NotificationInboxItem.id),
             func.coalesce(
@@ -384,21 +395,20 @@ class NotificationInboxRepository:
                 ),
                 0,
             ),
-        ).where(
-            NotificationInboxItem.user_id == user_id,
-            NotificationInboxItem.is_read.is_(False),
-        )
+        ).where(*conditions)
         row = (await self.session.execute(stmt)).one()
         return int(row[0] or 0), bool(row[1])
 
-    async def count_unread(self, user_id: int) -> int:
+    async def count_unread(self, user_id: int, *, since: datetime | None = None) -> int:
         """统计用户当前未读收件箱通知数量"""
-        unread_count, _ = await self.get_unread_summary(user_id)
+        unread_count, _ = await self.get_unread_summary(user_id, since=since)
         return unread_count
 
-    async def has_unread_mandatory(self, user_id: int) -> bool:
+    async def has_unread_mandatory(
+        self, user_id: int, *, since: datetime | None = None
+    ) -> bool:
         """检查用户当前是否存在未读的必达通知"""
-        _, has_mandatory = await self.get_unread_summary(user_id)
+        _, has_mandatory = await self.get_unread_summary(user_id, since=since)
         return has_mandatory
 
     async def mark_read(
@@ -407,6 +417,7 @@ class NotificationInboxRepository:
         item_id: int | None = None,
         *,
         now: datetime | None = None,
+        since: datetime | None = None,
     ) -> int:
         """标记单条或全部未读收件箱通知为已读，返回本次更新条数"""
         conditions = [
@@ -415,6 +426,8 @@ class NotificationInboxRepository:
         ]
         if item_id is not None:
             conditions.append(NotificationInboxItem.id == item_id)
+        if since is not None:
+            conditions.append(NotificationInboxItem.created_at >= since)
         stmt = (
             update(NotificationInboxItem)
             .where(*conditions)
@@ -473,6 +486,26 @@ class OpsAlertRepository:
         await self.session.refresh(entry)
         return entry
 
+    @staticmethod
+    def _build_log_conditions(
+        *,
+        event_type: str | None = None,
+        severity: str | None = None,
+        server_id: int | None = None,
+        since: datetime | None = None,
+    ) -> list[ColumnElement[bool]]:
+        """构建运维告警查询与计数复用的筛选条件列表"""
+        conditions: list[ColumnElement[bool]] = []
+        if event_type is not None and str(event_type).strip():
+            conditions.append(OpsAlertLog.event_type == str(event_type).strip())
+        if severity is not None and str(severity).strip():
+            conditions.append(OpsAlertLog.severity == str(severity).strip())
+        if server_id is not None:
+            conditions.append(OpsAlertLog.server_id == server_id)
+        if since is not None:
+            conditions.append(OpsAlertLog.created_at >= since)
+        return conditions
+
     async def list_logs(
         self,
         *,
@@ -481,15 +514,15 @@ class OpsAlertRepository:
         event_type: str | None = None,
         severity: str | None = None,
         server_id: int | None = None,
+        since: datetime | None = None,
     ) -> Sequence[OpsAlertLog]:
-        """按可选维度筛选并分页查询近期运维告警记录"""
-        conditions = []
-        if event_type is not None:
-            conditions.append(OpsAlertLog.event_type == str(event_type))
-        if severity is not None:
-            conditions.append(OpsAlertLog.severity == str(severity))
-        if server_id is not None:
-            conditions.append(OpsAlertLog.server_id == server_id)
+        """按可选维度与时间窗筛选并分页查询近期运维告警记录"""
+        conditions = self._build_log_conditions(
+            event_type=event_type,
+            severity=severity,
+            server_id=server_id,
+            since=since,
+        )
 
         stmt = (
             select(OpsAlertLog)
@@ -501,6 +534,25 @@ class OpsAlertRepository:
         )
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def count_logs(
+        self,
+        *,
+        event_type: str | None = None,
+        severity: str | None = None,
+        server_id: int | None = None,
+        since: datetime | None = None,
+    ) -> int:
+        """统计符合筛选条件的运维告警记录总数"""
+        conditions = self._build_log_conditions(
+            event_type=event_type,
+            severity=severity,
+            server_id=server_id,
+            since=since,
+        )
+        stmt = select(func.count(OpsAlertLog.id)).where(*conditions)
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)
 
     async def get_latest_by_source(
         self, event_type: str, source_key: str

@@ -1,15 +1,26 @@
 import contextlib
 import json
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clients.radarr_client import RadarrClient
 from clients.sonarr_client import SonarrClient
 from clients.tmdb_client import TmdbClient
 from clients.tvdb_client import TvdbClient
+from core.config import get_settings
 from core.database import get_db
 from core.dependencies import (
+    get_notification_service,
     get_radarr_clients,
     get_sonarr_clients,
     get_tmdb_client,
@@ -20,7 +31,18 @@ from core.user_policy import (
     serialize_server_default_user_policy,
 )
 from core.webapp_auth import validate_admin_access
-from models.orm import ServerInstance, ServerType
+from models.events import (
+    ADMIN_DM_ALLOWED_CATEGORIES,
+    DEFAULT_GLOBAL_ROUTE_TARGETS,
+    OPTIONAL_EVENT_LABELS,
+    ROUTE_CATEGORY_LABELS,
+    NotificationRouteCategory,
+    NotificationRouteScope,
+    NotificationTargetType,
+    get_event_spec,
+    get_optional_events_for_category,
+)
+from models.orm import NotificationRoute, ServerInstance, ServerType
 from models.schemas import (
     AdminDto,
     ArrServerDto,
@@ -31,12 +53,25 @@ from models.schemas import (
     LlmConfigUpdateDto,
     MetadataConfigUpdateDto,
     MkvConfigUpdateDto,
+    NotificationRouteDeleteResponse,
+    NotificationRouteDto,
+    NotificationRouteMutationResponse,
+    NotificationRoutesResponse,
+    NotificationRouteTestRequest,
+    NotificationRouteTestResponse,
+    NotificationRouteUpsertDto,
     NsfwLibraryDto,
+    OpsAlertLogDto,
+    OpsAlertLogsPageResponse,
     OpsConfigUpdateDto,
+    OptionalEventOptionDto,
     PointsConfigUpdateDto,
     PolicyConfigUpdateDto,
+    RouteCategoryMetaDto,
+    ServerCategoryRouteStateDto,
     ServerCreate,
     ServerDto,
+    ServerRouteOverviewDto,
     ServerUpdate,
     SystemConfigResponse,
     ToggleResponse,
@@ -45,15 +80,25 @@ from models.schemas import (
     WatchTimeConfigUpdateDto,
 )
 from repositories.config_repo import ConfigRepository
+from repositories.notification_repo import (
+    NotificationRouteRepository,
+    OpsAlertRepository,
+)
 from repositories.server_repo import ServerRepository
 from services.account_service import AccountService, format_traffic_release_summary
+from services.notification_service import (
+    NotificationService,
+    get_or_create_notification_runtime,
+)
 from services.settings_service import SettingsServices
 from services.traffic_service import invalidate_traffic_server_cache
+from services.user_service import UserService
 from workers.nfo_worker import (
     rebuild_radarr_metadata_task,
     rebuild_sonarr_metadata_task,
 )
 
+settings = get_settings()
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
@@ -454,6 +499,493 @@ async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
         "is_forum": topic_map["is_forum"],
         "topics": [{"id": k, "name": v} for k, v in topic_map["topics"].items()],
     }
+
+
+# --- Notification Routing, Test & Ops Alert APIs ---
+
+_GLOBAL_ROUTE_CATEGORY_ORDER: tuple[NotificationRouteCategory, ...] = (
+    NotificationRouteCategory.MEDIA_LIBRARY,
+    NotificationRouteCategory.MEDIA_REQUEST,
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    NotificationRouteCategory.OPS_ALERT,
+    NotificationRouteCategory.COMMUNITY,
+)
+_SERVER_ROUTE_CATEGORY_ORDER: tuple[NotificationRouteCategory, ...] = (
+    NotificationRouteCategory.MEDIA_LIBRARY,
+    NotificationRouteCategory.MEDIA_REQUEST,
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    NotificationRouteCategory.OPS_ALERT,
+)
+
+
+def _route_orm_to_dto(route: NotificationRoute) -> NotificationRouteDto:
+    """将数据库 ``NotificationRoute`` 记录转换为前端可消费的 ``NotificationRouteDto``。"""
+    scope: str = (
+        "server" if route.scope_type == NotificationRouteScope.SERVER else "global"
+    )
+    return NotificationRouteDto(
+        id=route.id,
+        scope_type="server" if scope == "server" else "global",
+        server_id=route.server_id,
+        category=str(route.category),
+        target_type=str(route.target_type),
+        target_chat_id=route.target_chat_id,
+        target_topic_id=route.target_topic_id,
+        escalate_admin_dm=bool(route.escalate_admin_dm),
+        enabled_events=sorted(
+            NotificationRouteRepository.parse_enabled_events(route.enabled_events_json)
+        ),
+        updated_at=route.updated_at,
+    )
+
+
+def _default_global_route_dto(
+    category: NotificationRouteCategory,
+) -> NotificationRouteDto:
+    """当数据库尚未持久化指定全局类别路由时，生成内置默认路由视图。"""
+    return NotificationRouteDto(
+        id=None,
+        scope_type="global",
+        server_id=None,
+        category=category.value,
+        target_type=DEFAULT_GLOBAL_ROUTE_TARGETS[category].value,
+        target_chat_id=None,
+        target_topic_id=None,
+        escalate_admin_dm=False,
+        enabled_events=[],
+        updated_at=None,
+    )
+
+
+def _legacy_topic_to_route_dto(
+    *,
+    server_id: int,
+    category: NotificationRouteCategory,
+    legacy_topic_id: int,
+) -> NotificationRouteDto:
+    """将 ``ServerInstance`` 遗留话题字段合成为只读展示路由 DTO，与运行时回退语义一致。"""
+    if legacy_topic_id > 0:
+        return NotificationRouteDto(
+            scope_type="server",
+            server_id=server_id,
+            category=category.value,
+            target_type=NotificationTargetType.FORUM_TOPIC.value,
+            target_chat_id=None,
+            target_topic_id=int(legacy_topic_id),
+            escalate_admin_dm=False,
+            enabled_events=[],
+        )
+    return NotificationRouteDto(
+        scope_type="server",
+        server_id=server_id,
+        category=category.value,
+        target_type=NotificationTargetType.CHAT_OR_CHANNEL.value,
+        target_chat_id=int(legacy_topic_id),
+        target_topic_id=None,
+        escalate_admin_dm=False,
+        enabled_events=[],
+    )
+
+
+def _build_optional_events_catalog() -> dict[str, list[OptionalEventOptionDto]]:
+    """构建按路由类别分组的默认关闭可选事件元数据字典。"""
+    catalog: dict[str, list[OptionalEventOptionDto]] = {}
+    for category in _GLOBAL_ROUTE_CATEGORY_ORDER:
+        options: list[OptionalEventOptionDto] = []
+        for event in get_optional_events_for_category(category):
+            spec = get_event_spec(event)
+            options.append(
+                OptionalEventOptionDto(
+                    event=event.value,
+                    label=OPTIONAL_EVENT_LABELS.get(event, event.value),
+                    severity=spec.severity.value,
+                )
+            )
+        catalog[category.value] = options
+    return catalog
+
+
+def _build_category_metas(
+    optional_events: dict[str, list[OptionalEventOptionDto]],
+) -> list[RouteCategoryMetaDto]:
+    """生成 5 大路由类别的展示标题、说明与允许目标列表。"""
+    base_targets = [
+        NotificationTargetType.DISABLED.value,
+        NotificationTargetType.MAIN_CHAT.value,
+        NotificationTargetType.FORUM_TOPIC.value,
+        NotificationTargetType.CHAT_OR_CHANNEL.value,
+    ]
+    metas: list[RouteCategoryMetaDto] = []
+    for category in _GLOBAL_ROUTE_CATEGORY_ORDER:
+        label, desc = ROUTE_CATEGORY_LABELS[category]
+        allowed_targets = list(base_targets)
+        if category in ADMIN_DM_ALLOWED_CATEGORIES:
+            allowed_targets.append(NotificationTargetType.ADMIN_DM_GROUP.value)
+        metas.append(
+            RouteCategoryMetaDto(
+                category=category.value,
+                label=label,
+                description=desc,
+                allowed_target_types=allowed_targets,
+                supports_escalate_admin_dm=(
+                    category == NotificationRouteCategory.OPS_ALERT
+                ),
+                optional_events=optional_events.get(category.value, []),
+            )
+        )
+    return metas
+
+
+@router.get(
+    "/notification_routes",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=NotificationRoutesResponse,
+)
+async def get_notification_routes(
+    session: AsyncSession = Depends(get_db),
+) -> NotificationRoutesResponse:
+    """获取全局通知路由矩阵、单服覆盖及遗留话题生效解析视图。"""
+    route_repo = NotificationRouteRepository(session)
+    server_repo = ServerRepository(session)
+
+    all_routes = await route_repo.get_all_routes()
+    servers = await server_repo.get_all()
+
+    global_by_cat: dict[str, NotificationRouteDto] = {}
+    server_route_dtos: list[NotificationRouteDto] = []
+    server_overrides: dict[tuple[int, str], NotificationRouteDto] = {}
+
+    for route in all_routes:
+        dto = _route_orm_to_dto(route)
+        if route.scope_type == NotificationRouteScope.GLOBAL:
+            global_by_cat[dto.category] = dto
+        elif route.scope_type == NotificationRouteScope.SERVER and route.server_id:
+            server_route_dtos.append(dto)
+            server_overrides[(int(route.server_id), dto.category)] = dto
+
+    global_routes = [
+        global_by_cat.get(cat.value) or _default_global_route_dto(cat)
+        for cat in _GLOBAL_ROUTE_CATEGORY_ORDER
+    ]
+    global_lookup = {dto.category: dto for dto in global_routes}
+
+    server_overviews: list[ServerRouteOverviewDto] = []
+    for srv in servers:
+        categories_state: dict[str, ServerCategoryRouteStateDto] = {}
+        for cat in _SERVER_ROUTE_CATEGORY_ORDER:
+            legacy_topic: int | None = None
+            if cat == NotificationRouteCategory.MEDIA_LIBRARY and srv.notify_topic_id:
+                legacy_topic = int(srv.notify_topic_id)
+            elif (
+                cat == NotificationRouteCategory.MEDIA_REQUEST
+                and srv.request_notify_topic_id
+            ):
+                legacy_topic = int(srv.request_notify_topic_id)
+
+            override = server_overrides.get((srv.id, cat.value))
+            global_dto = global_lookup[cat.value]
+            if override is not None:
+                categories_state[cat.value] = ServerCategoryRouteStateDto(
+                    category=cat.value,
+                    source="server_override",
+                    is_override=True,
+                    effective=override,
+                    override=override,
+                    legacy_topic_id=legacy_topic,
+                )
+            elif global_dto.target_type != NotificationTargetType.DISABLED.value:
+                categories_state[cat.value] = ServerCategoryRouteStateDto(
+                    category=cat.value,
+                    source="global",
+                    is_override=False,
+                    effective=global_dto,
+                    override=None,
+                    legacy_topic_id=legacy_topic,
+                )
+            elif legacy_topic:
+                categories_state[cat.value] = ServerCategoryRouteStateDto(
+                    category=cat.value,
+                    source="legacy_topic",
+                    is_override=False,
+                    effective=_legacy_topic_to_route_dto(
+                        server_id=srv.id,
+                        category=cat,
+                        legacy_topic_id=legacy_topic,
+                    ),
+                    override=None,
+                    legacy_topic_id=legacy_topic,
+                )
+            else:
+                categories_state[cat.value] = ServerCategoryRouteStateDto(
+                    category=cat.value,
+                    source="global",
+                    is_override=False,
+                    effective=global_dto,
+                    override=None,
+                    legacy_topic_id=legacy_topic,
+                )
+
+        server_overviews.append(
+            ServerRouteOverviewDto(
+                server_id=srv.id,
+                server_name=srv.name,
+                server_type=str(srv.server_type),
+                notify_topic_id=srv.notify_topic_id,
+                request_notify_topic_id=srv.request_notify_topic_id,
+                categories=categories_state,
+            )
+        )
+
+    optional_events = _build_optional_events_catalog()
+    configured_chat_id = int(getattr(settings, "telegram_chat_id", 0) or 0)
+    return NotificationRoutesResponse(
+        global_routes=global_routes,
+        server_routes=server_route_dtos,
+        servers=server_overviews,
+        categories=_build_category_metas(optional_events),
+        optional_events=optional_events,
+        telegram_chat_id_configured=bool(configured_chat_id),
+        telegram_chat_id=configured_chat_id if configured_chat_id else None,
+    )
+
+
+@router.put(
+    "/notification_routes",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=NotificationRouteMutationResponse,
+)
+async def upsert_notification_route(
+    data: NotificationRouteUpsertDto,
+    session: AsyncSession = Depends(get_db),
+) -> NotificationRouteMutationResponse:
+    """新增或更新全局默认通知路由或单服覆盖通知路由。"""
+    if data.scope_type == NotificationRouteScope.SERVER:
+        assert data.server_id is not None
+        server = await ServerRepository(session).get_by_id(data.server_id)
+        if server is None:
+            raise HTTPException(status_code=404, detail="目标服务器不存在")
+
+    route = await NotificationRouteRepository(session).upsert_route(
+        scope_type=data.scope_type,
+        server_id=data.server_id,
+        category=data.category,
+        target_type=data.target_type,
+        target_chat_id=data.target_chat_id,
+        target_topic_id=data.target_topic_id,
+        escalate_admin_dm=data.escalate_admin_dm,
+        enabled_events=data.enabled_events,
+    )
+    return NotificationRouteMutationResponse(
+        success=True,
+        message="通知路由配置已保存",
+        route=_route_orm_to_dto(route),
+    )
+
+
+@router.delete(
+    "/notification_routes/server/{server_id}/{category}",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=NotificationRouteDeleteResponse,
+)
+async def delete_server_notification_route(
+    server_id: int,
+    category: NotificationRouteCategory,
+    session: AsyncSession = Depends(get_db),
+) -> NotificationRouteDeleteResponse:
+    """删除指定服务器的通知覆盖路由，使其恢复继承全局默认规则。"""
+    server = await ServerRepository(session).get_by_id(server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="目标服务器不存在")
+
+    deleted = await NotificationRouteRepository(session).delete_server_route(
+        server_id, category
+    )
+    return NotificationRouteDeleteResponse(
+        success=True,
+        deleted=deleted,
+        message="已清除单服覆盖，恢复继承全局默认路由"
+        if deleted
+        else "该服务器当前未配置此类别的独立覆盖路由",
+    )
+
+
+def _parse_ops_targets(raw_json: str | None) -> list[str]:
+    """安全解析运维告警日志中序列化的目标列表 JSON。"""
+    if not raw_json:
+        return []
+    with contextlib.suppress(TypeError, ValueError):
+        parsed = json.loads(raw_json)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    return []
+
+
+async def query_recent_ops_logs_page(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    limit: int = 20,
+    offset: int = 0,
+    event_type: str | None = None,
+    severity: str | None = None,
+    server_id: int | None = None,
+) -> OpsAlertLogsPageResponse:
+    """统一查询近 30 天内分页运维告警日志并关联服务器名称（供后台与 Mini App 管理员共用）。"""
+    since = now - timedelta(days=30)
+    ops_repo = OpsAlertRepository(session)
+    items = await ops_repo.list_logs(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        severity=severity,
+        server_id=server_id,
+        since=since,
+    )
+    total = await ops_repo.count_logs(
+        event_type=event_type,
+        severity=severity,
+        server_id=server_id,
+        since=since,
+    )
+    servers = await ServerRepository(session).get_all()
+    server_names = {srv.id: srv.name for srv in servers}
+
+    dtos = [
+        OpsAlertLogDto(
+            id=entry.id,
+            source_key=entry.source_key,
+            server_id=entry.server_id,
+            server_name=(
+                server_names.get(entry.server_id)
+                if entry.server_id is not None
+                else None
+            ),
+            event_type=str(entry.event_type),
+            severity=str(entry.severity),
+            title=entry.title,
+            body_text=entry.body_text,
+            delivered_targets=_parse_ops_targets(entry.delivered_targets_json),
+            delivery_status=entry.delivery_status,
+            error_message=entry.error_message,
+            created_at=entry.created_at,
+        )
+        for entry in items
+    ]
+    return OpsAlertLogsPageResponse(
+        items=dtos,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/notifications/test",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=NotificationRouteTestResponse,
+)
+async def test_notification_route(
+    request: Request,
+    data: NotificationRouteTestRequest,
+    session: AsyncSession = Depends(get_db),
+    admin_id: int = Depends(validate_admin_access),
+    notification_service: NotificationService = Depends(get_notification_service),
+) -> NotificationRouteTestResponse:
+    """发送 ``SYSTEM_TEST`` 实测通知，验证已保存路由或候选目标参数是否通畅。"""
+    server_name = "系统全局"
+    if data.server_id is not None:
+        server = await ServerRepository(session).get_by_id(data.server_id)
+        if server is None:
+            raise HTTPException(status_code=404, detail="目标服务器不存在")
+        server_name = server.name
+
+    operator_name = await UserService(request.app, session).resolve_user_display_name(
+        admin_id if isinstance(admin_id, int) else None,
+        fallback="管理员",
+    )
+    target_desc = (
+        data.target_type.value if data.target_type is not None else "当前生效路由"
+    )
+    sent = await notification_service.send_test_to_route(
+        category=data.category,
+        server_id=data.server_id,
+        server_name=server_name,
+        target_type=data.target_type,
+        target_chat_id=data.target_chat_id,
+        target_topic_id=data.target_topic_id,
+        escalate_admin_dm=data.escalate_admin_dm,
+        operator_name=operator_name,
+        target_description=target_desc,
+        message=data.message or "这是一条系统通知通路测试消息。",
+        session=session,
+    )
+
+    report = getattr(notification_service, "last_test_report", None)
+    if report is not None:
+        delivered = list(report.delivered_targets)
+        err_msg = "; ".join(report.errors) if report.errors else None
+        if delivered and not err_msg:
+            return NotificationRouteTestResponse(
+                success=True,
+                message=f"测试消息已成功发送至 {len(delivered)} 个目标",
+                delivered_targets=delivered,
+                error=None,
+            )
+        if delivered and err_msg:
+            return NotificationRouteTestResponse(
+                success=True,
+                message=f"测试消息已部分送达（{len(delivered)} 个目标成功），部分失败",
+                delivered_targets=delivered,
+                error=err_msg,
+            )
+        final_error = err_msg or "测试消息未送达任何目标"
+        return NotificationRouteTestResponse(
+            success=False,
+            message=final_error,
+            delivered_targets=[],
+            error=final_error,
+        )
+
+    if sent is not None:
+        return NotificationRouteTestResponse(
+            success=True,
+            message="测试消息发送成功",
+            delivered_targets=[target_desc],
+            error=None,
+        )
+    return NotificationRouteTestResponse(
+        success=False,
+        message="测试消息发送失败或目标不可用",
+        delivered_targets=[],
+        error="测试消息发送失败或目标不可用",
+    )
+
+
+@router.get(
+    "/notifications/ops_logs",
+    dependencies=[Depends(validate_admin_access)],
+    response_model=OpsAlertLogsPageResponse,
+)
+async def get_settings_ops_logs(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    event_type: str | None = Query(default=None),
+    severity: str | None = Query(default=None),
+    server_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> OpsAlertLogsPageResponse:
+    """分页查询近 30 天系统运维告警记录，支持事件类型、级别与服务器筛选。"""
+    now = get_or_create_notification_runtime(request.app).clock()
+    return await query_recent_ops_logs_page(
+        session,
+        now=now,
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        severity=severity,
+        server_id=server_id,
+    )
 
 
 # --- Server Management APIs ---

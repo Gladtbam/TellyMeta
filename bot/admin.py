@@ -11,7 +11,14 @@ from bot.utils import safe_reply, safe_reply_keyboard, safe_respond
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
+from models.events import (
+    ROUTE_CATEGORY_LABELS,
+    NotificationRouteCategory,
+    NotificationRouteScope,
+    NotificationTargetType,
+)
 from repositories.config_repo import ConfigRepository
+from repositories.notification_repo import NotificationRouteRepository
 from repositories.server_repo import ServerRepository
 from services.notification_service import NotificationService
 from services.score_service import ScoreService, build_score_settlement_payload
@@ -372,9 +379,17 @@ async def ban_handler(
         return
 
 
+_BIND_GLOBAL_CATEGORIES = (
+    "media_library|media_request|account_lifecycle|ops_alert|community"
+)
+
+
 @TelethonClientWarper.handler(
     events.NewMessage(
-        pattern=rf"^/bind({settings.telegram_bot_name})?\s+(\d+)\s+(notify|request)$",
+        pattern=(
+            rf"^/bind(@[A-Za-z0-9_]+)?"
+            rf"\s+(?:(\d+)\s+(notify|request)|global\s+({_BIND_GLOBAL_CATEGORIES}))$"
+        ),
         incoming=True,
     )
 )
@@ -383,20 +398,89 @@ async def ban_handler(
 async def bind_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
 ) -> None:
-    """话题绑定处理器
-    /bind <server_id> <notify|request>
-    """
-    server_id = int(event.pattern_match.group(2))  # type: ignore
-    bind_type = event.pattern_match.group(3)  # type: ignore
+    """话题绑定处理器：支持单服覆盖绑定与全局通知类别话题绑定
 
-    topic_id = None
-    if getattr(event.message, "reply_to", None) and event.message.reply_to.forum_topic:
-        topic_id = event.message.reply_to.reply_to_msg_id
-    else:
+    支持格式：
+    - ``/bind <server_id> <notify|request>``：同步更新老字段并写入单服覆盖路由
+    - ``/bind global <media_library|media_request|account_lifecycle|ops_alert|community>``：写入全局话题路由并保留既有高危抄送与可选事件开关
+    """
+    match = getattr(event, "pattern_match", None)
+    if match is None:
+        return
+
+    # 支持可选 @botname 后缀，明确指向其他 Bot 时静默忽略
+    target_bot = match.group(1) or ""
+    clean_target = target_bot.lstrip("@").lower()
+    my_bot_name = (getattr(settings, "telegram_bot_name", "") or "").lstrip("@").lower()
+    if clean_target and my_bot_name and clean_target != my_bot_name:
+        return
+
+    reply_to = getattr(getattr(event, "message", None), "reply_to", None)
+    topic_id: int | None = None
+    if reply_to and getattr(reply_to, "forum_topic", False):
+        # 在话题内直接发指令时 topic_id 在 reply_to_msg_id；回复他人消息时在 reply_to_top_id
+        raw_topic = getattr(reply_to, "reply_to_top_id", None) or getattr(
+            reply_to, "reply_to_msg_id", None
+        )
+        if (
+            isinstance(raw_topic, int)
+            and not isinstance(raw_topic, bool)
+            and raw_topic > 0
+        ):
+            topic_id = raw_topic
+
+    if topic_id is None:
         await safe_reply(
             event, "❌ 请在论坛的具体**话题（Topic）内部**发送此绑定命令。"
         )
         return
+
+    raw_chat_id = getattr(event, "chat_id", None)
+    if raw_chat_id is None:
+        raw_chat_id = getattr(getattr(event, "message", None), "chat_id", None)
+    target_chat_id = (
+        raw_chat_id
+        if isinstance(raw_chat_id, int)
+        and not isinstance(raw_chat_id, bool)
+        and raw_chat_id != 0
+        else None
+    )
+
+    route_repo = NotificationRouteRepository(session)
+    groups = match.groups()
+    global_cat_raw = groups[3] if len(groups) >= 4 else None
+    if global_cat_raw:
+        category = NotificationRouteCategory(global_cat_raw)
+        existing_global = await route_repo.get_route(
+            scope_type=NotificationRouteScope.GLOBAL,
+            category=category,
+            fresh=True,
+        )
+        await route_repo.upsert_route(
+            scope_type=NotificationRouteScope.GLOBAL,
+            server_id=None,
+            category=category,
+            target_type=NotificationTargetType.FORUM_TOPIC,
+            target_chat_id=target_chat_id,
+            target_topic_id=topic_id,
+            escalate_admin_dm=(
+                bool(existing_global.escalate_admin_dm) if existing_global else False
+            ),
+            enabled_events_json=(
+                existing_global.enabled_events_json if existing_global else None
+            ),
+        )
+        cat_label = ROUTE_CATEGORY_LABELS.get(category, (category.value, ""))[0]
+        await safe_reply(
+            event,
+            TelegramMessage.render_markdown(
+                t"✅ 成功将全局 **{cat_label}** (`{category.value}`) 绑定到当前话题！(ID: `{topic_id}`)"
+            ),
+        )
+        return
+
+    server_id = int(match.group(2))
+    bind_type = match.group(3)
 
     server_repo = ServerRepository(session)
     server = await server_repo.get_by_id(server_id)
@@ -404,15 +488,40 @@ async def bind_handler(
         await safe_reply(event, "❌ 找不到对应的服务器。")
         return
 
-    msg_type = None
     if bind_type == "notify":
         await server_repo.update_notify_config(server_id, notify_topic_id=topic_id)
+        category = NotificationRouteCategory.MEDIA_LIBRARY
         msg_type = "常规通知"
     elif bind_type == "request":
         await server_repo.update_notify_config(
             server_id, request_notify_topic_id=topic_id
         )
+        category = NotificationRouteCategory.MEDIA_REQUEST
         msg_type = "求片通知"
+    else:
+        await safe_reply(event, "❌ 无效的绑定类型，请使用 notify 或 request。")
+        return
+
+    existing_srv_route = await route_repo.get_route(
+        scope_type=NotificationRouteScope.SERVER,
+        server_id=server_id,
+        category=category,
+        fresh=True,
+    )
+    await route_repo.upsert_route(
+        scope_type=NotificationRouteScope.SERVER,
+        server_id=server_id,
+        category=category,
+        target_type=NotificationTargetType.FORUM_TOPIC,
+        target_chat_id=target_chat_id,
+        target_topic_id=topic_id,
+        escalate_admin_dm=(
+            bool(existing_srv_route.escalate_admin_dm) if existing_srv_route else False
+        ),
+        enabled_events_json=(
+            existing_srv_route.enabled_events_json if existing_srv_route else None
+        ),
+    )
 
     await safe_reply(
         event,

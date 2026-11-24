@@ -148,6 +148,154 @@
 
         .profile-actions {
             margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .bell-btn {
+            position: relative;
+            font-size: 22px;
+            cursor: pointer;
+            padding: 8px 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .notify-badge {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            min-width: 17px;
+            height: 17px;
+            padding: 0 4px;
+            border-radius: 999px;
+            background: var(--destructive-text-color);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 600;
+            line-height: 17px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+
+        .alert-banner {
+            background: rgba(36, 129, 204, 0.12);
+            border: 1px solid rgba(36, 129, 204, 0.35);
+            color: var(--text-color);
+            border-radius: 10px;
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .alert-banner.is-mandatory {
+            background: rgba(255, 59, 48, 0.12);
+            border-color: rgba(255, 59, 48, 0.45);
+        }
+
+        .nc-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            z-index: 1000;
+            justify-content: center;
+            align-items: flex-end;
+        }
+
+        .nc-modal {
+            background: var(--bg-color);
+            width: 100%;
+            max-height: 88vh;
+            border-radius: 14px 14px 0 0;
+            padding: 16px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .nc-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            flex-shrink: 0;
+        }
+
+        .nc-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--secondary-bg-color);
+            margin-bottom: 12px;
+            flex-shrink: 0;
+        }
+
+        .nc-tab {
+            flex: 1;
+            text-align: center;
+            padding: 8px 4px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--hint-color);
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+        }
+
+        .nc-tab.active {
+            color: var(--link-color);
+            border-bottom-color: var(--link-color);
+        }
+
+        .nc-body {
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+
+        .nc-badge {
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+
+        .nc-badge-mandatory {
+            background: rgba(255, 59, 48, 0.14);
+            color: var(--destructive-text-color);
+            font-weight: 600;
+        }
+
+        .nc-badge-warning {
+            background: rgba(255, 149, 0, 0.15);
+            color: #ff9500;
+        }
+
+        .nc-badge-info {
+            background: rgba(36, 129, 204, 0.12);
+            color: var(--link-color);
+        }
+
+        .nc-inbox-card {
+            border-bottom: 0.5px solid var(--secondary-bg-color);
+            padding: 12px 4px;
+        }
+
+        .nc-inbox-card:last-child {
+            border-bottom: none;
+        }
+
+        .nc-inbox-card.is-unread {
+            border-left: 3px solid var(--link-color);
+            padding-left: 10px;
         }
 
         .settings-btn {
@@ -291,11 +439,19 @@
                 <div class="profile-id" id="user-id"></div>
             </div>
             <div class="profile-actions">
+                <div class="bell-btn" id="notification-bell-btn" onclick="openNotificationCenter()" title="通知中心">
+                    <span>🔔</span>
+                    <span class="notify-badge" id="notification-badge" style="display:none;">0</span>
+                </div>
                 <div class="settings-btn" id="settings-btn" onclick="goToSettings()">⚙️</div>
             </div>
         </div>
 
         <div class="container">
+            <div class="alert-banner" id="unread-notification-banner" onclick="openNotificationCenter()">
+                <span id="unread-banner-text">🔔 您有未读的站内兜底通知</span>
+                <span style="color:var(--link-color); font-weight:600; white-space:nowrap;">查看 ›</span>
+            </div>
             <div class="section-title">账户状态</div>
             <div class="card">
                 <div class="item" id="row-score">
@@ -335,6 +491,83 @@
             <div class="section-title" id="media-title">媒体账户</div>
             <div id="media-list">
                 <div class="loader">正在加载账户信息...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知中心弹窗（站内收件箱 / 提醒偏好 / 管理员运维告警） -->
+    <div class="nc-overlay" id="notification-center-modal" onclick="if (event.target === this) closeNotificationCenter()">
+        <div class="nc-modal">
+            <div class="nc-header">
+                <span>🔔 通知中心</span>
+                <span style="font-size:15px; color:var(--link-color); cursor:pointer; font-weight:500;" onclick="closeNotificationCenter()">关闭</span>
+            </div>
+            <div class="nc-tabs">
+                <div class="nc-tab active" id="nc-tab-inbox" onclick="switchNotificationTab('inbox')">站内收件箱</div>
+                <div class="nc-tab" id="nc-tab-preferences" onclick="switchNotificationTab('preferences')">提醒偏好</div>
+                <div class="nc-tab" id="nc-tab-ops" style="display:none;" onclick="switchNotificationTab('ops')">运维告警</div>
+            </div>
+            <div class="nc-body">
+                <div id="nc-panel-inbox">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;">
+                        <span class="item-subtitle" id="nc-inbox-summary" style="margin-top:0;">近 30 天私聊失败兜底通知</span>
+                        <button type="button" class="action-btn" id="nc-mark-all-btn" onclick="markAllNotificationsRead()">全部标为已读</button>
+                    </div>
+                    <div id="nc-inbox-list">
+                        <div class="loader">正在加载通知...</div>
+                    </div>
+                </div>
+                <div id="nc-panel-preferences" style="display:none;">
+                    <div style="font-size:12px; color:var(--hint-color); padding:8px 12px; background:var(--secondary-bg-color); border-radius:8px; margin-bottom:10px; line-height:1.5;">
+                        🔒 必达通知不可关闭（含过期封禁、删号预警/确认、超流停用/解封、求片结果与安全回执）；下方可选提醒支持随时启停。
+                    </div>
+                    <div class="card" style="margin-bottom:0; border:1px solid var(--secondary-bg-color);">
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title" style="font-size:15px;">时长保活达标祝贺</span>
+                                <span class="item-subtitle" style="font-size:12px;">当本周期观看度达到免积分保活门槛时发送提醒</span>
+                            </div>
+                            <label class="switch"><input type="checkbox" id="pref-allow_watch_time_milestone" onchange="updateNotificationPreference('allow_watch_time_milestone', this)"><span class="slider"></span></label>
+                        </div>
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title" style="font-size:15px;">临近到期提前提醒</span>
+                                <span class="item-subtitle" style="font-size:12px;">媒体账号即将到期前发送提前续期提醒</span>
+                            </div>
+                            <label class="switch"><input type="checkbox" id="pref-allow_pre_expiry_reminder" onchange="updateNotificationPreference('allow_pre_expiry_reminder', this)"><span class="slider"></span></label>
+                        </div>
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title" style="font-size:15px;">流量 80% 预警</span>
+                                <span class="item-subtitle" style="font-size:12px;">当期基础配额消耗达到 80% 时发送预警</span>
+                            </div>
+                            <label class="switch"><input type="checkbox" id="pref-allow_traffic_80_alert" onchange="updateNotificationPreference('allow_traffic_80_alert', this)"><span class="slider"></span></label>
+                        </div>
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title" style="font-size:15px;">账期重置通知</span>
+                                <span class="item-subtitle" style="font-size:12px;">自然月配额周期重置完成时发送通知（默认关闭）</span>
+                            </div>
+                            <label class="switch"><input type="checkbox" id="pref-allow_cycle_reset" onchange="updateNotificationPreference('allow_cycle_reset', this)"><span class="slider"></span></label>
+                        </div>
+                        <div class="item">
+                            <div class="item-content">
+                                <span class="item-title" style="font-size:15px;">自助操作回执</span>
+                                <span class="item-subtitle" style="font-size:12px;">在 Mini App 执行常规操作后发送私聊回执</span>
+                            </div>
+                            <label class="switch"><input type="checkbox" id="pref-allow_self_action_receipt" onchange="updateNotificationPreference('allow_self_action_receipt', this)"><span class="slider"></span></label>
+                        </div>
+                    </div>
+                </div>
+                <div id="nc-panel-ops" style="display:none;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span class="item-subtitle" style="margin-top:0;">近 30 天系统运维告警（仅管理员可见）</span>
+                        <button type="button" class="action-btn" onclick="loadMiniAppOpsLogs()">刷新</button>
+                    </div>
+                    <div id="nc-ops-list">
+                        <div class="loader">正在加载运维告警...</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -421,6 +654,10 @@
             if (data.is_admin) {
                 document.getElementById('settings-btn').style.display = 'block';
             }
+            syncUnreadNotificationIndicators(
+                Number(data.unread_notification_count || 0),
+                Boolean(data.has_unread_mandatory_notification)
+            );
 
             const { pointsOn, checkinOn, renewCostOn } = resolveVisibleEconomyFlags(data);
 
@@ -665,6 +902,345 @@
          */
         function goToSettings() {
             window.location.href = "settings.html";
+        }
+
+        let _notificationState = {
+            items: [],
+            unread_count: 0,
+            has_unread_mandatory: false,
+            preferences: null,
+            is_admin: false,
+            ops_logs: []
+        };
+
+        /**
+         * 同步刷新右上角铃铛未读角标与首页顶部兜底通知提醒横幅（无未读时自动隐藏）。
+         * @param {number} unreadCount 当前未读兜底通知总数。
+         * @param {boolean} hasMandatory 是否存在未读必达通知。
+         */
+        function syncUnreadNotificationIndicators(unreadCount, hasMandatory) {
+            const count = Math.max(0, Number(unreadCount) || 0);
+            const badge = document.getElementById('notification-badge');
+            const banner = document.getElementById('unread-notification-banner');
+            const bannerText = document.getElementById('unread-banner-text');
+
+            if (badge) {
+                badge.style.display = count > 0 ? 'inline-block' : 'none';
+                badge.textContent = count > 99 ? '99+' : String(count);
+            }
+            if (banner) {
+                banner.style.display = count > 0 ? 'flex' : 'none';
+                banner.classList.toggle('is-mandatory', Boolean(hasMandatory));
+            }
+            if (bannerText && count > 0) {
+                bannerText.textContent = hasMandatory
+                    ? `⚠️ 您有 ${count} 条未读站内兜底通知（含必达通知，Telegram 私聊未能送达）`
+                    : `🔔 您有 ${count} 条未读站内兜底通知（Telegram 私聊未能送达）`;
+            }
+            if (_appData) {
+                _appData.unread_notification_count = count;
+                _appData.has_unread_mandatory_notification = Boolean(hasMandatory);
+            }
+        }
+
+        /**
+         * 打开通知中心弹窗并加载最新站内兜底收件箱、个人偏好与（管理员）运维告警。
+         */
+        async function openNotificationCenter() {
+            const modal = document.getElementById('notification-center-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            switchNotificationTab('inbox');
+            await loadNotificationCenter();
+        }
+
+        /**
+         * 关闭通知中心弹窗。
+         */
+        function closeNotificationCenter() {
+            const modal = document.getElementById('notification-center-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        /**
+         * 切换通知中心内的「站内收件箱」「提醒偏好」「运维告警」页签。
+         * @param {'inbox'|'preferences'|'ops'} tabName 目标页签名称。
+         */
+        function switchNotificationTab(tabName) {
+            ['inbox', 'preferences', 'ops'].forEach(name => {
+                const tabEl = document.getElementById(`nc-tab-${name}`);
+                const panelEl = document.getElementById(`nc-panel-${name}`);
+                if (tabEl) tabEl.classList.toggle('active', name === tabName);
+                if (panelEl) panelEl.style.display = name === tabName ? 'block' : 'none';
+            });
+            if (tabName === 'ops' && _notificationState.is_admin) {
+                loadMiniAppOpsLogs();
+            }
+        }
+
+        /**
+         * 从后端加载通知中心数据并同步渲染角标、收件箱、偏好开关与管理员运维视图。
+         */
+        async function loadNotificationCenter() {
+            const listEl = document.getElementById('nc-inbox-list');
+            if (listEl) listEl.innerHTML = '<div class="loader">正在加载通知...</div>';
+            try {
+                const res = await fetch('/api/miniapp/notifications', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || '加载通知失败');
+                _notificationState = data;
+                syncUnreadNotificationIndicators(data.unread_count, data.has_unread_mandatory);
+                const opsTab = document.getElementById('nc-tab-ops');
+                if (opsTab) opsTab.style.display = data.is_admin ? 'block' : 'none';
+                renderNotificationInbox();
+                renderNotificationPreferences(data.preferences || {});
+                if (data.is_admin) {
+                    renderMiniAppOpsLogs(data.ops_logs || []);
+                }
+            } catch (e) {
+                if (listEl) {
+                    listEl.innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${escapeHtml(e.message || '加载通知失败')}</div>`;
+                }
+            }
+        }
+
+        /**
+         * 校验并构造安全的账号详情跳转路径，防止外部危险协议注入。
+         * @param {object} item 收件箱条目 DTO。
+         * @returns {string|null} 允许跳转的站内相对 URL，或 null。
+         */
+        function resolveSafeAccountActionUrl(item) {
+            if (item && item.server_id) {
+                const bound = (_appData?.media_accounts || []).some(a => Number(a.server_id) === Number(item.server_id));
+                if (bound) {
+                    return `account.html?server_id=${encodeURIComponent(String(item.server_id))}`;
+                }
+            }
+            const rawUrl = (item && item.action_url) ? String(item.action_url).trim() : '';
+            if (rawUrl && (/^(account\.html|miniapp\.html)\?/.test(rawUrl) || rawUrl.startsWith('/webapp/'))) {
+                return rawUrl;
+            }
+            return null;
+        }
+
+        /**
+         * 渲染近 30 天站内兜底收件箱条目列表（含必达标签、安全跳转与单条已读按钮）。
+         */
+        function renderNotificationInbox() {
+            const listEl = document.getElementById('nc-inbox-list');
+            const summaryEl = document.getElementById('nc-inbox-summary');
+            const markAllBtn = document.getElementById('nc-mark-all-btn');
+            if (!listEl) return;
+
+            const items = _notificationState.items || [];
+            const unread = Number(_notificationState.unread_count || 0);
+            if (summaryEl) {
+                summaryEl.textContent = unread > 0
+                    ? `共 ${items.length} 条记录（${unread} 条未读）`
+                    : `共 ${items.length} 条记录（全部已读）`;
+            }
+            if (markAllBtn) markAllBtn.disabled = unread <= 0;
+
+            if (!items.length) {
+                listEl.innerHTML = '<div class="loader">近 30 天内暂无私聊失败兜底通知（私聊送达成功时不会重复入箱）</div>';
+                return;
+            }
+
+            listEl.innerHTML = items.map(item => {
+                const unreadCls = item.is_read ? '' : ' is-unread';
+                const mandatoryTag = item.is_mandatory ? '<span class="nc-badge nc-badge-mandatory">必达</span>' : '';
+                const sev = item.severity || 'info';
+                const sevTag = sev === 'critical'
+                    ? '<span class="nc-badge nc-badge-mandatory">严重</span>'
+                    : (sev === 'warning' ? '<span class="nc-badge nc-badge-warning">警告</span>' : '<span class="nc-badge nc-badge-info">通知</span>');
+                const srvText = item.server_name ? `服务器: ${escapeHtml(item.server_name)} · ` : '';
+                const createdStr = formatNotificationTime(item.created_at);
+                const errHint = item.delivery_error
+                    ? `<div class="item-subtitle" style="font-size:12px;">私聊回退原因: ${escapeHtml(item.delivery_error)}</div>`
+                    : '';
+                const safeUrl = resolveSafeAccountActionUrl(item);
+                const jumpBtn = safeUrl
+                    ? `<button type="button" class="action-btn" onclick="window.location.href='${escapeHtml(safeUrl)}'">前往账号</button>`
+                    : '';
+                const readBtn = !item.is_read
+                    ? `<button type="button" class="action-btn" onclick="markSingleNotificationRead(${Number(item.id)})">标为已读</button>`
+                    : '<span style="font-size:12px; color:var(--hint-color);">已读</span>';
+
+                return `
+                    <div class="nc-inbox-card${unreadCls}">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                            <span style="font-size:15px; font-weight:600;">${escapeHtml(item.title)}${mandatoryTag}${sevTag}</span>
+                        </div>
+                        <div class="item-subtitle" style="color:var(--text-color); white-space:pre-wrap; margin-top:6px;">${escapeHtml(item.body_text)}</div>
+                        <div class="item-subtitle" style="font-size:12px;">${srvText}${escapeHtml(createdStr)}</div>
+                        ${errHint}
+                        <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                            ${jumpBtn}
+                            ${readBtn}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        /**
+         * 同步填充 5 项个人可选提醒偏好复选框状态。
+         * @param {object} prefs 偏好开关映射对象。
+         */
+        function renderNotificationPreferences(prefs) {
+            [
+                'allow_watch_time_milestone',
+                'allow_pre_expiry_reminder',
+                'allow_traffic_80_alert',
+                'allow_cycle_reset',
+                'allow_self_action_receipt'
+            ].forEach(key => {
+                const el = document.getElementById(`pref-${key}`);
+                if (el && prefs[key] !== undefined) {
+                    el.checked = Boolean(prefs[key]);
+                }
+            });
+        }
+
+        /**
+         * 提交单个偏好开关变更，失败时自动回滚界面复选框状态。
+         * @param {string} key 偏好字段名。
+         * @param {HTMLInputElement} checkbox 触发切换的开关元素。
+         */
+        async function updateNotificationPreference(key, checkbox) {
+            const nextVal = Boolean(checkbox && checkbox.checked);
+            try {
+                const res = await fetch('/api/miniapp/notifications/preferences', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': tg.initData
+                    },
+                    body: JSON.stringify({ [key]: nextVal })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.detail || '保存提醒偏好失败');
+                }
+                _notificationState.preferences = data;
+                renderNotificationPreferences(data);
+            } catch (e) {
+                if (checkbox) checkbox.checked = !nextVal;
+                tg.showAlert(e.message || '保存提醒偏好失败');
+            }
+        }
+
+        /**
+         * 将单条站内兜底通知标记为已读并同步更新角标与横幅。
+         * @param {number} itemId 收件箱记录 ID。
+         */
+        async function markSingleNotificationRead(itemId) {
+            await _submitMarkRead({ item_id: itemId });
+        }
+
+        /**
+         * 将当前用户全部未读站内兜底通知标记为已读并同步更新角标与横幅。
+         */
+        async function markAllNotificationsRead() {
+            await _submitMarkRead({ mark_all: true });
+        }
+
+        /**
+         * 统一提交已读状态更新请求并刷新本地收件箱与未读指示器。
+         * @param {object} payload 已读请求体（item_id 或 mark_all）。
+         */
+        async function _submitMarkRead(payload) {
+            try {
+                const res = await fetch('/api/miniapp/notifications/read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Telegram-Init-Data': tg.initData
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.detail || '标记已读失败');
+                }
+                if (payload.mark_all) {
+                    (_notificationState.items || []).forEach(i => { i.is_read = true; });
+                } else if (payload.item_id) {
+                    (_notificationState.items || []).forEach(i => {
+                        if (Number(i.id) === Number(payload.item_id)) i.is_read = true;
+                    });
+                }
+                _notificationState.unread_count = data.unread_count;
+                _notificationState.has_unread_mandatory = data.has_unread_mandatory;
+                syncUnreadNotificationIndicators(data.unread_count, data.has_unread_mandatory);
+                renderNotificationInbox();
+            } catch (e) {
+                tg.showAlert(e.message || '标记已读失败');
+            }
+        }
+
+        /**
+         * 管理员拉取近 30 天系统运维告警列表。
+         */
+        async function loadMiniAppOpsLogs() {
+            const listEl = document.getElementById('nc-ops-list');
+            if (!listEl) return;
+            try {
+                const res = await fetch('/api/miniapp/notifications/ops_logs?limit=30&offset=0', {
+                    headers: { 'X-Telegram-Init-Data': tg.initData }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || '加载运维告警失败');
+                renderMiniAppOpsLogs(data.items || []);
+            } catch (e) {
+                listEl.innerHTML = `<div class="loader" style="color:var(--destructive-text-color)">${escapeHtml(e.message || '加载运维告警失败')}</div>`;
+            }
+        }
+
+        /**
+         * 安全转义并渲染 Mini App 管理员运维告警记录。
+         * @param {Array<object>} logs 运维告警条目列表。
+         */
+        function renderMiniAppOpsLogs(logs) {
+            const listEl = document.getElementById('nc-ops-list');
+            if (!listEl) return;
+            if (!logs || !logs.length) {
+                listEl.innerHTML = '<div class="loader">近 30 天内暂无系统运维告警记录</div>';
+                return;
+            }
+            listEl.innerHTML = logs.map(log => {
+                const sev = log.severity || 'warning';
+                const sevTag = sev === 'critical'
+                    ? '<span class="nc-badge nc-badge-mandatory">严重</span>'
+                    : (sev === 'warning' ? '<span class="nc-badge nc-badge-warning">警告</span>' : '<span class="nc-badge nc-badge-info">信息</span>');
+                const srvPart = log.server_name ? `${escapeHtml(log.server_name)} · ` : '';
+                const errPart = log.error_message
+                    ? `<div class="item-subtitle" style="color:var(--destructive-text-color); font-size:12px;">错误: ${escapeHtml(log.error_message)}</div>`
+                    : '';
+                return `
+                    <div class="nc-inbox-card">
+                        <div style="font-size:15px; font-weight:600;">${escapeHtml(log.title)}${sevTag}</div>
+                        <div class="item-subtitle" style="color:var(--text-color); white-space:pre-wrap; margin-top:6px;">${escapeHtml(log.body_text)}</div>
+                        <div class="item-subtitle" style="font-size:12px;">${srvPart}${escapeHtml(log.event_type)} · ${escapeHtml(formatNotificationTime(log.created_at))}</div>
+                        ${errPart}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        /**
+         * 格式化通知中心条目的创建时间文本。
+         * @param {string|null|undefined} isoStr ISO 时间字符串。
+         * @returns {string} 可读时间字符串。
+         */
+        function formatNotificationTime(isoStr) {
+            if (!isoStr) return '';
+            const d = new Date(isoStr);
+            if (Number.isNaN(d.getTime())) return String(isoStr);
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         }
 
         if (!_redirectingToUserInfo) {
