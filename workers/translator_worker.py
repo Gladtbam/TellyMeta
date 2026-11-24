@@ -1,7 +1,9 @@
+import contextlib
 import re
 from datetime import datetime, timedelta
 from typing import Any, cast
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
@@ -10,9 +12,33 @@ from clients.tmdb_client import TmdbClient
 from core.config import genre_mapping
 from models.protocols import BaseItem
 from models.tmdb import TmdbEpisode
+from repositories.server_repo import is_server_feature_enabled
 from services.media_service import MediaService
 from services.notification_renderer import TranslatorErrorPayload
 from services.notification_service import NotificationService, resolve_active_app
+
+TRANSLATE_JOB_PREFIX = "translate_media_item_"
+
+
+def remove_server_translate_jobs(
+    scheduler: AsyncIOScheduler | Any | None,
+    server_id: int,
+) -> None:
+    """移除指定媒体服务器尚未执行的全部定时 LLM 翻译及重试任务。
+
+    Args:
+        scheduler: APScheduler 调度器实例；为 ``None`` 时安全跳过。
+        server_id: 目标媒体服务器 ID。
+    """
+    if scheduler is None:
+        return
+    prefix = f"{TRANSLATE_JOB_PREFIX}{server_id}_"
+    for job in list(scheduler.get_jobs()):
+        job_id = getattr(job, "id", "")
+        if isinstance(job_id, str) and job_id.startswith(prefix):
+            with contextlib.suppress(JobLookupError, Exception):
+                if scheduler.get_job(job_id) is not None:
+                    scheduler.remove_job(job_id)
 
 
 async def _emit_translator_error(
@@ -117,6 +143,13 @@ async def translate_media_item(server_id: int, item_id: str) -> None:
     ai_client: AIClientWarper | None = getattr(app.state, "ai_client", None)
     if not ai_client:
         logger.info("LLM 翻译未启用或未配置，跳过翻译任务: {}", item_id)
+        return
+    if not await is_server_feature_enabled(app, server_id, "enable_llm_translate"):
+        logger.info(
+            "服务器 [{}] 未启用或已关闭 LLM 翻译子开关，跳过翻译任务: {}",
+            server_id,
+            item_id,
+        )
         return
 
     media_client = media_clients.get(server_id)
@@ -313,7 +346,7 @@ async def add_translate_media_item(server_id: int, item_id: str, days: int) -> N
         translate_media_item,
         "date",
         run_date=datetime.now() + timedelta(days=days),
-        id=f"translate_media_item_{server_id}_{item_id}",
+        id=f"{TRANSLATE_JOB_PREFIX}{server_id}_{item_id}",
         replace_existing=True,
         args=[server_id, item_id],
     )
@@ -333,7 +366,7 @@ async def cancel_translate_media_item(server_id: int, item_id: str) -> None:
     if scheduler is None:
         return
 
-    job_id = f"translate_media_item_{server_id}_{item_id}"
+    job_id = f"{TRANSLATE_JOB_PREFIX}{server_id}_{item_id}"
     job = scheduler.get_job(job_id)
     if job:
         scheduler.remove_job(job_id)

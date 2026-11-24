@@ -1386,9 +1386,17 @@
                         </div>
                         <div id="srv-route-overrides-list"></div>
                     </div>
+                    <div class="item" id="media-llm-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>LLM 元数据翻译</span>
+                        <label class="switch"><input type="checkbox" id="srv-llm-translate"><span class="slider"></span></label>
+                    </div>
                     <div class="item" id="arr-nfo-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
                         <span>启用 NFO 生成功能</span>
                         <label class="switch"><input type="checkbox" id="srv-allow-nfo"><span class="slider"></span></label>
+                    </div>
+                    <div class="item" id="arr-mkv-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
+                        <span>自动清理 MKV 冗余字幕</span>
+                        <label class="switch"><input type="checkbox" id="srv-mkv-process"><span class="slider"></span></label>
                     </div>
                     <div id="sonarr-actions"
                         style="display:none; margin-top: 20px; border-top: 1px solid var(--secondary-bg-color); padding-top: 15px;">
@@ -2138,6 +2146,8 @@
             const globalPackPointsOn = pointsMasterOn && !!document.getElementById('toggle-points-traffic-pack')?.checked;
             const globalWatchOn = !!document.getElementById('toggle-watch-time')?.checked;
             const globalTrafficOn = !!document.getElementById('toggle-traffic')?.checked;
+            const globalMkvOn = !!window._mkvAvailable && !!document.getElementById('toggle-mkv-process')?.checked;
+            const globalLlmOn = !!document.getElementById('toggle-llm-translate')?.checked;
 
             const reqOn = !!document.getElementById('srv-request')?.checked;
             setDisplay('srv-request-pricing-group', reqOn);
@@ -2178,9 +2188,12 @@
             const defaultPolicyOn = !!document.getElementById('srv-default-policy-enabled')?.checked;
             const srvType = document.getElementById('srv-type')?.value || '';
             const isMedia = ['emby', 'jellyfin'].includes(srvType);
+            const isArr = ['sonarr', 'radarr'].includes(srvType);
             const canSyncPolicy = isMedia && defaultPolicyOn && isDefaultUserPolicyDirty();
             setDisplay('srv-default-policy-section', isMedia);
             setDisplay('srv-default-policy-group', isMedia && defaultPolicyOn);
+            setDisplay('media-llm-group', isMedia && globalLlmOn, 'flex');
+            setDisplay('arr-mkv-group', isArr && globalMkvOn, 'flex');
             // 仅在编辑媒体服务器且修改过默认 UserPolicy（总开关开启）时，底部才显示「仅保存」与「保存并同步到存量用户」
             const saveBtn = document.getElementById('btn-save');
             if (saveBtn) {
@@ -2296,6 +2309,8 @@
             if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = 0.5;
             if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = 10;
             if (document.getElementById('srv-allow-nfo')) document.getElementById('srv-allow-nfo').checked = true;
+            if (document.getElementById('srv-mkv-process')) document.getElementById('srv-mkv-process').checked = true;
+            if (document.getElementById('srv-llm-translate')) document.getElementById('srv-llm-translate').checked = true;
             if (document.getElementById('path-mappings-list')) document.getElementById('path-mappings-list').innerHTML = '';
             applyDefaultUserPolicyForm(null);
 
@@ -2344,6 +2359,9 @@
             const isArr = ['sonarr', 'radarr'].includes(s.server_type);
             if (isArr) {
                 document.getElementById('srv-allow-nfo').checked = s.allow_nfo !== false;
+                if (document.getElementById('srv-mkv-process')) {
+                    document.getElementById('srv-mkv-process').checked = s.enable_mkv_process !== false;
+                }
             }
 
             const sonarrActions = document.getElementById('sonarr-actions');
@@ -2401,12 +2419,14 @@
                 if (document.getElementById('srv-traffic-pack-fixed')) document.getElementById('srv-traffic-pack-fixed').value = s.traffic_pack_points_fixed ?? 50;
                 if (document.getElementById('srv-traffic-pack-ratio')) document.getElementById('srv-traffic-pack-ratio').value = s.traffic_pack_points_ratio ?? 0.5;
                 if (document.getElementById('srv-traffic-pack-gib')) document.getElementById('srv-traffic-pack-gib').value = s.traffic_pack_size_gib ?? 10;
+                if (document.getElementById('srv-llm-translate')) document.getElementById('srv-llm-translate').checked = s.enable_llm_translate !== false;
                 applyDefaultUserPolicyForm(s.default_user_policy || null);
                 initialDefaultUserPolicySignature = getDefaultUserPolicySnapshot().signature;
                 onRegModeChange();
                 updateServerPolicyFields();
             } else {
                 renderPathMappings(s.path_mappings || []);
+                updateServerPolicyFields();
             }
 
             switchTab('basic');
@@ -2669,6 +2689,9 @@
                         }
                     }
                 }
+                if (isSectionVisible('media-llm-group')) {
+                    payload.enable_llm_translate = document.getElementById('srv-llm-translate').checked;
+                }
                 if (!currentServerId || isDefaultUserPolicyDirty()) {
                     try {
                         payload.default_user_policy = collectDefaultUserPolicyPayload();
@@ -2684,6 +2707,9 @@
                 const qbSelVal = document.getElementById('srv-qb-server').value;
                 payload.qb_server_id = qbSelVal ? parseInt(qbSelVal, 10) : null;
                 payload.allow_nfo = document.getElementById('srv-allow-nfo').checked;
+                if (isSectionVisible('arr-mkv-group')) {
+                    payload.enable_mkv_process = document.getElementById('srv-mkv-process').checked;
+                }
                 payload.path_mappings = Array.from(document.querySelectorAll('.mapping-item')).map(div => ({
                     remote: div.querySelector('.remote').value,
                     local: div.querySelector('.local').value

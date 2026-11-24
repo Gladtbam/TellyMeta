@@ -146,6 +146,13 @@ class ServerInstance(Base):
     allow_nfo: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )
+    # 服务器级 MKV 自动清理与 LLM 元数据翻译子开关（分别作用于 Arr 与媒体服务器，默认开启以兼容存量实例）
+    enable_mkv_process: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    enable_llm_translate: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
     enable_watch_time: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
     )

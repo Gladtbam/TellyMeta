@@ -98,6 +98,7 @@ from workers.nfo_worker import (
     rebuild_radarr_metadata_task,
     rebuild_sonarr_metadata_task,
 )
+from workers.translator_worker import remove_server_translate_jobs
 
 settings = get_settings()
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -1139,6 +1140,9 @@ async def create_server(
         request_points_mode=data.request_points_mode,
         request_points_fixed=data.request_points_fixed,
         request_points_ratio=data.request_points_ratio,
+        allow_nfo=data.allow_nfo,
+        enable_mkv_process=data.enable_mkv_process,
+        enable_llm_translate=data.enable_llm_translate,
         enable_watch_time=data.enable_watch_time,
         enable_watch_time_renewal=data.enable_watch_time_renewal,
         watch_time_renewal_threshold_seconds=data.watch_time_renewal_threshold_seconds,
@@ -1218,6 +1222,8 @@ async def update_server(
         "request_points_fixed",
         "request_points_ratio",
         "allow_nfo",
+        "enable_mkv_process",
+        "enable_llm_translate",
         "enable_watch_time",
         "enable_watch_time_renewal",
         "watch_time_renewal_threshold_seconds",
@@ -1345,6 +1351,11 @@ async def update_server(
         if data.enable_watch_time is False:
             # 关闭单台服务器播放时长采集时立即停用活跃会话并清理 Emby 心跳（保留历史记录）
             await service.handle_watch_time_disabled(server_id)
+        if data.enable_llm_translate is False:
+            # 关闭单台服务器 LLM 翻译时立即清理该服务器待执行的翻译与重试调度任务
+            remove_server_translate_jobs(
+                getattr(request.app.state, "scheduler", None), server_id
+            )
         if (
             data.enable_traffic is False
             or data.enable_traffic_auto_suspend is False

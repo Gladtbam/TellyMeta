@@ -55,6 +55,7 @@ from services.watch_time_service import (
     remove_emby_heartbeat_job,
     reschedule_emby_heartbeat_jobs,
 )
+from workers.translator_worker import remove_server_translate_jobs
 
 settings = get_settings()
 
@@ -1042,6 +1043,9 @@ class SettingsServices:
         request_points_mode: str = "fixed",
         request_points_fixed: int = 0,
         request_points_ratio: float = 0.0,
+        allow_nfo: bool = True,
+        enable_mkv_process: bool = True,
+        enable_llm_translate: bool = True,
         enable_watch_time: bool = True,
         enable_watch_time_renewal: bool = False,
         watch_time_renewal_threshold_seconds: int = 0,
@@ -1074,6 +1078,9 @@ class SettingsServices:
             request_points_mode: 求片定价模式。
             request_points_fixed: 求片固定积分。
             request_points_ratio: 求片比例系数。
+            allow_nfo: 是否开启 NFO 生成功能。
+            enable_mkv_process: 是否开启服务器级 MKV 清理子开关。
+            enable_llm_translate: 是否开启服务器级 LLM 翻译子开关。
             enable_watch_time: 是否开启有效播放时长采集。
             enable_watch_time_renewal: 是否开启时长保活续期。
             watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
@@ -1123,6 +1130,9 @@ class SettingsServices:
                 request_points_mode=request_points_mode,
                 request_points_fixed=request_points_fixed,
                 request_points_ratio=request_points_ratio,
+                allow_nfo=allow_nfo,
+                enable_mkv_process=enable_mkv_process,
+                enable_llm_translate=enable_llm_translate,
                 enable_watch_time=enable_watch_time,
                 enable_watch_time_renewal=enable_watch_time_renewal,
                 watch_time_renewal_threshold_seconds=watch_time_renewal_threshold_seconds,
@@ -1216,6 +1226,7 @@ class SettingsServices:
         scheduler = getattr(self.app.state, "scheduler", None)
         remove_emby_heartbeat_job(scheduler, server_id)
         remove_server_lifecycle_jobs(scheduler, server_id)
+        remove_server_translate_jobs(scheduler, server_id)
         if server_id in self.media_clients:
             del self.media_clients[server_id]
         if server_id in self.sonarr_clients:

@@ -134,6 +134,8 @@ class ServerDto(BaseModel):
     request_points_fixed: int = Field(default=0, ge=0)
     request_points_ratio: float = Field(default=0.0, ge=0.0)
     allow_nfo: bool = True
+    enable_mkv_process: bool = True
+    enable_llm_translate: bool = True
     enable_watch_time: bool = True
     enable_watch_time_renewal: bool = False
     watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
@@ -173,6 +175,9 @@ class ServerCreate(BaseModel):
     request_points_mode: Literal["fixed", "ratio"] = "fixed"
     request_points_fixed: int = Field(default=0, ge=0)
     request_points_ratio: float = Field(default=0.0, ge=0.0)
+    allow_nfo: bool = True
+    enable_mkv_process: bool = True
+    enable_llm_translate: bool = True
     enable_watch_time: bool = True
     enable_watch_time_renewal: bool = False
     watch_time_renewal_threshold_seconds: int = Field(default=0, ge=0)
@@ -228,6 +233,8 @@ class ServerUpdate(BaseModel):
     request_points_fixed: int | None = Field(default=None, ge=0)
     request_points_ratio: float | None = Field(default=None, ge=0.0)
     allow_nfo: bool | None = None
+    enable_mkv_process: bool | None = None
+    enable_llm_translate: bool | None = None
     enable_watch_time: bool | None = None
     enable_watch_time_renewal: bool | None = None
     watch_time_renewal_threshold_seconds: int | None = Field(default=None, ge=0)

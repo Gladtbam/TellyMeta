@@ -5,6 +5,8 @@ from typing import Any, NamedTuple, NoReturn
 
 from loguru import logger
 
+from repositories.config_repo import ConfigRepository
+from repositories.server_repo import is_server_feature_enabled
 from services.notification_renderer import MkvProcessFailedPayload
 from services.notification_service import NotificationService
 from workers.mkv_utils import mkv_merge
@@ -90,6 +92,24 @@ async def mkv_merge_task(task_queue: asyncio.Queue, app_state: Any = None) -> No
             )
 
             if episode_path is None:
+                continue
+
+            if (
+                ConfigRepository.cache.get(
+                    ConfigRepository.KEY_ENABLE_MKV_PROCESS, "true"
+                )
+                != "true"
+            ):
+                logger.info("全局 MKV 清理开关已关闭，跳过队列任务: {}", episode_path)
+                continue
+            if not await is_server_feature_enabled(
+                app_state, server_id, "enable_mkv_process"
+            ):
+                logger.info(
+                    "服务器 [{}] 未启用或已关闭 MKV 清理子开关，跳过队列任务: {}",
+                    server_id,
+                    episode_path,
+                )
                 continue
 
             logger.info("正在处理 {} 以进行 MKV 合并", episode_path)

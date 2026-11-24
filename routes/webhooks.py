@@ -520,12 +520,27 @@ async def _record_media_auth_failure_and_emit_risk(
 
 
 def _resolve_mkv_task_target(
-    remote_path: str, client: SonarrClient | RadarrClient
+    remote_path: str,
+    client: SonarrClient | RadarrClient,
+    server_instance: ServerInstance | None = None,
 ) -> tuple[bool, Path | None, str | None]:
-    """根据管理员配置与路径映射判断是否应入队 MKV 清理，返回 (是否入队, 本地路径, 诊断信息)"""
+    """根据全局配置、服务器级 MKV 开关、排除关键词与路径映射判断是否应入队 MKV 清理。
+
+    Args:
+        remote_path: Sonarr/Radarr Webhook 上报的远端媒体文件路径。
+        client: 对应的 Arr 客户端实例（用于执行路径映射）。
+        server_instance: 可选来源服务器实例，用于校验服务器级 ``enable_mkv_process`` 开关。
+
+    Returns:
+        ``(是否入队, 本地路径, 诊断信息)`` 三元组；全局或单服关闭时返回 ``(False, None, None)``。
+    """
     if (
         ConfigRepository.cache.get(ConfigRepository.KEY_ENABLE_MKV_PROCESS, "true")
         != "true"
+    ):
+        return False, None, None
+    if server_instance is not None and not bool(
+        getattr(server_instance, "enable_mkv_process", True)
     ):
         return False, None, None
 
@@ -722,7 +737,7 @@ async def sonarr_webhook(
         if payload.episodeFile and payload.episodeFile.path:
             remote_path = payload.episodeFile.path
             should_mkv, mkv_local_path, mkv_diag = _resolve_mkv_task_target(
-                remote_path, client
+                remote_path, client, server_instance
             )
             if mapped_path := client.to_local_path(remote_path):
                 payload.episodeFile.path = mapped_path
@@ -822,7 +837,7 @@ async def radarrarr_webhook(
         if payload.movieFile and payload.movieFile.path:
             remote_path = payload.movieFile.path
             should_mkv, mkv_local_path, mkv_diag = _resolve_mkv_task_target(
-                remote_path, client
+                remote_path, client, server_instance
             )
             if mapped_path := client.to_local_path(remote_path):
                 payload.movieFile.path = mapped_path
@@ -1004,7 +1019,7 @@ async def emby_webhook(
     )
 
     if isinstance(payload, LibraryNewEvent):
-        if ai_client:
+        if ai_client and getattr(server_instance, "enable_llm_translate", True):
             await add_translate_media_item(server_instance.id, payload.item.id, days=1)
 
         await _emit_notification(
@@ -1149,7 +1164,7 @@ async def jellyfin(
     if payload.notification_type == NotificationType.ITEM_ADDED and isinstance(
         payload, ItemEvent
     ):
-        if ai_client:
+        if ai_client and getattr(server_instance, "enable_llm_translate", True):
             await add_translate_media_item(server_instance.id, payload.item_id, days=1)
 
         await _emit_notification(

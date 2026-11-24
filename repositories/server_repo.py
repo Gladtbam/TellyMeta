@@ -1,15 +1,74 @@
 import secrets
 from collections.abc import Sequence
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import core.database as _db_module
 from core.economy_policy import normalize_pricing_mode
 from models.orm import ServerInstance
 
+_ORIG_DB_ASYNC_SESSION = _db_module.async_session
+
 # 定义一个唯一的哨兵对象，用于区分 "未传参" 和 "传了 None"
 _UNSET = object()
+
+
+def resolve_runtime_session_factory(
+    app_or_state: Any,
+) -> async_sessionmaker[AsyncSession] | None:
+    """从 FastAPI 应用或 state 解析可用于后台 Worker 的异步会话工厂。
+
+    优先读取测试或运行时注入的 ``notification_session_factory`` / ``session_factory``，
+    仅当应用已绑定 ``db_engine`` 或全局 ``async_session`` 被测试替换时才回退至默认会话工厂，
+    避免无数据库隔离单元测试误连本地持久化 SQLite。
+
+    Args:
+        app_or_state: FastAPI 应用实例、``app.state`` 或其替身对象。
+
+    Returns:
+        异步会话工厂；无可用数据库上下文时返回 ``None``。
+    """
+    state = getattr(app_or_state, "state", app_or_state)
+    if state is not None:
+        injected = getattr(state, "notification_session_factory", None) or getattr(
+            state, "session_factory", None
+        )
+        if injected is not None:
+            return injected
+        if getattr(state, "db_engine", None) is not None:
+            return _db_module.async_session
+    if _db_module.async_session is not _ORIG_DB_ASYNC_SESSION:
+        return _db_module.async_session
+    return None
+
+
+async def is_server_feature_enabled(
+    app_or_state: Any,
+    server_id: int | None,
+    feature_attr: str,
+) -> bool:
+    """查询后台任务目标服务器的启用状态及指定服务器级子开关。
+
+    Args:
+        app_or_state: FastAPI 应用实例或 ``app.state``。
+        server_id: 目标服务器 ID；为 ``None``（如历史无归属队列任务）时默认放行。
+        feature_attr: ``ServerInstance`` 上的布尔开关字段名（如 ``enable_llm_translate``）。
+
+    Returns:
+        无数据库上下文时安全放行返回 ``True``；存在数据库上下文时仅当服务器存在、已启用且子开关为 ``True`` 时返回 ``True``。
+    """
+    if server_id is None:
+        return True
+    session_factory = resolve_runtime_session_factory(app_or_state)
+    if session_factory is None:
+        return True
+    async with session_factory() as session:
+        server = await ServerRepository(session).get_by_id(server_id, fresh=True)
+    return bool(
+        server is not None and server.is_enabled and getattr(server, feature_attr, True)
+    )
 
 
 class ServerRepository:
@@ -28,6 +87,9 @@ class ServerRepository:
         request_points_mode: str = "fixed",
         request_points_fixed: int = 0,
         request_points_ratio: float = 0.0,
+        allow_nfo: bool = True,
+        enable_mkv_process: bool = True,
+        enable_llm_translate: bool = True,
         enable_watch_time: bool = True,
         enable_watch_time_renewal: bool = False,
         watch_time_renewal_threshold_seconds: int = 0,
@@ -58,6 +120,9 @@ class ServerRepository:
             request_points_mode: 求片定价模式（``fixed`` / ``ratio``）。
             request_points_fixed: 求片固定消耗积分（最小 0）。
             request_points_ratio: 求片动态比例系数（最小 0.0）。
+            allow_nfo: 是否启用 NFO 生成功能。
+            enable_mkv_process: 是否启用服务器级 MKV 清理子开关。
+            enable_llm_translate: 是否启用服务器级 LLM 翻译子开关。
             enable_watch_time: 是否开启有效播放时长采集。
             enable_watch_time_renewal: 是否开启时长保活续期。
             watch_time_renewal_threshold_seconds: 时长保活门槛秒数。
@@ -92,6 +157,9 @@ class ServerRepository:
             request_points_mode=normalized_req_mode,
             request_points_fixed=max(0, int(request_points_fixed)),
             request_points_ratio=max(0.0, float(request_points_ratio)),
+            allow_nfo=allow_nfo,
+            enable_mkv_process=enable_mkv_process,
+            enable_llm_translate=enable_llm_translate,
             enable_watch_time=enable_watch_time,
             enable_watch_time_renewal=enable_watch_time_renewal,
             watch_time_renewal_threshold_seconds=max(
