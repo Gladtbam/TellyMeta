@@ -279,6 +279,21 @@ class TrafficService(asyncio.DatagramProtocol):
             device_id=device_id,
         )
 
+    def _on_inflight_task_done(self, task: asyncio.Task[None]) -> None:
+        """在单条 UDP 解析任务结束后清理追踪集合并回收未捕获异常
+
+        Args:
+            task: 已完成的 ``process_datagram`` 异步任务实例。
+        """
+        self._inflight_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.opt(exception=exc).warning(
+                "处理 Nginx 流量 UDP 报文时发生未预期异常"
+            )
+
     def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
         """接收单条 UDP syslog/JSON 报文并投递异步处理（遵循 DatagramProtocol 同步契约）
 
@@ -294,7 +309,7 @@ class TrafficService(asyncio.DatagramProtocol):
             return
         task = loop.create_task(self.process_datagram(data, addr))
         self._inflight_tasks.add(task)
-        task.add_done_callback(self._inflight_tasks.discard)
+        task.add_done_callback(self._on_inflight_task_done)
 
     async def process_datagram(
         self,
@@ -599,10 +614,31 @@ class TrafficService(asyncio.DatagramProtocol):
         return None, None
 
     async def _drain_inflight_tasks(self) -> None:
-        """等待所有已入队的 UDP 解析/归因异步任务完成"""
-        while self._inflight_tasks:
-            pending = list(self._inflight_tasks)
-            await asyncio.gather(*pending, return_exceptions=True)
+        """等待调用时刻已入队的 UDP 解析/归因异步任务快照完成
+
+        注意：
+        - 仅等待本次快照中的未完成任务，避免持续到达的新 UDP 报文饿死刷盘锁；
+        - 已完成任务其 ``done_callback`` 经 ``call_soon`` 异步排队，需主动从集合剔除，
+          避免 ``asyncio.gather`` 对已完成任务同步返回（不让出事件循环）导致空转死循环；
+        - 使用 ``asyncio.wait`` 而非 ``asyncio.gather``，确保取消外层刷盘任务时不会误取消在途 UDP 解析任务。
+        """
+        if not self._inflight_tasks:
+            return
+
+        pending: list[asyncio.Task[None]] = []
+        for task in list(self._inflight_tasks):
+            if task.done():
+                self._inflight_tasks.discard(task)
+            else:
+                pending.append(task)
+
+        if not pending:
+            return
+
+        await asyncio.wait(pending)
+        for task in pending:
+            if task.done():
+                self._inflight_tasks.discard(task)
 
     async def _map_batch_to_accounts(
         self,
