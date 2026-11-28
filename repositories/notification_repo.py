@@ -11,6 +11,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time_utils import to_utc, utc_now
 from models.events import (
     DEFAULT_GLOBAL_ROUTE_TARGETS,
     SERVER_OWNED_ROUTE_CATEGORIES,
@@ -198,7 +199,7 @@ class NotificationRouteRepository:
         if normalized_scope == NotificationRouteScope.SERVER and server_id is None:
             raise ValueError("单服覆盖路由规则必须指定 server_id")
 
-        effective_now = now or datetime.now()
+        effective_now = to_utc(now) if now is not None else utc_now()
         serialized_events = (
             self.serialize_enabled_events(enabled_events)
             if enabled_events is not None
@@ -280,7 +281,7 @@ class NotificationRouteRepository:
         """补全缺失的 5 类全局默认路由规则并提交"""
         existing = await self.get_global_routes()
         existing_cats = {route.category for route in existing}
-        effective_now = now or datetime.now()
+        effective_now = to_utc(now) if now is not None else utc_now()
         added = False
         for category, default_target in DEFAULT_GLOBAL_ROUTE_TARGETS.items():
             if category.value in existing_cats:
@@ -335,7 +336,7 @@ class NotificationInboxRepository:
             is_mandatory=bool(is_mandatory),
             is_read=False,
             delivery_error=delivery_error,
-            created_at=now or datetime.now(),
+            created_at=to_utc(now) if now is not None else utc_now(),
         )
         self.session.add(item)
         await self.session.commit()
@@ -366,7 +367,7 @@ class NotificationInboxRepository:
         if unread_only:
             conditions.append(NotificationInboxItem.is_read.is_(False))
         if since is not None:
-            conditions.append(NotificationInboxItem.created_at >= since)
+            conditions.append(NotificationInboxItem.created_at >= to_utc(since))
         stmt = (
             select(NotificationInboxItem)
             .where(*conditions)
@@ -390,7 +391,7 @@ class NotificationInboxRepository:
             NotificationInboxItem.is_read.is_(False),
         ]
         if since is not None:
-            conditions.append(NotificationInboxItem.created_at >= since)
+            conditions.append(NotificationInboxItem.created_at >= to_utc(since))
         stmt = select(
             func.count(NotificationInboxItem.id),
             func.coalesce(
@@ -431,11 +432,11 @@ class NotificationInboxRepository:
         if item_id is not None:
             conditions.append(NotificationInboxItem.id == item_id)
         if since is not None:
-            conditions.append(NotificationInboxItem.created_at >= since)
+            conditions.append(NotificationInboxItem.created_at >= to_utc(since))
         stmt = (
             update(NotificationInboxItem)
             .where(*conditions)
-            .values(is_read=True, read_at=now or datetime.now())
+            .values(is_read=True, read_at=to_utc(now) if now is not None else utc_now())
             .execution_options(synchronize_session=False)
         )
         result = await self.session.execute(stmt)
@@ -445,7 +446,7 @@ class NotificationInboxRepository:
     async def delete_expired_records(self, cutoff: datetime) -> int:
         """清理早于指定截止时间的过期站内收件箱记录（保留 30 天内记录）"""
         stmt = delete(NotificationInboxItem).where(
-            NotificationInboxItem.created_at < cutoff
+            NotificationInboxItem.created_at < to_utc(cutoff)
         )
         result = await self.session.execute(stmt)
         await self.session.commit()
@@ -483,7 +484,7 @@ class OpsAlertRepository:
             delivered_targets_json=delivered_targets_json,
             delivery_status=delivery_status,
             error_message=error_message,
-            created_at=now or datetime.now(),
+            created_at=to_utc(now) if now is not None else utc_now(),
         )
         self.session.add(entry)
         await self.session.commit()
@@ -507,7 +508,7 @@ class OpsAlertRepository:
         if server_id is not None:
             conditions.append(OpsAlertLog.server_id == server_id)
         if since is not None:
-            conditions.append(OpsAlertLog.created_at >= since)
+            conditions.append(OpsAlertLog.created_at >= to_utc(since))
         return conditions
 
     async def list_logs(
@@ -584,7 +585,7 @@ class OpsAlertRepository:
             .where(
                 OpsAlertLog.event_type == str(event_type),
                 OpsAlertLog.source_key == source_key,
-                OpsAlertLog.created_at >= cooldown_since,
+                OpsAlertLog.created_at >= to_utc(cooldown_since),
             )
             .limit(1)
         )
@@ -593,7 +594,7 @@ class OpsAlertRepository:
 
     async def delete_expired_records(self, cutoff: datetime) -> int:
         """清理早于指定截止时间的历史运维告警日志（保留 30 天内记录）"""
-        stmt = delete(OpsAlertLog).where(OpsAlertLog.created_at < cutoff)
+        stmt = delete(OpsAlertLog).where(OpsAlertLog.created_at < to_utc(cutoff))
         result = await self.session.execute(stmt)
         await self.session.commit()
         return _rowcount(result)
@@ -634,7 +635,7 @@ class UserNotificationPreferenceRepository:
         pref = UserNotificationPreference(
             user_id=user_id,
             **_DEFAULT_USER_PREFERENCE_FLAGS,
-            updated_at=now or datetime.now(),
+            updated_at=to_utc(now) if now is not None else utc_now(),
         )
         self.session.add(pref)
         try:
@@ -707,7 +708,7 @@ class UserNotificationPreferenceRepository:
         for field_name, field_value in updates.items():
             if field_value is not None:
                 setattr(pref, field_name, bool(field_value))
-        pref.updated_at = now or datetime.now()
+        pref.updated_at = to_utc(now) if now is not None else utc_now()
         await self.session.commit()
         await self.session.refresh(pref)
         return pref

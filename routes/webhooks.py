@@ -34,6 +34,7 @@ from core.dependencies import (
     get_tvdb_client,
 )
 from core.task_utils import create_background_task
+from core.time_utils import to_utc, utc_now
 from models.emby_webhook import (
     EmbyPayload,
     LibraryDeletedEvent,
@@ -369,14 +370,14 @@ _AUTH_RISK_WINDOW_MINUTES = 5
 
 
 def _get_webhook_clock_now(notify_service: NotificationService) -> datetime:
-    """读取通知运行时注入时钟（便于测试确定性推进窗口），未注入时回退系统时钟。"""
+    """读取通知运行时注入时钟（便于测试确定性推进窗口），未注入时回退 UTC 系统时钟。"""
     runtime = getattr(notify_service, "runtime", None)
     clock = getattr(runtime, "clock", None)
     if callable(clock):
         val = clock()
         if isinstance(val, datetime):
-            return val
-    return datetime.now()
+            return to_utc(val)
+    return utc_now()
 
 
 def _get_extra_ci(mapping: Mapping[str, Any] | None, keys: tuple[str, ...]) -> Any:

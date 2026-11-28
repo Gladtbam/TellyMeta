@@ -1,6 +1,8 @@
 import calendar
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+
+from core.time_utils import ensure_utc, to_local, to_utc, utc_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,10 +32,10 @@ def _validate_anchor_day(anchor_day: int) -> int:
 
 
 def _resolve_anchor_day(anchor_day: int | None, expires_at: datetime) -> int:
-    """解析媒体账号有效锚定日；存量记录缺少 ``anchor_day`` 时回退至到期时间日号"""
+    """解析媒体账号有效锚定日；存量记录缺少 ``anchor_day`` 时按业务时区到期日号回退"""
     if anchor_day is not None:
         return _validate_anchor_day(anchor_day)
-    return expires_at.day
+    return to_local(expires_at).day
 
 
 def _validate_months(months: int) -> int:
@@ -46,32 +48,34 @@ def _validate_months(months: int) -> int:
 def _shift_anchored_months(
     base: datetime, anchor_day: int, month_offset: int
 ) -> datetime:
-    """将基准时间按锚定日号数偏移指定自然月数，月末不足时自动钳位
+    """将基准时间在配置业务时区下按锚定日号数偏移指定自然月数，月末不足时自动钳位并还原为 UTC。
 
     Args:
-        base: 基准时间点，保留其时分秒、微秒与时区信息
+        base: 基准时间点（支持 UTC 或带/不带时区时间）
         anchor_day: 原始锚定日号数（1..31）
         month_offset: 偏移自然月数（可正可负或为 0）
 
     Returns:
-        目标年月按 ``min(anchor_day, 当月总天数)`` 落日后的时间
+        目标年月按 ``min(anchor_day, 当月总天数)`` 落日后的 UTC aware 时间
     """
     _validate_anchor_day(anchor_day)
-    total_months = base.year * 12 + (base.month - 1) + month_offset
+    local_base = to_local(base)
+    total_months = local_base.year * 12 + (local_base.month - 1) + month_offset
     target_year, target_month_zero = divmod(total_months, 12)
     target_month = target_month_zero + 1
     max_day = calendar.monthrange(target_year, target_month)[1]
     target_day = min(anchor_day, max_day)
-    return datetime(
+    shifted_local = datetime(
         target_year,
         target_month,
         target_day,
-        base.hour,
-        base.minute,
-        base.second,
-        base.microsecond,
-        tzinfo=base.tzinfo,
+        local_base.hour,
+        local_base.minute,
+        local_base.second,
+        local_base.microsecond,
+        tzinfo=local_base.tzinfo,
     )
+    return shifted_local.astimezone(UTC)
 
 
 def advance_anchored_months(base: datetime, anchor_day: int, months: int) -> datetime:
@@ -106,19 +110,22 @@ def resolve_anchored_cycle_window(
         ``(cycle_started_at, next_reset_at)`` 元组，满足 ``cycle_started_at <= now < next_reset_at``
     """
     _validate_anchor_day(anchor_day)
-    # 构造当前自然月对应的锚定边界，再判断 now 落在当月锚定点之前还是之后
+    # 在配置业务时区下构造当月锚定边界，再转换回 UTC 比较并返回
+    local_now_dt = to_local(now)
+    local_ref_dt = to_local(reference_at)
     month_head = datetime(
-        now.year,
-        now.month,
+        local_now_dt.year,
+        local_now_dt.month,
         1,
-        reference_at.hour,
-        reference_at.minute,
-        reference_at.second,
-        reference_at.microsecond,
-        tzinfo=now.tzinfo,
+        local_ref_dt.hour,
+        local_ref_dt.minute,
+        local_ref_dt.second,
+        local_ref_dt.microsecond,
+        tzinfo=local_now_dt.tzinfo,
     )
     candidate = _shift_anchored_months(month_head, anchor_day, 0)
-    if candidate <= now:
+    utc_now_dt = to_utc(now)
+    if candidate <= utc_now_dt:
         return candidate, _shift_anchored_months(candidate, anchor_day, 1)
     return _shift_anchored_months(candidate, anchor_day, -1), candidate
 
@@ -130,14 +137,14 @@ def calculate_registration_cycle(
 
     Args:
         months: 服务器配置的有效自然月数（>= 1）
-        now: 可注入的当前时间（默认使用系统当前时间）
+        now: 可注入的当前时间（默认使用 UTC 当前时间）
 
     Returns:
-        新账号的初始 ``BillingCycleResult``
+        新账号的初始 ``BillingCycleResult``（时间字段均为 UTC aware）
     """
     _validate_months(months)
-    current_now = now or datetime.now()
-    anchor_day = current_now.day
+    current_now = to_utc(now) if now is not None else utc_now()
+    anchor_day = to_local(current_now).day
     return BillingCycleResult(
         anchor_day=anchor_day,
         cycle_started_at=current_now,
@@ -174,27 +181,28 @@ def calculate_renewal_cycle(
         续期后的 ``BillingCycleResult``
     """
     _validate_months(months)
-    current_now = now or datetime.now()
+    current_now = to_utc(now) if now is not None else utc_now()
+    expires_utc = to_utc(current_expires_at)
+    cycle_start_utc = ensure_utc(current_cycle_started_at)
+    next_reset_utc = ensure_utc(current_next_reset_at)
 
-    if current_expires_at < current_now:
+    if expires_utc < current_now:
         return calculate_registration_cycle(months=months, now=current_now)
 
-    resolved_anchor_day = _resolve_anchor_day(anchor_day, current_expires_at)
-    new_expires_at = advance_anchored_months(
-        current_expires_at, resolved_anchor_day, months
-    )
+    resolved_anchor_day = _resolve_anchor_day(anchor_day, expires_utc)
+    new_expires_at = advance_anchored_months(expires_utc, resolved_anchor_day, months)
 
     # 未过期续期时优先保留尚未到点的进行中月度重置窗口，避免误吞或跳过当前账期重置
     if (
-        current_cycle_started_at is not None
-        and current_next_reset_at is not None
-        and current_cycle_started_at <= current_now < current_next_reset_at
+        cycle_start_utc is not None
+        and next_reset_utc is not None
+        and cycle_start_utc <= current_now < next_reset_utc
     ):
-        cycle_started_at = current_cycle_started_at
-        next_reset_at = current_next_reset_at
+        cycle_started_at = cycle_start_utc
+        next_reset_at = next_reset_utc
     else:
         cycle_started_at, next_reset_at = resolve_anchored_cycle_window(
-            current_now, resolved_anchor_day, current_expires_at
+            current_now, resolved_anchor_day, expires_utc
         )
 
     return BillingCycleResult(
@@ -218,21 +226,24 @@ def backfill_billing_cycle(
 
     Args:
         current_expires_at: 账号现有到期时间
-        anchor_day: 已有锚定日（为空时按现有到期时间日号回填）
+        anchor_day: 已有锚定日（为空时按现有到期时间在业务时区的日号回填）
         current_cycle_started_at: 已有周期起点（可选）
         current_next_reset_at: 已有下次重置时间（可选）
-        now: 可注入的当前时间（默认使用系统当前时间）
+        now: 可注入的当前时间（默认使用 UTC 当前时间）
 
     Returns:
-        ``(anchor_day, cycle_started_at, next_reset_at)`` 元组
+        ``(anchor_day, cycle_started_at, next_reset_at)`` 元组（时间均为 UTC aware）
     """
-    current_now = now or datetime.now()
-    resolved_anchor_day = _resolve_anchor_day(anchor_day, current_expires_at)
-    if current_cycle_started_at is not None and current_next_reset_at is not None:
-        return resolved_anchor_day, current_cycle_started_at, current_next_reset_at
+    current_now = to_utc(now) if now is not None else utc_now()
+    expires_utc = to_utc(current_expires_at)
+    cycle_start_utc = ensure_utc(current_cycle_started_at)
+    next_reset_utc = ensure_utc(current_next_reset_at)
+    resolved_anchor_day = _resolve_anchor_day(anchor_day, expires_utc)
+    if cycle_start_utc is not None and next_reset_utc is not None:
+        return resolved_anchor_day, cycle_start_utc, next_reset_utc
 
     derived_start, derived_end = resolve_anchored_cycle_window(
-        current_now, resolved_anchor_day, current_expires_at
+        current_now, resolved_anchor_day, expires_utc
     )
     return (
         resolved_anchor_day,

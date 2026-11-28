@@ -13,6 +13,7 @@ from loguru import logger
 from core.config import get_settings
 from core.database import async_session, backup_database
 from core.telegram_manager import TelethonClientWarper
+from core.time_utils import ensure_utc, to_utc, utc_now
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
@@ -200,7 +201,7 @@ def _add_or_replace_date_job(
     scheduler.add_job(
         func,
         "date",
-        run_date=run_date,
+        run_date=to_utc(run_date),
         args=[int(user_id), int(server_id)],
         id=job_id,
         replace_existing=True,
@@ -229,15 +230,18 @@ def schedule_account_lifecycle_jobs(
     if scheduler is None:
         return
 
-    current_now = now or datetime.now()
+    current_now = to_utc(now) if now is not None else utc_now()
+    expires_utc = to_utc(media_user.expires_at)
+    next_reset_utc = ensure_utc(media_user.next_reset_at)
+    delete_utc = ensure_utc(media_user.delete_at)
     uid = int(media_user.id)
     sid = int(media_user.server_id)
 
-    if media_user.next_reset_at is not None:
+    if next_reset_utc is not None:
         _add_or_replace_date_job(
             scheduler,
             run_account_traffic_reset,
-            run_date=media_user.next_reset_at,
+            run_date=next_reset_utc,
             user_id=uid,
             server_id=sid,
             job_id=traffic_reset_job_id(uid, sid),
@@ -247,16 +251,16 @@ def schedule_account_lifecycle_jobs(
         _remove_job_if_exists(scheduler, pre_expiry_check_job_id(uid, sid))
         _remove_job_if_exists(scheduler, expiry_ban_job_id(uid, sid))
         reminder_id = grace_delete_reminder_job_id(uid, sid)
-        if media_user.delete_at is not None:
+        if delete_utc is not None:
             _add_or_replace_date_job(
                 scheduler,
                 run_account_grace_delete,
-                run_date=media_user.delete_at,
+                run_date=delete_utc,
                 user_id=uid,
                 server_id=sid,
                 job_id=grace_delete_job_id(uid, sid),
             )
-            reminder_at = media_user.delete_at - GRACE_DELETE_REMINDER_WINDOW
+            reminder_at = delete_utc - GRACE_DELETE_REMINDER_WINDOW
             reminder_sent = bool(
                 getattr(media_user, "grace_delete_reminder_sent", False)
             )
@@ -269,7 +273,7 @@ def schedule_account_lifecycle_jobs(
                     server_id=sid,
                     job_id=reminder_id,
                 )
-            elif reminder_sent or media_user.delete_at <= current_now:
+            elif reminder_sent or delete_utc <= current_now:
                 _remove_job_if_exists(scheduler, reminder_id)
         else:
             _remove_job_if_exists(scheduler, grace_delete_job_id(uid, sid))
@@ -281,13 +285,13 @@ def schedule_account_lifecycle_jobs(
     _add_or_replace_date_job(
         scheduler,
         run_account_expiry_ban,
-        run_date=media_user.expires_at,
+        run_date=expires_utc,
         user_id=uid,
         server_id=sid,
         job_id=expiry_ban_job_id(uid, sid),
     )
 
-    pre_expiry_at = media_user.expires_at - pre_expiry_window
+    pre_expiry_at = expires_utc - pre_expiry_window
     pre_id = pre_expiry_check_job_id(uid, sid)
     if pre_expiry_at > current_now:
         _add_or_replace_date_job(
@@ -298,7 +302,7 @@ def schedule_account_lifecycle_jobs(
             server_id=sid,
             job_id=pre_id,
         )
-    elif media_user.expires_at <= current_now:
+    elif expires_utc <= current_now:
         _remove_job_if_exists(scheduler, pre_id)
     # 若已处于 [expires_at - pre_expiry_window, expires_at) 临近窗口内，重启或常规重调度不再补发
     # 新的 pre_expiry_check，避免重复发送临近到期私聊轰炸；到期保活抢救仍由 expiry_ban 兜底。
@@ -344,7 +348,7 @@ def _schedule_transient_retry(
     _add_or_replace_date_job(
         scheduler,
         func,
-        run_date=datetime.now() + timedelta(minutes=delay_minutes),
+        run_date=utc_now() + timedelta(minutes=delay_minutes),
         user_id=user_id,
         server_id=server_id,
         job_id=job_id,

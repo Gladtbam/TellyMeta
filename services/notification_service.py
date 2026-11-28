@@ -27,6 +27,7 @@ from telethon.errors import RPCError
 import core.database as _db_module
 from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
+from core.time_utils import to_utc, utc_now
 from models.events import (
     DEFAULT_GLOBAL_ROUTE_TARGETS,
     SERVER_OWNED_ROUTE_CATEGORIES,
@@ -347,7 +348,7 @@ class NotificationRuntime:
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         max_flood_retries: int = 3,
         cooldown_window: timedelta = timedelta(minutes=30),
-        clock: Callable[[], datetime] = datetime.now,
+        clock: Callable[[], datetime] = utc_now,
         monotonic_clock: Callable[[], float] = time.monotonic,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -358,7 +359,10 @@ class NotificationRuntime:
         self.retry_delays = tuple(float(d) for d in retry_delays)
         self.max_flood_retries = max(0, int(max_flood_retries))
         self.cooldown_window = cooldown_window
-        self.clock = clock
+        # 统一将外部注入时钟包装为 UTC aware 输出，兼容单测传入朴素时钟
+        self.clock: Callable[[], datetime] = (
+            utc_now if clock is utc_now else (lambda: to_utc(clock()))
+        )
         self.monotonic_clock = monotonic_clock
         self.sleep_fn = sleep_fn
         self.session_factory = session_factory
@@ -626,7 +630,7 @@ class NotificationRuntime:
                     ),
                     is_mandatory=job.is_mandatory,
                     delivery_error=error_message[:512],
-                    now=self.clock(),
+                    now=to_utc(self.clock()),
                 )
         except SQLAlchemyError as exc:
             logger.warning(
@@ -1191,7 +1195,7 @@ class NotificationService:
         category = route_category_override or spec.category
         rendered = NotificationRenderer.render(payload)
         derived_factory = self._derive_session_factory(session)
-        now = self.runtime.clock()
+        now = to_utc(self.runtime.clock())
         effective_source = (
             source_key.strip()
             if isinstance(source_key, str) and source_key.strip()
@@ -1442,15 +1446,16 @@ class NotificationService:
         fallback_factory: async_sessionmaker[AsyncSession] | None,
     ) -> bool:
         """结合内存缓存与 OpsAlertLog 持久化记录判定同源告警是否处于 30 分钟冷却期。"""
+        now_utc = to_utc(now)
         cooldown_key = f"{event.value}:{effective_source}"
         cached = self.runtime._cooldown_entries.get(cooldown_key)
         if cached is not None:
-            if now <= cached.expires_at:
+            if now_utc <= cached.expires_at:
                 return True
             self.runtime._cooldown_entries.pop(cooldown_key, None)
 
         cleared_at = self.runtime._cooldown_cleared_at.get(cooldown_key)
-        cooldown_since = now - self.runtime.cooldown_window
+        cooldown_since = now_utc - self.runtime.cooldown_window
 
         async def _query_db(db: AsyncSession) -> bool:
             repo = OpsAlertRepository(db)
@@ -1506,9 +1511,10 @@ class NotificationService:
         now: datetime,
     ) -> None:
         """登记内存运维冷却条目并顺便清理过期旧条目。"""
+        now_utc = to_utc(now)
         cooldown_key = f"{event.value}:{effective_source}"
         self.runtime._cooldown_entries[cooldown_key] = _CooldownEntry(
-            expires_at=now + self.runtime.cooldown_window,
+            expires_at=now_utc + self.runtime.cooldown_window,
             event_value=event.value,
             source_key=effective_source,
             server_id=server_id,
@@ -1519,7 +1525,7 @@ class NotificationService:
             expired = [
                 k
                 for k, v in self.runtime._cooldown_entries.items()
-                if now > v.expires_at
+                if now_utc > v.expires_at
             ]
             for k in expired:
                 self.runtime._cooldown_entries.pop(k, None)
@@ -1775,7 +1781,7 @@ class NotificationService:
             category=normalized_cat.value,
             target_description=effective_desc,
             operator_name=operator_name,
-            triggered_at=self.runtime.clock(),
+            triggered_at=to_utc(self.runtime.clock()),
             message=message,
         )
         if route_cfg.target_type == NotificationTargetType.DISABLED:
@@ -1913,7 +1919,7 @@ class NotificationService:
             server_id=server_id,
             source_key=f"direct_dm:{user_id}",
             skip_inbox_fallback=False,
-            created_at=self.runtime.clock(),
+            created_at=to_utc(self.runtime.clock()),
             fallback_session_factory=self._derive_session_factory(session),
         )
         await self.runtime._persist_inbox_fallback(job, error_message=error_message)
@@ -2255,7 +2261,9 @@ async def cleanup_expired_notification_records(
     Returns:
         ``(deleted_inbox_count, deleted_ops_count)`` 清理计数元组。
     """
-    cutoff = (now or datetime.now()) - timedelta(days=max(1, int(retention_days)))
+    cutoff = (to_utc(now) if now is not None else utc_now()) - timedelta(
+        days=max(1, int(retention_days))
+    )
     inbox_deleted = await NotificationInboxRepository(session).delete_expired_records(
         cutoff
     )

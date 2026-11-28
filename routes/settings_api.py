@@ -26,6 +26,7 @@ from core.dependencies import (
     get_tmdb_client,
     get_tvdb_client,
 )
+from core.time_utils import to_utc
 from core.user_policy import (
     parse_server_default_user_policy,
     serialize_server_default_user_policy,
@@ -1151,7 +1152,7 @@ async def get_settings_ops_logs(
     session: AsyncSession = Depends(get_db),
 ) -> OpsAlertLogsPageResponse:
     """分页查询近 30 天系统运维告警记录，支持事件类型、级别与服务器筛选。"""
-    now = get_or_create_notification_runtime(request.app).clock()
+    now = to_utc(get_or_create_notification_runtime(request.app).clock())
     return await query_recent_ops_logs_page(
         session,
         now=now,

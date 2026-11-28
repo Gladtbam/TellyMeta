@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, TypeVar, overload
 
 from loguru import logger
@@ -10,6 +10,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database import IS_SQLITE, async_session
+from core.time_utils import utc_now
 from models.orm import ApiCache
 
 T = TypeVar("T", bound=BaseModel)
@@ -40,7 +41,7 @@ class CacheService:
         async with async_session() as session:
             try:
                 stmt = select(ApiCache).where(
-                    ApiCache.key == key, ApiCache.expires_at > datetime.now()
+                    ApiCache.key == key, ApiCache.expires_at > utc_now()
                 )
                 result = await session.execute(stmt)
                 cache = result.scalar_one_or_none()
@@ -80,7 +81,8 @@ class CacheService:
             logger.error("序列化缓存数据失败，键：{}，错误：{}", key, e)
             return
 
-        expires_at = datetime.now() + timedelta(seconds=ttl)
+        now = utc_now()
+        expires_at = now + timedelta(seconds=ttl)
 
         async with async_session() as session:
             try:
@@ -92,14 +94,14 @@ class CacheService:
                         key=key,
                         value=json_str,
                         expires_at=expires_at,
-                        created_at=datetime.now(),
+                        created_at=now,
                     )
                     .on_conflict_do_update(
                         index_elements=["key"],
                         set_={
                             "value": json_str,
                             "expires_at": expires_at,
-                            "created_at": datetime.now(),
+                            "created_at": now,
                         },
                     )
                 )
@@ -125,7 +127,7 @@ class CacheService:
         async with async_session() as session:
             try:
                 await session.execute(
-                    delete(ApiCache).where(ApiCache.expires_at <= datetime.now())
+                    delete(ApiCache).where(ApiCache.expires_at <= utc_now())
                 )
                 await session.commit()
             except SQLAlchemyError as e:

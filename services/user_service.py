@@ -1,6 +1,6 @@
 import contextlib
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from random import choice, choices, randint
 from typing import Any, Literal
 
@@ -45,6 +45,7 @@ from core.scheduler_jobs import (
     schedule_traffic_unsuspend_retry,
 )
 from core.telegram_message import TelegramMessage
+from core.time_utils import format_local, local_today, to_local, utc_now
 from models.nginx import format_traffic_bytes
 from models.orm import RegistrationMode, ServerInstance, ServerType, TelegramUser
 from repositories.code_repo import CodeRepository
@@ -133,8 +134,8 @@ class UserService:
 
         user = await self.telegram_repo.get_or_create(user_id)
 
-        today = date.today()
-        last_date = user.last_checkin.date()
+        today = local_today()
+        last_date = to_local(user.last_checkin).date()
 
         if user.last_checkin:
             if last_date == today:
@@ -201,7 +202,7 @@ class UserService:
         Returns:
             过滤与刷新后供奖池构建及奖励发放使用的 ``_LuckyCheckinContext``。
         """
-        now = datetime.now()
+        now = utc_now()
         enabled_servers = await self.server_repo.get_all_enabled()
         enabled_media_servers: dict[int, ServerInstance] = {
             int(s.id): s
@@ -355,7 +356,7 @@ class UserService:
         )
         uid = ctx.user_id
         uname = ctx.username
-        exp_str = code.expires_at.strftime("%Y-%m-%d")
+        exp_str = format_local(code.expires_at, "%Y-%m-%d")
         return Result(
             success=True,
             message=TelegramMessage.render_markdown(
@@ -420,7 +421,7 @@ class UserService:
                     getattr(getattr(self.app, "state", None), "scheduler", None),
                     updated_mu,
                 )
-                exp_str = updated_mu.expires_at.strftime("%Y-%m-%d %H:%M")
+                exp_str = format_local(updated_mu.expires_at, "%Y-%m-%d %H:%M")
                 is_traffic_suspended = bool(updated_mu.is_traffic_suspended)
 
             await self.telegram_repo.update_checkin(
@@ -503,7 +504,7 @@ class UserService:
                                 scheduler,
                                 uid,
                                 sid,
-                                run_date=datetime.now() + timedelta(minutes=15),
+                                run_date=utc_now() + timedelta(minutes=15),
                             )
                     else:
                         # 账号同时处于过期封禁时仅清除超流标记，严禁外部解封（ADR-0002）
@@ -533,7 +534,7 @@ class UserService:
             added_str = format_traffic_bytes(added_bytes)
             pack_total_str = format_traffic_bytes(pack_total_bytes)
             reset_clause = (
-                f"将于 {next_reset_at.strftime('%Y-%m-%d %H:%M')} 账期重置时清零"
+                f"将于 {format_local(next_reset_at, '%Y-%m-%d %H:%M')} 账期重置时清零"
                 if next_reset_at is not None
                 else "将于本周期重置时清零"
             )
@@ -851,7 +852,7 @@ class UserService:
             elif mode == RegistrationMode.TIME:
                 with contextlib.suppress(ValueError, TypeError):
                     ts = float(srv.registration_time_limit)
-                    if datetime.now().timestamp() < ts:
+                    if utc_now().timestamp() < ts:
                         can_register = True
                         status_label = "限时开放"
                     else:

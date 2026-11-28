@@ -1,6 +1,6 @@
 import contextlib
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, cast
 
 from apscheduler.jobstores.base import JobLookupError
@@ -10,6 +10,7 @@ from loguru import logger
 from clients.ai_client import AIClientWarper
 from clients.tmdb_client import TmdbClient
 from core.config import genre_mapping
+from core.time_utils import utc_now
 from models.protocols import BaseItem
 from models.tmdb import TmdbEpisode
 from repositories.server_repo import is_server_feature_enabled
@@ -345,7 +346,7 @@ async def add_translate_media_item(server_id: int, item_id: str, days: int) -> N
     scheduler.add_job(
         translate_media_item,
         "date",
-        run_date=datetime.now() + timedelta(days=days),
+        run_date=utc_now() + timedelta(days=days),
         id=f"{TRANSLATE_JOB_PREFIX}{server_id}_{item_id}",
         replace_existing=True,
         args=[server_id, item_id],

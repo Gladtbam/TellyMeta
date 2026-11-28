@@ -655,10 +655,14 @@ def expiry_target_tier(
     advance_days: int,
 ) -> int:
     """评估延寿/续期码目标账号的紧急程度梯队（0=已过期/封禁，1=临近到期，2=常规有效）。"""
-    if is_banned or expires_at <= now:
+    from core.time_utils import to_utc
+
+    expires_utc = to_utc(expires_at)
+    now_utc = to_utc(now)
+    if is_banned or expires_utc <= now_utc:
         return 0
     soon_window = timedelta(days=max(7, int(advance_days)))
-    if expires_at <= now + soon_window:
+    if expires_utc <= now_utc + soon_window:
         return 1
     return 2
 

@@ -5,7 +5,6 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Date,
-    DateTime,
     Float,
     ForeignKey,
     ForeignKeyConstraint,
@@ -19,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from core.database import Base
+from core.time_utils import EPOCH_UTC, UTCDateTime, local_today, to_local, utc_now
 
 
 class ServerType(StrEnum):
@@ -58,16 +58,16 @@ class TelegramUser(Base):
     )  # 连续签到
     warning_count: Mapped[int] = mapped_column(server_default=text("0"), nullable=False)
     last_checkin: Mapped[datetime] = mapped_column(
-        default=datetime(1970, 1, 1), nullable=False
+        UTCDateTime, default=EPOCH_UTC, nullable=False
     )
 
     @property
     def current_consecutive_checkin_count(self) -> int:
-        """获取当前有效连续签到天数"""
+        """获取当前有效连续签到天数（按配置业务时区的自然日判定）"""
         if not self.last_checkin:
             return 0
-        today = date.today()
-        if self.last_checkin.date() < (today - timedelta(days=1)):
+        today = local_today()
+        if to_local(self.last_checkin).date() < (today - timedelta(days=1)):
             return 0
         return self.consecutive_checkin_count
 
@@ -229,20 +229,20 @@ class MediaUser(Base):
         String(64), unique=True, index=True, nullable=False
     )
     media_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     anchor_day: Mapped[int | None] = mapped_column(
         Integer, nullable=True
     )  # 锚定基准日号数（1..31）
     cycle_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
+        UTCDateTime, nullable=True
     )  # 当前自然月周期起始时间
     next_reset_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
+        UTCDateTime, nullable=True
     )  # 下一次月度重置时间
     is_banned: Mapped[bool] = mapped_column(
         Boolean, server_default=text("false"), nullable=False
     )
-    delete_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delete_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     cycle_watch_time_seconds: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default=text("0"), nullable=False
     )
@@ -308,10 +308,10 @@ class ActiveCode(Base):
     )
     type: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now, nullable=False
+        UTCDateTime, default=utc_now, nullable=False
     )
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     server: Mapped[ServerInstance] = relationship()
 
@@ -368,8 +368,10 @@ class ApiCache(Base):
 
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     value: Mapped[str] = mapped_column(String, nullable=False)  # JSON data
-    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+    expires_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
 
 
 class MediaRequest(Base):
@@ -413,12 +415,14 @@ class MediaRequest(Base):
     approver_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     fail_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.now
+        UTCDateTime, nullable=False, default=utc_now
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, nullable=False, index=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     # 媒体库真实入库并完成 REQUEST_COMPLETED 通知的时间（用于多集剧集入库防重复触发）
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     __table_args__ = (
         # 同一 Arr 实例对同一媒体同时仅允许一条待审核求片
@@ -446,7 +450,7 @@ class MediaWatchDaily(Base):
     watch_seconds: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0"), nullable=False
     )
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -471,8 +475,8 @@ class MediaWatchInterval(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     server_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    start_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, index=True)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -501,9 +505,9 @@ class MediaPlaybackSession(Base):
         Boolean, default=False, server_default=text("false"), nullable=False
     )
     last_position_ticks: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    last_event_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    last_effective_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_event_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    last_effective_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -547,7 +551,7 @@ class NotificationRoute(Base):
     # 可选高频或删除类事件白名单 JSON 列表（如 ["sonarr_grab", "media_library_deleted"]）
     enabled_events_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     __table_args__ = (
@@ -609,9 +613,9 @@ class NotificationInboxItem(Base):
     )
     delivery_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now, nullable=False, index=True
+        UTCDateTime, default=utc_now, nullable=False, index=True
     )
-    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
 
 class OpsAlertLog(Base):
@@ -640,7 +644,7 @@ class OpsAlertLog(Base):
     )
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now, nullable=False, index=True
+        UTCDateTime, default=utc_now, nullable=False, index=True
     )
 
 
@@ -670,5 +674,5 @@ class UserNotificationPreference(Base):
         Boolean, default=True, server_default=text("true"), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+        UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
     )

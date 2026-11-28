@@ -1,10 +1,10 @@
 from collections.abc import Sequence
-from datetime import datetime
 from statistics import median
 
 from sqlalchemy import bindparam, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time_utils import utc_now
 from models.orm import TelegramUser
 from repositories.config_repo import ConfigRepository
 
@@ -96,7 +96,7 @@ class TelegramRepository:
         else:
             user.consecutive_checkin_count = 1
         user.score += score_reward
-        user.last_checkin = datetime.now()
+        user.last_checkin = utc_now()
 
         await self.session.commit()
         await self.session.refresh(user)

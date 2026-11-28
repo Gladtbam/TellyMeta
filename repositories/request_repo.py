@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time_utils import to_utc, utc_now
 from models.orm import MediaRequest, ServerInstance, ServerType
 from repositories.config_repo import ConfigRepository
 
@@ -70,7 +71,7 @@ class RequestRepository:
         now: datetime | None = None,
     ) -> MediaRequest:
         """创建一条待审核求片记录并提交事务"""
-        created_at = now or datetime.now()
+        created_at = to_utc(now) if now is not None else utc_now()
         expire_days = (await ConfigRepository(self.session).get_policy_config())[
             "request_expire_days"
         ]
@@ -133,7 +134,7 @@ class RequestRepository:
         Returns:
             MediaRequest | None: 状态流转成功返回更新后的记录，条件不满足返回 None
         """
-        current_time = now or datetime.now()
+        current_time = to_utc(now) if now is not None else utc_now()
         conditions = [
             MediaRequest.id == request_id,
             MediaRequest.status == from_status,
@@ -172,7 +173,7 @@ class RequestRepository:
         self, now: datetime | None = None
     ) -> Sequence[MediaRequest]:
         """查询所有已超过 7 天有效期但仍处于 pending 状态的求片记录"""
-        current_time = now or datetime.now()
+        current_time = to_utc(now) if now is not None else utc_now()
         stmt = (
             select(MediaRequest)
             .where(
@@ -239,7 +240,7 @@ class RequestRepository:
         if not clauses:
             return []
 
-        current_time = now or datetime.now()
+        current_time = to_utc(now) if now is not None else utc_now()
         stmt = (
             update(MediaRequest)
             .where(

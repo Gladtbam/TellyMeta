@@ -1,7 +1,6 @@
 import sqlite3
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 
 from fastapi import HTTPException
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from core.config import get_data_dir, get_settings
+from core.time_utils import local_now, utc_now
 
 DATA_DIR = get_data_dir()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,12 +55,19 @@ def get_sync_database_url(url: str) -> str:
 DATABASE_URL = normalize_async_database_url(get_settings().database_url)
 IS_SQLITE = is_sqlite_url(DATABASE_URL)
 
+_ENGINE_CONNECT_ARGS: dict[str, object] = (
+    {"server_settings": {"timezone": "UTC"}}
+    if DATABASE_URL.startswith("postgresql+asyncpg://")
+    else {}
+)
+
 async_engine = create_async_engine(
     url=DATABASE_URL,
     echo=False,
     future=True,
     pool_size=20,
     max_overflow=40,
+    connect_args=_ENGINE_CONNECT_ARGS,
 )
 
 async_session: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -146,7 +153,7 @@ async def backup_database() -> DatabaseBackupResult:
     import aiosqlite
 
     backup_dir = DATA_DIR / "backups"
-    backup_file = backup_dir / f"tellymeta_{datetime.now().strftime('%Y%m%d')}.db"
+    backup_file = backup_dir / f"tellymeta_{local_now().strftime('%Y%m%d')}.db"
     db_path = DATA_DIR / "tellymeta.db"
 
     try:
@@ -179,7 +186,7 @@ async def backup_database() -> DatabaseBackupResult:
                 file.is_file()
                 and file.name.endswith(".db")
                 and file.stat().st_mtime
-                < datetime.now().timestamp() - 86400 * retention_days
+                < utc_now().timestamp() - 86400 * retention_days
             ):
                 file.unlink()
                 logger.info("删除过期备份文件: {}", file.name)

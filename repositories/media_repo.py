@@ -9,6 +9,7 @@ from core.billing_anchor import (
     calculate_registration_cycle,
     calculate_renewal_cycle,
 )
+from core.time_utils import ensure_utc, to_utc, utc_now
 from models.orm import MediaUser, ServerInstance
 from repositories.config_repo import ConfigRepository
 
@@ -141,7 +142,7 @@ class MediaRepository:
             Sequence[MediaUser]: 过期且未被封禁的 Media 用户列表
         """
         stmt = select(MediaUser).where(
-            MediaUser.expires_at < datetime.now(),
+            MediaUser.expires_at < utc_now(),
             MediaUser.is_banned.is_(False),
         )
         result = await self.session.execute(stmt)
@@ -220,7 +221,7 @@ class MediaRepository:
         Returns:
             int: 本次补全的记录数量
         """
-        current_now = now or datetime.now()
+        current_now = to_utc(now) if now is not None else utc_now()
         stmt = select(MediaUser).where(
             MediaUser.is_banned.is_(True),
             MediaUser.delete_at.is_(None),
@@ -293,7 +294,7 @@ class MediaRepository:
         """
         stmt = select(MediaUser).where(
             MediaUser.delete_at.is_not(None),
-            MediaUser.delete_at <= datetime.now(),
+            MediaUser.delete_at <= utc_now(),
             MediaUser.is_banned.is_(True),
         )
         result = await self.session.execute(stmt)
@@ -342,7 +343,7 @@ class MediaRepository:
         if not users:
             return 0
 
-        current_now = now or datetime.now()
+        current_now = to_utc(now) if now is not None else utc_now()
         for user in users:
             anchor_day, cycle_started_at, next_reset_at = backfill_billing_cycle(
                 current_expires_at=user.expires_at,
@@ -381,9 +382,9 @@ class MediaRepository:
         Returns:
             MediaUser: 更新后的媒体账号对象
         """
-        effective_now = now or datetime.now()
-        old_cycle_started_at = media_user.cycle_started_at
-        old_next_reset_at = media_user.next_reset_at
+        effective_now = to_utc(now) if now is not None else utc_now()
+        old_cycle_started_at = ensure_utc(media_user.cycle_started_at)
+        old_next_reset_at = ensure_utc(media_user.next_reset_at)
         cycle = calculate_renewal_cycle(
             current_expires_at=media_user.expires_at,
             anchor_day=media_user.anchor_day,
@@ -457,7 +458,7 @@ class MediaRepository:
         Returns:
             MediaUser: 更新后的 Media 用户对象
         """
-        base_date = max(media_user.expires_at, datetime.now())
+        base_date = max(to_utc(media_user.expires_at), utc_now())
         media_user.expires_at = base_date + timedelta(days=days)
         media_user.is_banned = False  # 续期时自动解封
         media_user.delete_at = None  # 清除删除时间

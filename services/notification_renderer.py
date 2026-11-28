@@ -20,6 +20,7 @@ from core.economy_policy import (
     is_watch_time_renewal_open,
 )
 from core.telegram_message import TelegramMessage
+from core.time_utils import format_local
 from models.emby import BaseItemDto as EmbyApiBaseItemDto
 from models.emby_webhook import BaseItemDto as EmbyWebhookBaseItemDto
 from models.events import NotificationEvent
@@ -2865,7 +2866,7 @@ def _render_pre_expiry_reminder(
     payload: PreExpiryReminderPayload,
 ) -> RenderedNotification:
     """渲染 PRE_EXPIRY_REMINDER 临近到期提醒，严格遵守 ADR-0004 动态隐藏关闭体系。"""
-    exp_str = payload.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+    exp_str = format_local(payload.expires_at, "%Y-%m-%d %H:%M:%S")
     watch_open = payload.economy.effective_watch_time_renewal
     points_open = payload.economy.effective_points_renew
     paid_methods = _build_paid_renew_methods(
@@ -2955,7 +2956,7 @@ def _render_auto_renew_success(
     payload: AutoRenewSuccessPayload,
 ) -> RenderedNotification:
     """渲染 AUTO_RENEW_SUCCESS 自动续期成功回执，遵循 ADR-0002 与 ADR-0004。"""
-    exp_str = payload.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+    exp_str = format_local(payload.expires_at, "%Y-%m-%d %H:%M:%S")
     if payload.renew_channel == "watch_time":
         if payload.economy.effective_watch_time_renewal:
             if payload.economy.points_enabled:
@@ -3004,7 +3005,7 @@ def _render_auto_renew_success(
 
 def _render_auto_renew_failed(payload: AutoRenewFailedPayload) -> RenderedNotification:
     """渲染 AUTO_RENEW_FAILED 自动续期失败通知（遵循 ADR-0002 与 ADR-0004）。"""
-    exp_str = payload.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+    exp_str = format_local(payload.expires_at, "%Y-%m-%d %H:%M:%S")
     watch_open = payload.economy.effective_watch_time_renewal
     points_open = payload.economy.effective_points_renew
 
@@ -3068,11 +3069,11 @@ def _render_auto_renew_failed(payload: AutoRenewFailedPayload) -> RenderedNotifi
 
 def _render_expiry_ban(payload: ExpiryBanPayload) -> RenderedNotification:
     """渲染 EXPIRY_BAN 过期封禁通知（严格遵守 ADR-0002：绝不提及流量/超流）。"""
-    exp_str = payload.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+    exp_str = format_local(payload.expires_at, "%Y-%m-%d %H:%M:%S")
     grace_days = max(0, int(payload.grace_days))
     delete_line = (
         TelegramMessage.render_html(
-            t"预计清理时间: <code>{payload.delete_at.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            t"预计清理时间: <code>{format_local(payload.delete_at, '%Y-%m-%d %H:%M:%S')}</code>"
         )
         if payload.delete_at is not None
         else ""
@@ -3106,7 +3107,7 @@ def _render_grace_delete_reminder(
     payload: GraceDeleteReminderPayload,
 ) -> RenderedNotification:
     """渲染 GRACE_DELETE_REMINDER 宽限期删号前最后提醒（严格遵守 ADR-0002 与 ADR-0004）。"""
-    delete_str = payload.delete_at.strftime("%Y-%m-%d %H:%M:%S")
+    delete_str = format_local(payload.delete_at, "%Y-%m-%d %H:%M:%S")
     hours = max(1, int(payload.remaining_hours))
     grace_days = max(0, int(payload.grace_days))
     paid_methods = _build_paid_renew_methods(
@@ -3137,7 +3138,7 @@ def _render_account_deleted(payload: AccountDeletedPayload) -> RenderedNotificat
     """渲染 ACCOUNT_DELETED 媒体账号永久删除确认通知。"""
     deleted_line = (
         TelegramMessage.render_html(
-            t"清理时间: <code>{payload.deleted_at.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            t"清理时间: <code>{format_local(payload.deleted_at, '%Y-%m-%d %H:%M:%S')}</code>"
         )
         if payload.deleted_at is not None
         else ""
@@ -3170,7 +3171,7 @@ def _render_watch_time_renewal_eligible(
     """渲染 WATCH_TIME_RENEWAL_ELIGIBLE 保活达标祝贺通知（遵守 ADR-0004）。"""
     watched_str = _format_duration_seconds(payload.watched_seconds)
     threshold_str = _format_duration_seconds(payload.threshold_seconds)
-    exp_str = payload.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+    exp_str = format_local(payload.expires_at, "%Y-%m-%d %H:%M:%S")
     free_phrase = "免积分续期" if payload.economy.points_enabled else "免费续期"
     action_hint = (
         f"您已开启自动续期，系统将在到期时自动为您执行{free_phrase}；也可随时前往 Mini App 提前确认续期。"
@@ -3202,10 +3203,10 @@ def _render_billing_cycle_reset(
     payload: BillingCycleResetPayload,
 ) -> RenderedNotification:
     """渲染 BILLING_CYCLE_RESET 账期重置通知（严格按 ADR-0004 裁剪流量/积分/时长文案）。"""
-    reset_str = payload.reset_at.strftime("%Y-%m-%d %H:%M:%S")
+    reset_str = format_local(payload.reset_at, "%Y-%m-%d %H:%M:%S")
     next_line = (
         TelegramMessage.render_html(
-            t"下次重置时间: <code>{payload.next_reset_at.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            t"下次重置时间: <code>{format_local(payload.next_reset_at, '%Y-%m-%d %H:%M:%S')}</code>"
         )
         if payload.next_reset_at is not None
         else ""
@@ -3287,7 +3288,7 @@ def _render_traffic_quota_alert_card(
         else ""
     )
     reset_str = (
-        next_reset_at.strftime("%Y-%m-%d %H:%M")
+        format_local(next_reset_at, "%Y-%m-%d %H:%M")
         if next_reset_at is not None
         else "待下个账期同步"
     )
@@ -3402,7 +3403,7 @@ def _render_traffic_unsuspended(
         ("✅ 超流停用已解除", "流量额度恢复"),
     )
     reset_note = (
-        f"{payload.next_reset_at.strftime('%Y-%m-%d %H:%M')} 账期重置时清零"
+        f"{format_local(payload.next_reset_at, '%Y-%m-%d %H:%M')} 账期重置时清零"
         if payload.next_reset_at is not None
         else "本周期重置时清零"
     )
@@ -3639,7 +3640,7 @@ def _render_self_action_receipt(
     if payload.expires_at is not None:
         lines.append(
             TelegramMessage.render_html(
-                t"当前有效期至: <code>{payload.expires_at.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+                t"当前有效期至: <code>{format_local(payload.expires_at, '%Y-%m-%d %H:%M:%S')}</code>"
             )
         )
     if payload.cost_score > 0 and payload.economy.points_enabled:
@@ -4489,7 +4490,7 @@ def _render_system_test(payload: SystemTestPayload) -> RenderedNotification:
     )
     time_line = (
         TelegramMessage.render_html(
-            t"测试时间: <code>{payload.triggered_at.strftime('%Y-%m-%d %H:%M:%S')}</code>"
+            t"测试时间: <code>{format_local(payload.triggered_at, '%Y-%m-%d %H:%M:%S')}</code>"
         )
         if payload.triggered_at is not None
         else ""

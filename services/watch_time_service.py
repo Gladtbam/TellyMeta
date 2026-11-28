@@ -7,16 +7,14 @@ import contextlib
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-from zoneinfo import ZoneInfo
 
 from loguru import logger
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import get_settings
 from core.economy_policy import is_watch_time_renewal_open
 from core.media_utils import (
     clean_str as _clean_str,
@@ -26,6 +24,7 @@ from core.media_utils import (
     get_account_lock,
     media_ids_match,
 )
+from core.time_utils import to_local, to_utc, utc_now
 from models.emby_webhook import (
     EmbyPayload,
     PlaybackPauseEvent,
@@ -263,21 +262,17 @@ def _get_server_heartbeat_lock(server_id: int) -> asyncio.Lock:
 
 
 def _normalize_dt(dt: datetime | None) -> datetime:
-    """将时间统一转换为与数据库一致的配置时区朴素时间
+    """将时间统一转换为与数据库一致的 UTC aware 时间。
 
     Args:
-        dt: 原始 ``datetime``；若为 ``None`` 则取当前配置时区时间。
+        dt: 原始 ``datetime``；若为 ``None`` 则取当前 UTC 时刻。
 
     Returns:
-        去除 ``tzinfo`` 后的本地时间，避免朴素与带时区时间相减异常。
+        带 ``UTC`` 时区信息的 ``datetime``，避免朴素与带时区时间相减异常。
     """
-    tz_name = get_settings().timezone
-    tz = ZoneInfo(tz_name)
     if dt is None:
-        return datetime.now(tz).replace(tzinfo=None)
-    if dt.tzinfo is not None:
-        return dt.astimezone(tz).replace(tzinfo=None)
-    return dt
+        return utc_now()
+    return to_utc(dt)
 
 
 def normalize_emby_playback_event(
@@ -414,24 +409,30 @@ def _split_by_calendar_day(
     start_at: datetime,
     end_at: datetime,
 ) -> list[tuple[date, datetime, datetime]]:
-    """按自然日 00:00:00 边界切分时间段，保证单日上限准确计量
+    """按配置业务时区的自然日 00:00:00 边界切分时间段，返回本地自然日与 UTC 边界。
 
     Args:
         start_at: 待切分时间段起点。
         end_at: 待切分时间段终点。
 
     Returns:
-        按自然日拆解后的 ``(日期, 当天起点, 当天终点)`` 元组列表。
+        按业务时区自然日拆解后的 ``(本地日期, 当天 UTC 起点, 当天 UTC 终点)`` 元组列表。
     """
-    if start_at >= end_at:
+    start_local = to_local(start_at)
+    end_local = to_local(end_at)
+    if start_local >= end_local:
         return []
 
     segments: list[tuple[date, datetime, datetime]] = []
-    cursor = start_at
-    while cursor < end_at:
-        next_midnight = datetime.combine(cursor.date() + timedelta(days=1), time.min)
-        seg_end = min(end_at, next_midnight)
-        segments.append((cursor.date(), cursor, seg_end))
+    cursor = start_local
+    while cursor < end_local:
+        next_midnight = datetime.combine(
+            cursor.date() + timedelta(days=1), time.min, tzinfo=cursor.tzinfo
+        )
+        seg_end = min(end_local, next_midnight)
+        segments.append(
+            (cursor.date(), cursor.astimezone(UTC), seg_end.astimezone(UTC))
+        )
         cursor = seg_end
     return segments
 
@@ -716,7 +717,7 @@ class WatchTimeService:
             app: 可选 FastAPI 应用实例，用于在突破保活门槛时发射统一通知。
         """
         self.session = session
-        self._clock_fn = clock or datetime.now
+        self._clock_fn = clock or utc_now
         self.app = app
         self.config_repo = ConfigRepository(session)
 

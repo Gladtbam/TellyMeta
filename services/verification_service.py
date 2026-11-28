@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import contextvars
-from datetime import datetime, timedelta
+from datetime import timedelta
 from random import randint, sample
 from typing import Any
 
@@ -18,6 +18,7 @@ from core.config import get_settings
 from core.database import async_session
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
+from core.time_utils import utc_now
 from repositories.config_repo import ConfigRepository
 from repositories.media_repo import MediaRepository
 from repositories.server_repo import ServerRepository
@@ -123,7 +124,7 @@ class VerificationService:
             ],
         ]
 
-        kick_time = datetime.now() + timedelta(minutes=timeout_minutes)
+        kick_time = utc_now() + timedelta(minutes=timeout_minutes)
         job = self.scheduler.add_job(
             kick_unverified_user,
             "date",

@@ -1,9 +1,10 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time_utils import utc_now
 from models.orm import ActiveCode
 
 
@@ -35,9 +36,9 @@ class CodeRepository:
         raw = secrets.token_urlsafe(12)
         code = "-".join([raw[i : i + 4] for i in range(0, len(raw), 4)])
         if expires is None:
-            expires_at = datetime(2099, 12, 31)
+            expires_at = datetime(2099, 12, 31, tzinfo=UTC)
         else:
-            expires_at = datetime.now() + timedelta(days=expires)
+            expires_at = utc_now() + timedelta(days=expires)
 
         new_code = ActiveCode(
             code=code, type=code_type, expires_at=expires_at, server_id=server_id
@@ -58,7 +59,7 @@ class CodeRepository:
         Returns:
             ActiveCode | None: 抢占成功返回激活码对象，否则返回 None
         """
-        now = datetime.now()
+        now = utc_now()
         stmt = (
             update(ActiveCode)
             .where(
@@ -103,7 +104,7 @@ class CodeRepository:
                 ActiveCode.code == code.code,
                 ActiveCode.used_at.is_(None),
             )
-            .values(used_at=datetime.now())
+            .values(used_at=utc_now())
         )
         await self.session.execute(stmt)
         await self.session.commit()

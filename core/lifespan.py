@@ -1,7 +1,5 @@
 import asyncio
 import json
-import os
-import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -40,6 +38,7 @@ from core.scheduler_jobs import (
     recover_and_calibrate_account_lifecycles,
 )
 from core.telegram_manager import TelethonClientWarper
+from core.time_utils import apply_process_timezone, get_configured_timezone
 from models.orm import ServerType
 from repositories.config_repo import ConfigRepository
 from repositories.server_repo import ServerRepository
@@ -58,10 +57,9 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 设置时区
-    os.environ["TZ"] = settings.timezone
-    time.tzset()
-    logger.info("时区已设置为 {}", settings.timezone)
+    # 尽早应用进程级时区设置（兼容无 tzset 平台）
+    applied_tz = apply_process_timezone()
+    logger.info("时区已设置为 {}", applied_tz)
 
     check_required_settings()
     if IS_SQLITE:
@@ -209,7 +207,7 @@ async def lifespan(app: FastAPI):
             # Emby 播放态按需心跳仅作用于运行期进程，使用内存 JobStore 避免重启残留无效持久化任务
             "memory": MemoryJobStore(),
         },
-        timezone=settings.timezone,
+        timezone=get_configured_timezone(),
     )
 
     overrides = get_ops_schedule_overrides()

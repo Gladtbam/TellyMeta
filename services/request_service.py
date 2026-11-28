@@ -21,6 +21,7 @@ from core.economy_policy import (
 )
 from core.telegram_manager import TelethonClientWarper
 from core.telegram_message import TelegramMessage
+from core.time_utils import to_utc, utc_now
 from models.events import NotificationEvent, NotificationRouteCategory
 from models.orm import LibraryBinding, MediaRequest, ServerInstance
 from models.radarr import MovieResource
@@ -595,7 +596,7 @@ class RequestService:
                 f"该求片请求状态为 {req.status}，无法重复批准。",
             )
 
-        now = datetime.now()
+        now = utc_now()
         if req.expires_at <= now:
             # 已超期但定时任务尚未扫描到时，在此直接触发超时释放，禁止再批准
             default_expire_days = (await self.config_repo.get_policy_config())[
@@ -908,7 +909,7 @@ class RequestService:
 
     async def expire_pending_requests(self, now: datetime | None = None) -> int:
         """超时清理：自动取消超过配置天数的待审核求片请求并释放全部预留积分"""
-        current_time = now or datetime.now()
+        current_time = to_utc(now) if now is not None else utc_now()
         default_expire_days = (await self.config_repo.get_policy_config())[
             "request_expire_days"
         ]

@@ -38,6 +38,7 @@ from core.scheduler_jobs import (
     schedule_traffic_unsuspend_retry,
 )
 from core.telegram_message import TelegramMessage
+from core.time_utils import format_local, to_utc, utc_now
 from core.user_policy import (
     build_default_user_policy_patch,
     merge_user_policy,
@@ -167,7 +168,9 @@ class AccountService:
         self.media_repo = MediaRepository(session)
         self.server_repo = ServerRepository(session)
         self.media_clients: dict[int, MediaService] = app.state.media_clients
-        self._now: Callable[[], datetime] = clock or datetime.now
+        self._now: Callable[[], datetime] = (
+            (lambda: to_utc(clock())) if clock is not None else utc_now
+        )
 
     @staticmethod
     def _get_server_expiry_months(server: ServerInstance) -> int:
@@ -417,7 +420,7 @@ class AccountService:
                 return Result(False, "该服务器注册名额已满。")
         elif mode == RegistrationMode.TIME:
             limit_time = float(server.registration_time_limit)
-            if limit_time > datetime.now().timestamp():
+            if limit_time > utc_now().timestamp():
                 can_register = True
             else:
                 await self.server_repo.update_policy_config(
@@ -533,7 +536,7 @@ class AccountService:
                 用户名: `{username}`
                 密码: `{pw}`
 
-                有效期至: {media_user.expires_at.strftime("%Y-%m-%d")}
+                有效期至: {format_local(media_user.expires_at, "%Y-%m-%d")}
                 请尽快登录并修改密码，祝您观影愉快！
             """),
             )
@@ -885,7 +888,7 @@ class AccountService:
                         )
                     )
 
-                expires_str = media_user.expires_at.strftime("%Y-%m-%d %H:%M:%S")
+                expires_str = format_local(media_user.expires_at, "%Y-%m-%d %H:%M:%S")
                 suspension_note = ""
                 if media_user.is_traffic_suspended:
                     points_pack_ok = await self.config_repo.is_points_feature_enabled(
@@ -1254,7 +1257,7 @@ class AccountService:
                     is_traffic_suspended=bool(media_user.is_traffic_suspended),
                     economy=economy,
                 )
-                exp_str = new_expires_at.strftime("%Y-%m-%d %H:%M:%S")
+                exp_str = format_local(new_expires_at, "%Y-%m-%d %H:%M:%S")
                 channel_desc = (
                     "有效播放时长"
                     if renew_channel == _RenewChannel.WATCH_TIME
@@ -1585,7 +1588,7 @@ class AccountService:
         added_str = format_traffic_bytes(added_bytes)
         total_pack_str = format_traffic_bytes(new_pack_bytes)
         reset_clause = (
-            f"仅限当前账期有效，将于 {next_reset_at.strftime('%Y-%m-%d %H:%M')} 清零。"
+            f"仅限当前账期有效，将于 {format_local(next_reset_at, '%Y-%m-%d %H:%M')} 清零。"
             if next_reset_at is not None
             else "仅限当前账期有效，将于本周期重置时清零。"
         )
@@ -1761,7 +1764,7 @@ class AccountService:
 
             服务器: `{server.name}`
             代码: `{code.code}`
-            过期时间: {code.expires_at.strftime("%Y-%m-%d")}
+            过期时间: {format_local(code.expires_at, "%Y-%m-%d")}
 
             请妥善保管此码，祝您观影愉快！
         """),

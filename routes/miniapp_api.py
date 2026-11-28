@@ -22,6 +22,7 @@ from core.dependencies import (
 from core.errors import ApiError
 from core.task_utils import create_background_task
 from core.telegram_manager import TelethonClientWarper
+from core.time_utils import to_utc
 from core.webapp_auth import (
     get_current_user_id,
     require_group_member,
@@ -444,7 +445,7 @@ async def get_my_info(
             uname = await client.get_user_name(user_id, need_username=True)
             has_username = uname not in (None, False)
 
-        now = get_or_create_notification_runtime(request.app).clock()
+        now = to_utc(get_or_create_notification_runtime(request.app).clock())
         unread_count, has_mandatory = await NotificationInboxRepository(
             session
         ).get_unread_summary(user_id, since=now - timedelta(days=30))
@@ -473,7 +474,7 @@ async def get_my_notifications(
     session: AsyncSession = Depends(get_db),
 ) -> MiniAppNotificationsResponse:
     """获取当前成员近 30 天站内兜底收件箱、未读汇总、个人提醒偏好及管理员运维告警。"""
-    now = get_or_create_notification_runtime(request.app).clock()
+    now = to_utc(get_or_create_notification_runtime(request.app).clock())
     since = now - timedelta(days=30)
 
     inbox_repo = NotificationInboxRepository(session)
@@ -547,7 +548,7 @@ async def get_miniapp_ops_logs(
     session: AsyncSession = Depends(get_db),
 ) -> OpsAlertLogsPageResponse:
     """管理员在 Mini App 内分页查询近 30 天运维告警记录。"""
-    now = get_or_create_notification_runtime(request.app).clock()
+    now = to_utc(get_or_create_notification_runtime(request.app).clock())
     return await query_recent_ops_logs_page(
         session,
         now=now,
@@ -567,7 +568,7 @@ async def mark_my_notifications_read(
     session: AsyncSession = Depends(get_db),
 ) -> NotificationMarkReadResponse:
     """将当前用户的单条或全部未读站内兜底通知标记为已读（严格限定本人作用域）。"""
-    now = get_or_create_notification_runtime(request.app).clock()
+    now = to_utc(get_or_create_notification_runtime(request.app).clock())
     since = now - timedelta(days=30)
     inbox_repo = NotificationInboxRepository(session)
     marked_count = await inbox_repo.mark_read(
@@ -617,7 +618,7 @@ async def update_my_notification_preferences(
     session: AsyncSession = Depends(get_db),
 ) -> UserNotificationPreferencesResponse:
     """更新当前用户的可选通知提醒偏好设置（不影响必达通知投递）。"""
-    now = get_or_create_notification_runtime(request.app).clock()
+    now = to_utc(get_or_create_notification_runtime(request.app).clock())
     # 防止首次直调偏好接口时因尚未访问 /me 而缺少 TelegramUser 外键记录
     await TelegramRepository(session).get_or_create(user_id)
     updated = await UserNotificationPreferenceRepository(session).update_preferences(

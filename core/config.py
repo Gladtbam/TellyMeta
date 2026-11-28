@@ -57,6 +57,9 @@ def get_logs_dir() -> Path:
 
 
 def setup_logging():
+    from core.time_utils import apply_process_timezone
+
+    apply_process_timezone()
     settings = get_settings()
     logs_dir = get_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
