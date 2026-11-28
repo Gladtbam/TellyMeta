@@ -16,6 +16,7 @@ from models.events import (
     NotificationRouteCategory,
     NotificationRouteScope,
     NotificationTargetType,
+    get_server_route_category_label,
 )
 from repositories.config_repo import ConfigRepository
 from repositories.notification_repo import NotificationRouteRepository
@@ -368,16 +369,14 @@ async def ban_handler(
         return
 
 
-_BIND_GLOBAL_CATEGORIES = (
-    "media_library|media_request|account_lifecycle|ops_alert|community"
-)
+_BIND_GLOBAL_CATEGORIES = "account_lifecycle|ops_alert|community_score|community_verification|community_leave_audit"
 
 
 @TelethonClientWarper.handler(
     events.NewMessage(
         pattern=(
             rf"^/bind(@[A-Za-z0-9_]+)?"
-            rf"\s+(?:(\d+)\s+(notify|request)|global\s+({_BIND_GLOBAL_CATEGORIES}))$"
+            rf"\s+(?:(\d+)\s+(notify|request|ops|lifecycle)|global\s+({_BIND_GLOBAL_CATEGORIES}))$"
         ),
         incoming=True,
     )
@@ -387,11 +386,12 @@ _BIND_GLOBAL_CATEGORIES = (
 async def bind_handler(
     app: FastAPI, event: events.NewMessage.Event, session: AsyncSession
 ) -> None:
-    """话题绑定处理器：支持单服覆盖绑定与全局通知类别话题绑定
+    """话题绑定处理器：支持单服通知话题绑定与全局通知类别话题绑定
 
     支持格式：
-    - ``/bind <server_id> <notify|request>``：同步更新老字段并写入单服覆盖路由
-    - ``/bind global <media_library|media_request|account_lifecycle|ops_alert|community>``：写入全局话题路由并保留既有高危抄送与可选事件开关
+    - ``/bind <server_id> <notify|request|ops|lifecycle>``：写入单服通知路由（``notify``/``request`` 同步更新遗留话题字段）
+    - ``/bind global <account_lifecycle|ops_alert|community_score|community_verification|community_leave_audit>``：
+      写入全局话题路由并保留既有高危抄送与可选事件开关
     """
     match = getattr(event, "pattern_match", None)
     if match is None:
@@ -480,16 +480,21 @@ async def bind_handler(
     if bind_type == "notify":
         await server_repo.update_notify_config(server_id, notify_topic_id=topic_id)
         category = NotificationRouteCategory.MEDIA_LIBRARY
-        msg_type = "常规通知"
     elif bind_type == "request":
         await server_repo.update_notify_config(
             server_id, request_notify_topic_id=topic_id
         )
         category = NotificationRouteCategory.MEDIA_REQUEST
-        msg_type = "求片通知"
+    elif bind_type == "ops":
+        category = NotificationRouteCategory.OPS_ALERT
+    elif bind_type == "lifecycle":
+        category = NotificationRouteCategory.ACCOUNT_LIFECYCLE
     else:
-        await safe_reply(event, "❌ 无效的绑定类型，请使用 notify 或 request。")
+        await safe_reply(
+            event, "❌ 无效的绑定类型，请使用 notify、request、ops 或 lifecycle。"
+        )
         return
+    msg_type = get_server_route_category_label(server.server_type, category)[0]
 
     existing_srv_route = await route_repo.get_route(
         scope_type=NotificationRouteScope.SERVER,

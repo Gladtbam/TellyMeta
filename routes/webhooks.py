@@ -619,7 +619,7 @@ async def _run_qb_share_limit(
         if notify_service is None:
             return
         try:
-            # 后台任务独立运行于请求会话之外，不传入已结束的 request session
+            # 后台任务独立运行于请求会话之外，不传入已结束的 request session；路由归属目标 qB 实例
             await _emit_notification(
                 notify_service,
                 QbShareLimitFailedPayload(
@@ -628,7 +628,7 @@ async def _run_qb_share_limit(
                     download_id=torrent_hash,
                     error_message=str(exc) or type(exc).__name__,
                 ),
-                server_id=arr_server_id,
+                server_id=qb_server_id,
                 source_key=f"qb_share_limit:{qb_server_id}",
             )
         except Exception as notify_exc:  # pylint: disable=broad-exception-caught
@@ -720,7 +720,13 @@ async def sonarr_webhook(
             payload.series.path = mapped_path
         if tmdb_client and getattr(server_instance, "allow_nfo", True):
             create_background_task(
-                handle_series_add_metadata(client, payload, tmdb_client, tvdb_client)
+                handle_series_add_metadata(
+                    client,
+                    payload,
+                    tmdb_client,
+                    tvdb_client,
+                    server_id=server_instance.id,
+                )
             )
 
         await _emit_notification(
@@ -743,7 +749,13 @@ async def sonarr_webhook(
                 payload.episodeFile.path = mapped_path
             if tmdb_client and getattr(server_instance, "allow_nfo", True):
                 create_background_task(
-                    create_episode_nfo(payload, tmdb_client, tvdb_client)
+                    create_episode_nfo(
+                        payload,
+                        tmdb_client,
+                        tvdb_client,
+                        server_name=client.server_name,
+                        server_id=server_instance.id,
+                    )
                 )
             if task_queue and should_mkv and mkv_local_path:
                 await task_queue.put(
@@ -863,6 +875,8 @@ async def radarrarr_webhook(
                     Path(local_movie_file).with_suffix(".nfo"),
                     payload.movie.tmdbId,
                     tmdb_client,
+                    server_name=client.server_name,
+                    server_id=server_instance.id,
                 )
             )
 
@@ -887,7 +901,14 @@ async def radarrarr_webhook(
         if local_folder_path := client.to_local_path(payload.movie.folderPath):
             payload.movie.folderPath = local_folder_path
             if getattr(server_instance, "allow_nfo", True):
-                create_background_task(handle_movie_add_metadata(payload, tmdb_client))
+                create_background_task(
+                    handle_movie_add_metadata(
+                        payload,
+                        tmdb_client,
+                        server_name=client.server_name,
+                        server_id=server_instance.id,
+                    )
+                )
         await _emit_notification(
             notify_service,
             RadarrMovieAddPayload.from_webhook(payload, server_name=client.server_name),

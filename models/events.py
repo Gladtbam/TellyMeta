@@ -13,7 +13,9 @@ class NotificationRouteCategory(StrEnum):
     MEDIA_REQUEST = "media_request"
     ACCOUNT_LIFECYCLE = "account_lifecycle"
     OPS_ALERT = "ops_alert"
-    COMMUNITY = "community"
+    COMMUNITY_SCORE = "community_score"
+    COMMUNITY_VERIFICATION = "community_verification"
+    COMMUNITY_LEAVE_AUDIT = "community_leave_audit"
 
 
 class NotificationAudience(StrEnum):
@@ -546,21 +548,21 @@ NOTIFICATION_EVENT_SPECS: dict[NotificationEvent, NotificationEventSpec] = dict(
             NotificationSeverity.CRITICAL,
             supports_cooldown=True,
         ),
-        # 社区积分与群组治理
+        # 社区积分与群组治理（按事件细粒度拆分独立全局路由）
         _spec(
             NotificationEvent.SCORE_SETTLEMENT_REPORT,
-            NotificationRouteCategory.COMMUNITY,
+            NotificationRouteCategory.COMMUNITY_SCORE,
             NotificationAudience.TOPIC,
         ),
         _spec(
             NotificationEvent.VERIFICATION_REJECT_AUDIT,
-            NotificationRouteCategory.COMMUNITY,
+            NotificationRouteCategory.COMMUNITY_VERIFICATION,
             NotificationAudience.TOPIC,
             NotificationSeverity.WARNING,
         ),
         _spec(
             NotificationEvent.MEMBER_LEFT_CLEANUP_AUDIT,
-            NotificationRouteCategory.COMMUNITY,
+            NotificationRouteCategory.COMMUNITY_LEAVE_AUDIT,
             NotificationAudience.TOPIC,
         ),
         # 系统路由实测事件（默认归属 ops_alert，测试特定类别路由时按目标路由覆盖）
@@ -580,14 +582,72 @@ USER_PREFERENCE_KEYS: tuple[str, ...] = (
     "allow_self_action_receipt",
 )
 
+# 全局通知路由矩阵支持的业务类别（媒体入库与求片不设全局总开关，交由各服务器独立配置）
+GLOBAL_ROUTE_CATEGORIES: tuple[NotificationRouteCategory, ...] = (
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    NotificationRouteCategory.OPS_ALERT,
+    NotificationRouteCategory.COMMUNITY_SCORE,
+    NotificationRouteCategory.COMMUNITY_VERIFICATION,
+    NotificationRouteCategory.COMMUNITY_LEAVE_AUDIT,
+)
+
+# 仅归属单台服务器、不继承全局总开关且默认关闭通知的路由类别（媒体服/Arr/qB）
+SERVER_OWNED_ROUTE_CATEGORIES: frozenset[NotificationRouteCategory] = frozenset(
+    {
+        NotificationRouteCategory.MEDIA_LIBRARY,
+        NotificationRouteCategory.MEDIA_REQUEST,
+        NotificationRouteCategory.OPS_ALERT,
+    }
+)
+
+# 允许单服配置但未配置时可继承全局默认的路由类别
+SERVER_INHERITABLE_ROUTE_CATEGORIES: frozenset[NotificationRouteCategory] = frozenset(
+    {
+        NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    }
+)
+
+# 单服「通知」页签全集类别顺序
+SERVER_ROUTE_CATEGORIES: tuple[NotificationRouteCategory, ...] = (
+    NotificationRouteCategory.MEDIA_LIBRARY,
+    NotificationRouteCategory.MEDIA_REQUEST,
+    NotificationRouteCategory.OPS_ALERT,
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+)
+
+# 按服务器类型声明适用的单服通知类别顺序
+SERVER_TYPE_ROUTE_CATEGORIES: dict[str, tuple[NotificationRouteCategory, ...]] = {
+    "emby": (
+        NotificationRouteCategory.MEDIA_LIBRARY,
+        NotificationRouteCategory.OPS_ALERT,
+        NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    ),
+    "jellyfin": (
+        NotificationRouteCategory.MEDIA_LIBRARY,
+        NotificationRouteCategory.OPS_ALERT,
+        NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+    ),
+    "sonarr": (
+        NotificationRouteCategory.MEDIA_LIBRARY,
+        NotificationRouteCategory.MEDIA_REQUEST,
+        NotificationRouteCategory.OPS_ALERT,
+    ),
+    "radarr": (
+        NotificationRouteCategory.MEDIA_LIBRARY,
+        NotificationRouteCategory.MEDIA_REQUEST,
+        NotificationRouteCategory.OPS_ALERT,
+    ),
+    "qbittorrent": (NotificationRouteCategory.OPS_ALERT,),
+}
+
 DEFAULT_GLOBAL_ROUTE_TARGETS: dict[
     NotificationRouteCategory, NotificationTargetType
 ] = {
-    NotificationRouteCategory.MEDIA_LIBRARY: NotificationTargetType.DISABLED,
-    NotificationRouteCategory.MEDIA_REQUEST: NotificationTargetType.DISABLED,
     NotificationRouteCategory.ACCOUNT_LIFECYCLE: NotificationTargetType.DISABLED,
     NotificationRouteCategory.OPS_ALERT: NotificationTargetType.ADMIN_DM_GROUP,
-    NotificationRouteCategory.COMMUNITY: NotificationTargetType.MAIN_CHAT,
+    NotificationRouteCategory.COMMUNITY_SCORE: NotificationTargetType.MAIN_CHAT,
+    NotificationRouteCategory.COMMUNITY_VERIFICATION: NotificationTargetType.ADMIN_DM_GROUP,
+    NotificationRouteCategory.COMMUNITY_LEAVE_AUDIT: NotificationTargetType.ADMIN_DM_GROUP,
 }
 
 
@@ -612,13 +672,15 @@ def get_event_spec(event: NotificationEvent | str) -> NotificationEventSpec:
 def get_optional_events_for_category(
     category: NotificationRouteCategory | str,
 ) -> tuple[NotificationEvent, ...]:
-    """列出指定路由类别下默认关闭、需路由显式勾选启用的可选事件
+    """列出指定路由类别下默认关闭、需在管理路由白名单中显式勾选启用的可选事件
+
+    仅包含实际经由管理/群组路由投递的事件（自动排除仅受用户个人偏好控制的纯私聊 ``USER_DM`` 事件）。
 
     Args:
         category: 路由类别枚举或字符串标识。
 
     Returns:
-        属于该类别且 ``default_enabled=False`` 的事件元组。
+        属于该类别、非纯用户私聊且 ``default_enabled=False`` 的事件元组。
     """
     normalized = (
         category
@@ -628,11 +690,13 @@ def get_optional_events_for_category(
     return tuple(
         spec.event
         for spec in NOTIFICATION_EVENT_SPECS.values()
-        if spec.category == normalized and not spec.default_enabled
+        if spec.category == normalized
+        and spec.audience != NotificationAudience.USER_DM
+        and not spec.default_enabled
     )
 
 
-# 路由类别展示元信息（标题、说明与允许使用的目标类型）
+# 路由类别展示元信息（全局视角：标题与说明）
 ROUTE_CATEGORY_LABELS: dict[NotificationRouteCategory, tuple[str, str]] = {
     NotificationRouteCategory.MEDIA_LIBRARY: (
         "媒体入库与 Arr 动态",
@@ -647,30 +711,151 @@ ROUTE_CATEGORY_LABELS: dict[NotificationRouteCategory, tuple[str, str]] = {
         "过期封禁、自动删号及管理员操作等管理侧审计同步",
     ),
     NotificationRouteCategory.OPS_ALERT: (
-        "系统运维告警",
-        "媒体服/Arr/qB 离线、Arr 健康告警、MKV/NFO/翻译故障与任务摘要",
+        "系统全局运维告警",
+        "DB 备份失败、退群清理/启动校准/孤立会话摘要与投递降级（媒体服/Arr/qB 告警请在各服务器「通知」页签单独配置）",
     ),
-    NotificationRouteCategory.COMMUNITY: (
-        "社区积分与群组治理",
-        "每日发言积分结算榜单、入群验证拒审与退群自动清理审计",
+    NotificationRouteCategory.COMMUNITY_SCORE: (
+        "每日发言积分结算榜单",
+        "定时或手动 /settle 触发的群聊发言积分结算播报",
+    ),
+    NotificationRouteCategory.COMMUNITY_VERIFICATION: (
+        "入群验证拒审审计",
+        "新成员入群验证超时或管理员拒审踢封审计通知",
+    ),
+    NotificationRouteCategory.COMMUNITY_LEAVE_AUDIT: (
+        "退群自动清理审计",
+        "群成员退群或被移出后自动清理媒体账号的审计通知",
     ),
 }
 
-# 默认关闭、需用户在路由白名单中主动勾选启用的可选事件中文标题
+# 单服「通知」页签通用兜底类别展示标题与说明
+SERVER_ROUTE_CATEGORY_LABELS: dict[NotificationRouteCategory, tuple[str, str]] = {
+    NotificationRouteCategory.MEDIA_LIBRARY: (
+        "媒体库动态",
+        "当前服务器的媒体入库或下载动态（默认关闭，不继承全局）",
+    ),
+    NotificationRouteCategory.MEDIA_REQUEST: (
+        "求片审核",
+        "指向当前实例的待审核求片卡片与状态回写（默认关闭，不继承全局）",
+    ),
+    NotificationRouteCategory.OPS_ALERT: (
+        "服务运维告警",
+        "当前服务器的离线异常、健康告警与任务报错通知（默认关闭，不继承全局）",
+    ),
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE: (
+        "账号生命周期与管理审计",
+        "本服账号过期封禁、删号与管理员操作审计（默认跟随全局，可按服覆盖）",
+    ),
+}
+
+# 媒体服务器（Emby / Jellyfin）共享的单服通知类别标题与说明
+_MEDIA_SERVER_ROUTE_CATEGORY_LABELS: dict[
+    NotificationRouteCategory, tuple[str, str]
+] = {
+    NotificationRouteCategory.MEDIA_LIBRARY: (
+        "媒体入库通知",
+        "新片与剧集入库播报（默认关闭，可按需勾选媒体删除）",
+    ),
+    NotificationRouteCategory.OPS_ALERT: (
+        "媒体服运维告警",
+        "接口离线与恢复、异常登录风控、账号锁定、计划任务/字幕异常、翻译报错与策略同步摘要（默认关闭）",
+    ),
+    NotificationRouteCategory.ACCOUNT_LIFECYCLE: (
+        "账号生命周期与管理审计",
+        "本服账号过期封禁、删号与管理员操作审计（默认跟随全局，可按服覆盖）",
+    ),
+}
+
+# 按服务器类型定制的单服「通知」页签类别标题与说明
+SERVER_TYPE_ROUTE_CATEGORY_LABELS: dict[
+    str, dict[NotificationRouteCategory, tuple[str, str]]
+] = {
+    "emby": _MEDIA_SERVER_ROUTE_CATEGORY_LABELS,
+    "jellyfin": _MEDIA_SERVER_ROUTE_CATEGORY_LABELS,
+    "sonarr": {
+        NotificationRouteCategory.MEDIA_LIBRARY: (
+            "剧集订阅与下载动态",
+            "新增剧集订阅与下载完成导入通知（默认关闭，可按需勾选抓取、重命名或删除）",
+        ),
+        NotificationRouteCategory.MEDIA_REQUEST: (
+            "剧集求片审核",
+            "指向本实例的剧集求片审核卡片与审批状态同步（默认关闭）",
+        ),
+        NotificationRouteCategory.OPS_ALERT: (
+            "服务运维告警",
+            "接口连接异常与恢复、健康检查告警、导入需人工处理及 MKV/NFO 后处理异常（默认关闭）",
+        ),
+    },
+    "radarr": {
+        NotificationRouteCategory.MEDIA_LIBRARY: (
+            "电影订阅与下载动态",
+            "新增电影订阅与下载完成导入通知（默认关闭，可按需勾选抓取、重命名或删除）",
+        ),
+        NotificationRouteCategory.MEDIA_REQUEST: (
+            "电影求片审核",
+            "指向本实例的电影求片审核卡片与审批状态同步（默认关闭）",
+        ),
+        NotificationRouteCategory.OPS_ALERT: (
+            "服务运维告警",
+            "接口连接异常与恢复、健康检查告警、导入需人工处理及 MKV/NFO 后处理异常（默认关闭）",
+        ),
+    },
+    "qbittorrent": {
+        NotificationRouteCategory.OPS_ALERT: (
+            "下载器运维告警",
+            "下载器离线与恢复、做种分享率与限速规则执行失败告警（默认关闭）",
+        ),
+    },
+}
+
+
+def get_server_route_category_label(
+    server_type: str | None, category: NotificationRouteCategory
+) -> tuple[str, str]:
+    """根据服务器类型与路由类别返回定制的展示标题与说明。
+
+    Args:
+        server_type: 服务器类型字符串（如 emby/jellyfin/sonarr/radarr/qbittorrent）。
+        category: 通知路由类别枚举。
+
+    Returns:
+        ``(标题, 说明)`` 二元组；未命中按类型定制文案时回退到单服通用兜底文案。
+    """
+    normalized_type = str(server_type or "").lower()
+    type_labels = SERVER_TYPE_ROUTE_CATEGORY_LABELS.get(normalized_type)
+    if type_labels and category in type_labels:
+        return type_labels[category]
+    return SERVER_ROUTE_CATEGORY_LABELS.get(category, ROUTE_CATEGORY_LABELS[category])
+
+
+# 默认关闭、需用户在对应服务器路由白名单中主动勾选启用的可选事件中文标题
 OPTIONAL_EVENT_LABELS: dict[NotificationEvent, str] = {
-    NotificationEvent.SONARR_GRAB: "Sonarr 抓取种子 (Grab)",
-    NotificationEvent.SONARR_RENAME: "Sonarr 文件重命名 (Rename)",
-    NotificationEvent.SONARR_DELETE: "Sonarr 剧集/文件删除 (Delete)",
-    NotificationEvent.RADARR_GRAB: "Radarr 抓取种子 (Grab)",
-    NotificationEvent.RADARR_RENAME: "Radarr 文件重命名 (Rename)",
-    NotificationEvent.RADARR_DELETE: "Radarr 电影/文件删除 (Delete)",
-    NotificationEvent.MEDIA_LIBRARY_DELETED: "Emby/Jellyfin 媒体删除",
+    NotificationEvent.SONARR_GRAB: "抓取种子",
+    NotificationEvent.SONARR_RENAME: "文件重命名",
+    NotificationEvent.SONARR_DELETE: "剧集/文件删除",
+    NotificationEvent.RADARR_GRAB: "抓取种子",
+    NotificationEvent.RADARR_RENAME: "文件重命名",
+    NotificationEvent.RADARR_DELETE: "电影/文件删除",
+    NotificationEvent.MEDIA_LIBRARY_DELETED: "媒体删除",
 }
 
-# 允许路由到管理员私聊组 (admin_dm_group) 的全局类别集合
+# 可选事件适用的服务器类型映射，用于单服通知页签精确筛选展示
+OPTIONAL_EVENT_SERVER_TYPES: dict[NotificationEvent, tuple[str, ...]] = {
+    NotificationEvent.SONARR_GRAB: ("sonarr",),
+    NotificationEvent.SONARR_RENAME: ("sonarr",),
+    NotificationEvent.SONARR_DELETE: ("sonarr",),
+    NotificationEvent.RADARR_GRAB: ("radarr",),
+    NotificationEvent.RADARR_RENAME: ("radarr",),
+    NotificationEvent.RADARR_DELETE: ("radarr",),
+    NotificationEvent.MEDIA_LIBRARY_DELETED: ("emby", "jellyfin"),
+}
+
+# 允许路由到管理员私聊组 (admin_dm_group) 的路由类别集合（全局与单服运维/审计均支持）
 ADMIN_DM_ALLOWED_CATEGORIES: frozenset[NotificationRouteCategory] = frozenset(
     {
         NotificationRouteCategory.OPS_ALERT,
         NotificationRouteCategory.ACCOUNT_LIFECYCLE,
+        NotificationRouteCategory.COMMUNITY_VERIFICATION,
+        NotificationRouteCategory.COMMUNITY_LEAVE_AUDIT,
     }
 )

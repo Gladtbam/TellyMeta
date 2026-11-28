@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.events import (
     DEFAULT_GLOBAL_ROUTE_TARGETS,
+    SERVER_OWNED_ROUTE_CATEGORIES,
     USER_PREFERENCE_KEYS,
     NotificationRouteCategory,
     NotificationRouteScope,
@@ -141,7 +142,7 @@ class NotificationRouteRepository:
         category: NotificationRouteCategory | str,
         server_id: int | None = None,
     ) -> NotificationRoute | None:
-        """按分层优先级解析生效路由（单服覆盖优先，未配置覆盖时回退全局默认）
+        """按作用域解析生效路由（单服独立类别仅查单服规则不回退全局，其余支持单服覆盖回退全局）
 
         Args:
             category: 通知事件所属路由类别。
@@ -160,6 +161,9 @@ class NotificationRouteRepository:
             )
             if server_route is not None:
                 return server_route
+            # 单服独立类别（媒体入库、求片、服务器运维告警）严禁回退至全局默认路由
+            if normalized_cat in SERVER_OWNED_ROUTE_CATEGORIES:
+                return None
         return await self.get_route(
             scope_type=NotificationRouteScope.GLOBAL,
             category=normalized_cat,

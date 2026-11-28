@@ -12,6 +12,8 @@ from core.economy_policy import (
 from core.user_policy import DefaultUserPolicySpec
 from models.events import (
     ADMIN_DM_ALLOWED_CATEGORIES,
+    GLOBAL_ROUTE_CATEGORIES,
+    SERVER_ROUTE_CATEGORIES,
     NotificationRouteCategory,
     NotificationRouteScope,
     NotificationTargetType,
@@ -685,12 +687,18 @@ def _validate_route_target_params(
     target_topic_id: int | None,
 ) -> tuple[int | None, int | None]:
     """统一校验纯 Telegram 通知路由目标参数合法性并返回规范化后的 (chat_id, topic_id)。"""
-    if scope_type == NotificationRouteScope.GLOBAL and server_id is not None:
-        raise ValueError("全局路由规则不允许指定 server_id")
-    if scope_type == NotificationRouteScope.SERVER and (
-        server_id is None or server_id <= 0
-    ):
-        raise ValueError("单服覆盖路由规则必须提供有效的 server_id")
+    if scope_type == NotificationRouteScope.GLOBAL:
+        if server_id is not None:
+            raise ValueError("全局路由规则不允许指定 server_id")
+        if category not in GLOBAL_ROUTE_CATEGORIES:
+            raise ValueError(
+                f"类别 {category.value} 不设全局总开关，请在对应服务器「通知」页签独立配置"
+            )
+    if scope_type == NotificationRouteScope.SERVER:
+        if server_id is None or server_id <= 0:
+            raise ValueError("单服通知路由规则必须提供有效的 server_id")
+        if category not in SERVER_ROUTE_CATEGORIES:
+            raise ValueError(f"类别 {category.value} 仅支持全局路由配置")
 
     if target_type == NotificationTargetType.DISABLED:
         return None, None
@@ -711,11 +719,9 @@ def _validate_route_target_params(
             )
         return int(target_chat_id), None
     if target_type == NotificationTargetType.ADMIN_DM_GROUP:
-        if scope_type != NotificationRouteScope.GLOBAL:
-            raise ValueError("admin_dm_group 仅允许配置在全局默认路由中")
         if category not in ADMIN_DM_ALLOWED_CATEGORIES:
             raise ValueError(
-                "admin_dm_group 仅适用于 ops_alert 与 account_lifecycle 路由类别"
+                "admin_dm_group 仅适用于运维告警、账号审计与群组治理审计路由类别"
             )
         return None, None
     raise ValueError(f"不支持的目标类型: {target_type}")
@@ -727,6 +733,14 @@ class OptionalEventOptionDto(BaseModel):
     event: str
     label: str
     severity: str
+    server_types: list[str] = Field(default_factory=list)
+
+
+class RouteCategoryLabelOverrideDto(BaseModel):
+    """按服务器类型定制的路由类别展示标题与说明"""
+
+    label: str
+    description: str
 
 
 class RouteCategoryMetaDto(BaseModel):
@@ -737,7 +751,11 @@ class RouteCategoryMetaDto(BaseModel):
     description: str
     allowed_target_types: list[str]
     supports_escalate_admin_dm: bool = False
+    inherits_global: bool = False
     optional_events: list[OptionalEventOptionDto] = Field(default_factory=list)
+    server_type_labels: dict[str, RouteCategoryLabelOverrideDto] = Field(
+        default_factory=dict
+    )
 
 
 class NotificationRouteDto(BaseModel):
@@ -807,10 +825,10 @@ class NotificationRouteUpsertDto(BaseModel):
 
 
 class ServerCategoryRouteStateDto(BaseModel):
-    """单台服务器在指定类别下的有效解析态与覆盖来源详情"""
+    """单台服务器在指定类别下的有效解析态与来源详情"""
 
     category: str
-    source: Literal["server_override", "global", "legacy_topic"]
+    source: Literal["server_override", "global", "legacy_topic", "default_disabled"]
     is_override: bool
     effective: NotificationRouteDto
     override: NotificationRouteDto | None = None
@@ -818,7 +836,7 @@ class ServerCategoryRouteStateDto(BaseModel):
 
 
 class ServerRouteOverviewDto(BaseModel):
-    """单台服务器的通知覆盖路由总览"""
+    """单台服务器的通知路由总览"""
 
     server_id: int
     server_name: str
@@ -835,6 +853,7 @@ class NotificationRoutesResponse(BaseModel):
     server_routes: list[NotificationRouteDto]
     servers: list[ServerRouteOverviewDto]
     categories: list[RouteCategoryMetaDto]
+    server_categories: list[RouteCategoryMetaDto] = Field(default_factory=list)
     optional_events: dict[str, list[OptionalEventOptionDto]]
     telegram_chat_id_configured: bool
     telegram_chat_id: int | None = None
@@ -874,9 +893,15 @@ class NotificationRouteTestRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_candidate_target(self) -> NotificationRouteTestRequest:
-        """若传入候选目标参数，复用路由目标规则执行严格校验。"""
+        """校验测试路由的作用域约束，并在传入候选目标参数时复用路由目标规则严格校验。"""
         if self.server_id is not None and self.server_id <= 0:
             raise ValueError("server_id 必须为正整数")
+        if self.server_id is None and self.category not in GLOBAL_ROUTE_CATEGORIES:
+            raise ValueError(
+                f"类别 {self.category.value} 不设全局总开关，测试时请指定 server_id"
+            )
+        if self.server_id is not None and self.category not in SERVER_ROUTE_CATEGORIES:
+            raise ValueError(f"类别 {self.category.value} 仅支持全局路由测试")
         if self.target_type is not None:
             scope_type = (
                 NotificationRouteScope.SERVER

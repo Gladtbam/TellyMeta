@@ -34,8 +34,16 @@ from core.webapp_auth import validate_admin_access
 from models.events import (
     ADMIN_DM_ALLOWED_CATEGORIES,
     DEFAULT_GLOBAL_ROUTE_TARGETS,
+    GLOBAL_ROUTE_CATEGORIES,
     OPTIONAL_EVENT_LABELS,
+    OPTIONAL_EVENT_SERVER_TYPES,
     ROUTE_CATEGORY_LABELS,
+    SERVER_INHERITABLE_ROUTE_CATEGORIES,
+    SERVER_OWNED_ROUTE_CATEGORIES,
+    SERVER_ROUTE_CATEGORIES,
+    SERVER_ROUTE_CATEGORY_LABELS,
+    SERVER_TYPE_ROUTE_CATEGORIES,
+    SERVER_TYPE_ROUTE_CATEGORY_LABELS,
     NotificationRouteCategory,
     NotificationRouteScope,
     NotificationTargetType,
@@ -67,6 +75,7 @@ from models.schemas import (
     OptionalEventOptionDto,
     PointsConfigUpdateDto,
     PolicyConfigUpdateDto,
+    RouteCategoryLabelOverrideDto,
     RouteCategoryMetaDto,
     ServerCategoryRouteStateDto,
     ServerCreate,
@@ -506,17 +515,10 @@ async def get_topics(request: Request, session: AsyncSession = Depends(get_db)):
 # --- Notification Routing, Test & Ops Alert APIs ---
 
 _GLOBAL_ROUTE_CATEGORY_ORDER: tuple[NotificationRouteCategory, ...] = (
-    NotificationRouteCategory.MEDIA_LIBRARY,
-    NotificationRouteCategory.MEDIA_REQUEST,
-    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
-    NotificationRouteCategory.OPS_ALERT,
-    NotificationRouteCategory.COMMUNITY,
+    GLOBAL_ROUTE_CATEGORIES
 )
 _SERVER_ROUTE_CATEGORY_ORDER: tuple[NotificationRouteCategory, ...] = (
-    NotificationRouteCategory.MEDIA_LIBRARY,
-    NotificationRouteCategory.MEDIA_REQUEST,
-    NotificationRouteCategory.ACCOUNT_LIFECYCLE,
-    NotificationRouteCategory.OPS_ALERT,
+    SERVER_ROUTE_CATEGORIES
 )
 
 
@@ -604,7 +606,29 @@ def _default_global_route_dto(
         scope_type="global",
         server_id=None,
         category=category.value,
-        target_type=DEFAULT_GLOBAL_ROUTE_TARGETS[category].value,
+        target_type=DEFAULT_GLOBAL_ROUTE_TARGETS.get(
+            category, NotificationTargetType.DISABLED
+        ).value,
+        target_chat_id=None,
+        target_topic_id=None,
+        escalate_admin_dm=False,
+        enabled_events=[],
+        updated_at=None,
+    )
+
+
+def _default_server_disabled_route_dto(
+    *,
+    server_id: int,
+    category: NotificationRouteCategory,
+) -> NotificationRouteDto:
+    """当单服独立类别尚未配置任何路由时，生成默认关闭态 (disabled) 展示 DTO。"""
+    return NotificationRouteDto(
+        id=None,
+        scope_type="server",
+        server_id=server_id,
+        category=category.value,
+        target_type=NotificationTargetType.DISABLED.value,
         target_chat_id=None,
         target_topic_id=None,
         escalate_admin_dm=False,
@@ -644,9 +668,14 @@ def _legacy_topic_to_route_dto(
 
 
 def _build_optional_events_catalog() -> dict[str, list[OptionalEventOptionDto]]:
-    """构建按路由类别分组的默认关闭可选事件元数据字典。"""
+    """构建按路由类别分组的默认关闭可选事件元数据字典（含适用服务器类型标识）。"""
     catalog: dict[str, list[OptionalEventOptionDto]] = {}
-    for category in _GLOBAL_ROUTE_CATEGORY_ORDER:
+    all_categories = list(_GLOBAL_ROUTE_CATEGORY_ORDER) + [
+        cat
+        for cat in _SERVER_ROUTE_CATEGORY_ORDER
+        if cat not in _GLOBAL_ROUTE_CATEGORY_ORDER
+    ]
+    for category in all_categories:
         options: list[OptionalEventOptionDto] = []
         for event in get_optional_events_for_category(category):
             spec = get_event_spec(event)
@@ -655,6 +684,7 @@ def _build_optional_events_catalog() -> dict[str, list[OptionalEventOptionDto]]:
                     event=event.value,
                     label=OPTIONAL_EVENT_LABELS.get(event, event.value),
                     severity=spec.severity.value,
+                    server_types=list(OPTIONAL_EVENT_SERVER_TYPES.get(event, ())),
                 )
             )
         catalog[category.value] = options
@@ -664,7 +694,7 @@ def _build_optional_events_catalog() -> dict[str, list[OptionalEventOptionDto]]:
 def _build_category_metas(
     optional_events: dict[str, list[OptionalEventOptionDto]],
 ) -> list[RouteCategoryMetaDto]:
-    """生成 5 大路由类别的展示标题、说明与允许目标列表。"""
+    """生成全局通知路由矩阵类别的展示标题、说明与允许目标列表。"""
     base_targets = [
         NotificationTargetType.DISABLED.value,
         NotificationTargetType.MAIN_CHAT.value,
@@ -686,7 +716,50 @@ def _build_category_metas(
                 supports_escalate_admin_dm=(
                     category == NotificationRouteCategory.OPS_ALERT
                 ),
+                inherits_global=False,
                 optional_events=optional_events.get(category.value, []),
+            )
+        )
+    return metas
+
+
+def _build_server_category_metas(
+    optional_events: dict[str, list[OptionalEventOptionDto]],
+) -> list[RouteCategoryMetaDto]:
+    """生成单服「通知」页签各路由类别的元数据（含按服务器类型定制的标题/说明、允许目标、高危抄送与是否继承全局标识）。"""
+    base_targets = [
+        NotificationTargetType.DISABLED.value,
+        NotificationTargetType.MAIN_CHAT.value,
+        NotificationTargetType.FORUM_TOPIC.value,
+        NotificationTargetType.CHAT_OR_CHANNEL.value,
+    ]
+    metas: list[RouteCategoryMetaDto] = []
+    for category in _SERVER_ROUTE_CATEGORY_ORDER:
+        label, desc = SERVER_ROUTE_CATEGORY_LABELS.get(
+            category, ROUTE_CATEGORY_LABELS[category]
+        )
+        allowed_targets = list(base_targets)
+        if category in ADMIN_DM_ALLOWED_CATEGORIES:
+            allowed_targets.append(NotificationTargetType.ADMIN_DM_GROUP.value)
+        # 收集当前路由类别在各服务器类型下的定制标题与说明
+        per_type_labels = {
+            srv_type: RouteCategoryLabelOverrideDto(label=t_label, description=t_desc)
+            for srv_type, cat_map in SERVER_TYPE_ROUTE_CATEGORY_LABELS.items()
+            if category in cat_map
+            for t_label, t_desc in (cat_map[category],)
+        }
+        metas.append(
+            RouteCategoryMetaDto(
+                category=category.value,
+                label=label,
+                description=desc,
+                allowed_target_types=allowed_targets,
+                supports_escalate_admin_dm=(
+                    category == NotificationRouteCategory.OPS_ALERT
+                ),
+                inherits_global=(category in SERVER_INHERITABLE_ROUTE_CATEGORIES),
+                optional_events=optional_events.get(category.value, []),
+                server_type_labels=per_type_labels,
             )
         )
     return metas
@@ -700,7 +773,7 @@ def _build_category_metas(
 async def get_notification_routes(
     session: AsyncSession = Depends(get_db),
 ) -> NotificationRoutesResponse:
-    """获取全局通知路由矩阵、单服覆盖及遗留话题生效解析视图。"""
+    """获取全局通知路由矩阵、各服务器独立通知路由及生效解析视图。"""
     route_repo = NotificationRouteRepository(session)
     server_repo = ServerRepository(session)
 
@@ -728,7 +801,10 @@ async def get_notification_routes(
     server_overviews: list[ServerRouteOverviewDto] = []
     for srv in servers:
         categories_state: dict[str, ServerCategoryRouteStateDto] = {}
-        for cat in _SERVER_ROUTE_CATEGORY_ORDER:
+        applicable_cats = SERVER_TYPE_ROUTE_CATEGORIES.get(
+            str(srv.server_type), _SERVER_ROUTE_CATEGORY_ORDER
+        )
+        for cat in applicable_cats:
             legacy_topic: int | None = None
             if cat == NotificationRouteCategory.MEDIA_LIBRARY and srv.notify_topic_id:
                 legacy_topic = int(srv.notify_topic_id)
@@ -739,7 +815,7 @@ async def get_notification_routes(
                 legacy_topic = int(srv.request_notify_topic_id)
 
             override = server_overrides.get((srv.id, cat.value))
-            global_dto = global_lookup[cat.value]
+            global_dto = global_lookup.get(cat.value)
             source, chosen = resolve_server_route_precedence(
                 server_override=override,
                 global_route=global_dto,
@@ -768,12 +844,24 @@ async def get_notification_routes(
                     override=None,
                     legacy_topic_id=legacy_topic,
                 )
+            elif source == "default_disabled":
+                categories_state[cat.value] = ServerCategoryRouteStateDto(
+                    category=cat.value,
+                    source="default_disabled",
+                    is_override=False,
+                    effective=_default_server_disabled_route_dto(
+                        server_id=srv.id,
+                        category=cat,
+                    ),
+                    override=None,
+                    legacy_topic_id=legacy_topic,
+                )
             else:
                 categories_state[cat.value] = ServerCategoryRouteStateDto(
                     category=cat.value,
                     source="global",
                     is_override=False,
-                    effective=chosen or global_dto,
+                    effective=chosen or global_dto or _default_global_route_dto(cat),
                     override=None,
                     legacy_topic_id=legacy_topic,
                 )
@@ -796,6 +884,7 @@ async def get_notification_routes(
         server_routes=server_route_dtos,
         servers=server_overviews,
         categories=_build_category_metas(optional_events),
+        server_categories=_build_server_category_metas(optional_events),
         optional_events=optional_events,
         telegram_chat_id_configured=bool(configured_chat_id),
         telegram_chat_id=configured_chat_id if configured_chat_id else None,
@@ -876,12 +965,22 @@ async def delete_server_notification_route(
             if isinstance(client_map, dict) and server_id in client_map:
                 client_map[server_id].request_notify_topic_id = None
 
+    if category in SERVER_OWNED_ROUTE_CATEGORIES:
+        msg = (
+            "已清除本服通知配置，恢复默认关闭状态"
+            if (deleted or legacy_cleared)
+            else "该服务器当前未配置此类别的独立通知"
+        )
+    else:
+        msg = (
+            "已清除单服覆盖，恢复继承全局默认路由"
+            if (deleted or legacy_cleared)
+            else "该服务器当前未配置此类别的独立覆盖路由"
+        )
     return NotificationRouteDeleteResponse(
         success=True,
         deleted=deleted,
-        message="已清除单服覆盖，恢复继承全局默认路由"
-        if (deleted or legacy_cleared)
-        else "该服务器当前未配置此类别的独立覆盖路由",
+        message=msg,
     )
 
 
@@ -1656,13 +1755,22 @@ async def rebuild_server_metadata(
     if not client:
         raise HTTPException(status_code=500, detail="客户端未连接")
 
-    # 添加后台任务
+    # 添加后台任务（传入 server_id 以遵循该 Arr 实例的独立运维告警路由）
     if isinstance(client, SonarrClient):
         background_tasks.add_task(
-            rebuild_sonarr_metadata_task, client, tmdb_client, tvdb_client
+            rebuild_sonarr_metadata_task,
+            client,
+            tmdb_client,
+            tvdb_client,
+            server_id=server_id,
         )
     elif isinstance(client, RadarrClient):
-        background_tasks.add_task(rebuild_radarr_metadata_task, client, tmdb_client)
+        background_tasks.add_task(
+            rebuild_radarr_metadata_task,
+            client,
+            tmdb_client,
+            server_id=server_id,
+        )
 
     return {
         "success": True,

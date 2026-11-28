@@ -595,50 +595,19 @@
                     </div>
                     <span class="item-arrow">›</span>
                 </div>
-            </div>
-        </div>
-
-        <div class="section-title">通知路由矩阵</div>
-        <div class="section">
-            <div class="section-hint" id="route-main-chat-hint" style="display:none; color:var(--destructive-text-color);">
-                ⚠️ 当前未配置主群 <code>telegram_chat_id</code>，<code>main_chat</code> 与未指定群组 ID 的话题路由将无法实际投递。
-            </div>
-            <div class="card" id="notification-routes-matrix">
-                <div class="state-text">正在加载通知路由矩阵...</div>
-            </div>
-            <div class="section-hint">
-                说明：每类通知支持主群、论坛话题、独立群组/频道与（运维/审计）管理员私聊；单服可在「媒体服务器 → 高级」单独覆盖或禁用。
-            </div>
-        </div>
-
-        <div class="section-title">近 30 天运维告警</div>
-        <div class="section">
-            <div class="card" style="padding:12px 16px; margin-bottom:10px;">
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
-                    <select id="ops-log-filter-severity" class="form-select" onchange="loadOpsLogs(0)">
-                        <option value="">全部级别</option>
-                        <option value="critical">严重 (critical)</option>
-                        <option value="warning">警告 (warning)</option>
-                        <option value="info">信息 (info)</option>
-                    </select>
-                    <select id="ops-log-filter-server" class="form-select" onchange="loadOpsLogs(0)">
-                        <option value="">全部服务器</option>
-                    </select>
+                <div class="item" style="cursor:pointer;" onclick="openNotificationRoutesModal()">
+                    <div class="item-content">
+                        <span class="item-title">通知路由矩阵</span>
+                        <span class="item-subtitle" id="notification-routes-summary">加载中...</span>
+                    </div>
+                    <span class="item-arrow">›</span>
                 </div>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <input type="text" id="ops-log-filter-event" class="form-input" placeholder="事件标识筛选（如 external_server_error）"
-                        style="font-size:14px;">
-                    <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="loadOpsLogs(0)">刷新</button>
-                </div>
-            </div>
-            <div class="card" id="ops-logs-list">
-                <div class="state-text">正在加载运维告警...</div>
-            </div>
-            <div id="ops-logs-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding:0 4px;">
-                <span class="item-subtitle" id="ops-logs-total" style="margin-top:0;">共 0 条</span>
-                <div style="display:flex; gap:8px;">
-                    <button type="button" class="btn btn-sm" id="ops-logs-prev" onclick="changeOpsLogsPage(-1)">上一页</button>
-                    <button type="button" class="btn btn-sm" id="ops-logs-next" onclick="changeOpsLogsPage(1)">下一页</button>
+                <div class="item" style="cursor:pointer;" onclick="openOpsLogsModal()">
+                    <div class="item-content">
+                        <span class="item-title">近 30 天运维告警</span>
+                        <span class="item-subtitle" id="ops-logs-summary">点击查看近 30 天告警记录</span>
+                    </div>
+                    <span class="item-arrow">›</span>
                 </div>
             </div>
         </div>
@@ -1067,6 +1036,71 @@
         </div>
     </div>
 
+    <!-- 全局通知路由矩阵弹窗 -->
+    <div class="modal-overlay" id="notification-routes-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>通知路由矩阵</span>
+                <span class="modal-close" onclick="closeModal('notification-routes-modal')">关闭</span>
+            </div>
+            <div class="modal-scroll-body">
+                <div class="modal-stack">
+                    <div class="section-hint" id="route-main-chat-hint" style="display:none; margin:0; color:var(--destructive-text-color);">
+                        ⚠️ 当前未配置主群 ID，选择「主群」或未指定群组 ID 的论坛话题将无法实际投递。
+                    </div>
+                    <div class="section-hint" style="margin:0;">
+                        媒体入库与 Arr 动态、求片审核以及媒体服/Arr/qB 运维告警不设全局总开关，默认关闭；请点击对应服务器进入「通知」页签单独配置。
+                    </div>
+                    <div class="card" id="notification-routes-matrix" style="border:1px solid var(--secondary-bg-color);">
+                        <div class="state-text">正在加载通知路由矩阵...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 近 30 天运维告警弹窗 -->
+    <div class="modal-overlay" id="ops-logs-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span>近 30 天运维告警</span>
+                <span class="modal-close" onclick="closeModal('ops-logs-modal')">关闭</span>
+            </div>
+            <div class="modal-scroll-body">
+                <div class="modal-stack">
+                    <div class="card" style="padding:12px 16px; border:1px solid var(--secondary-bg-color);">
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                            <select id="ops-log-filter-severity" class="form-select" onchange="loadOpsLogs(0)">
+                                <option value="">全部级别</option>
+                                <option value="critical">严重</option>
+                                <option value="warning">警告</option>
+                                <option value="info">信息</option>
+                            </select>
+                            <select id="ops-log-filter-server" class="form-select" onchange="loadOpsLogs(0)">
+                                <option value="">全部服务器</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; gap:8px; margin-top:8px;">
+                            <input type="text" id="ops-log-filter-event" class="form-input" placeholder="按事件类型筛选"
+                                style="font-size:14px;">
+                            <button type="button" class="btn btn-sm" style="white-space:nowrap;" onclick="loadOpsLogs(0)">刷新</button>
+                        </div>
+                    </div>
+                    <div class="card" id="ops-logs-list" style="border:1px solid var(--secondary-bg-color);">
+                        <div class="state-text">点击展开后自动加载运维告警...</div>
+                    </div>
+                    <div id="ops-logs-pagination" style="display:flex; justify-content:space-between; align-items:center; padding:0 4px;">
+                        <span class="item-subtitle" id="ops-logs-total" style="margin-top:0;">共 0 条</span>
+                        <div style="display:flex; gap:8px;">
+                            <button type="button" class="btn btn-sm" id="ops-logs-prev" onclick="changeOpsLogsPage(-1)">上一页</button>
+                            <button type="button" class="btn btn-sm" id="ops-logs-next" onclick="changeOpsLogsPage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="server-modal">
         <div class="modal">
             <div class="modal-header">
@@ -1078,7 +1112,8 @@
                 <div class="tab active" onclick="switchTab('basic')">基础</div>
                 <div class="tab" onclick="switchTab('policy')" id="tab-policy">策略</div>
                 <div class="tab" onclick="switchTab('paths')" id="tab-paths">路径</div>
-                <div class="tab" onclick="switchTab('advanced')">高级</div>
+                <div class="tab" onclick="switchTab('notify')" id="tab-notify">通知</div>
+                <div class="tab" onclick="switchTab('advanced')" id="tab-advanced">高级</div>
             </div>
 
             <form id="server-form" onsubmit="handleServerSubmit(event)" style="overflow-y:auto; flex:1;">
@@ -1378,14 +1413,17 @@
                     <button type="button" class="btn btn-sm" onclick="addPathMapping()">+ 添加路径映射</button>
                 </div>
 
-                <div id="tab-content-advanced" class="tab-content">
+                <div id="tab-content-notify" class="tab-content">
                     <div id="srv-route-overrides-section" style="margin-bottom:15px;">
-                        <div class="form-label">单服通知覆盖路由</div>
+                        <div class="form-label">本服通知路由配置</div>
                         <div class="section-hint" id="srv-route-new-hint" style="margin:0 0 10px 0; display:none;">
-                            新增服务器保存后，可在编辑弹窗的「高级」页签配置单服覆盖路由（未覆盖时继承全局通知矩阵）。
+                            新增服务器保存后，可在编辑弹窗的「通知」页签单独配置本服通知路由（默认关闭通知）。
                         </div>
                         <div id="srv-route-overrides-list"></div>
                     </div>
+                </div>
+
+                <div id="tab-content-advanced" class="tab-content">
                     <div class="item" id="media-llm-group" style="display:none; padding:0; border:none; background:transparent; margin-bottom:15px;">
                         <span>LLM 元数据翻译</span>
                         <label class="switch"><input type="checkbox" id="srv-llm-translate"><span class="slider"></span></label>
@@ -1634,12 +1672,15 @@
             if (routes.status === 'fulfilled') {
                 notificationRoutesData = routes.value;
                 renderNotificationRoutesMatrix();
+                updateNotificationRoutesSummary();
             } else {
                 const matrixEl = document.getElementById('notification-routes-matrix');
                 if (matrixEl) matrixEl.innerHTML = '<div class="state-text">通知路由矩阵加载失败，请刷新重试</div>';
+                const summaryEl = document.getElementById('notification-routes-summary');
+                if (summaryEl) summaryEl.textContent = '加载失败';
             }
             populateOpsServerFilter();
-            loadOpsLogs(opsLogsState.offset);
+            loadOpsLogsSummary();
         }
 
         // 积分细粒度子开关元数据定义，供状态刷新与开关联动复用
@@ -2218,9 +2259,14 @@
             const showWebhook = !isQb && isEdit;
             document.getElementById('qb-fields-group').style.display = isQb ? 'block' : 'none';
             document.getElementById('arr-qb-group').style.display = isArr ? 'block' : 'none';
-            document.getElementById('srv-tabs').style.display = isQb ? 'none' : 'flex';
+            // 所有服务器类型（含 qBittorrent）均展示页签以支持独立的「通知」页签
+            document.getElementById('srv-tabs').style.display = 'flex';
             document.getElementById('tab-policy').style.display = isMedia ? 'block' : 'none';
             document.getElementById('tab-paths').style.display = isArr ? 'block' : 'none';
+            const notifyTab = document.getElementById('tab-notify');
+            if (notifyTab) notifyTab.style.display = 'block';
+            const advTab = document.getElementById('tab-advanced');
+            if (advTab) advTab.style.display = (!isQb || isEdit) ? 'block' : 'none';
             document.getElementById('arr-nfo-group').style.display = isArr ? 'flex' : 'none';
             if (document.getElementById('srv-nsfw-btn')) {
                 document.getElementById('srv-nsfw-btn').style.display = (isMedia && isEdit) ? 'inline-block' : 'none';
@@ -2240,7 +2286,8 @@
                     ? '最大并发会话数 (MaxActiveSessions, 0=不限)'
                     : '最大并发会话数 (SimultaneousStreamLimit, 0=不限)';
             }
-            if (isQb) {
+            const activeTabEl = document.querySelector('#srv-tabs .tab.active');
+            if (activeTabEl && activeTabEl.style.display === 'none') {
                 switchTab('basic');
             }
             updateServerPolicyFields();
@@ -2955,22 +3002,94 @@
             defaultPolicySectionEl.addEventListener('input', updateServerPolicyFields);
         }
 
-        // --- 通知路由矩阵、单服覆盖与近 30 天运维告警 ---
+        // --- 通知路由矩阵、单服通知页签与近 30 天运维告警 ---
         const GLOBAL_ROUTE_CATEGORY_DEFAULTS = [
-            { category: 'media_library', label: '媒体入库与 Arr 动态' },
-            { category: 'media_request', label: '求片审核卡片' },
             { category: 'account_lifecycle', label: '账号生命周期与管理审计' },
-            { category: 'ops_alert', label: '系统运维告警' },
-            { category: 'community', label: '社区积分与群组治理' }
+            { category: 'ops_alert', label: '系统全局运维告警' },
+            { category: 'community_score', label: '每日发言积分结算榜单' },
+            { category: 'community_verification', label: '入群验证拒审审计' },
+            { category: 'community_leave_audit', label: '退群自动清理审计' }
         ];
 
-        const ROUTE_TARGET_LABELS = {
-            disabled: '禁用 (disabled)',
-            main_chat: '主群 (main_chat)',
-            forum_topic: '论坛话题 (forum_topic)',
-            chat_or_channel: '独立群组 / 频道 (chat_or_channel)',
-            admin_dm_group: '管理员私聊组 (admin_dm_group)'
+        const SERVER_TYPE_ROUTE_CATS = {
+            emby: ['media_library', 'ops_alert', 'account_lifecycle'],
+            jellyfin: ['media_library', 'ops_alert', 'account_lifecycle'],
+            sonarr: ['media_library', 'media_request', 'ops_alert'],
+            radarr: ['media_library', 'media_request', 'ops_alert'],
+            qbittorrent: ['ops_alert']
         };
+
+        const SERVER_BIND_TYPE_MAP = {
+            media_library: 'notify',
+            media_request: 'request',
+            ops_alert: 'ops',
+            account_lifecycle: 'lifecycle'
+        };
+
+        const ROUTE_TARGET_LABELS = {
+            disabled: '关闭通知',
+            main_chat: '主群',
+            forum_topic: '论坛话题',
+            chat_or_channel: '独立群组 / 频道',
+            admin_dm_group: '管理员私聊组'
+        };
+
+        const OPS_SEVERITY_LABELS = {
+            critical: '严重',
+            warning: '警告',
+            info: '信息'
+        };
+
+        const OPS_DELIVERY_STATUS_LABELS = {
+            sent: '已送达',
+            partial: '部分送达',
+            failed: '投递失败',
+            suppressed_disabled: '通知已关闭',
+            no_targets: '无有效目标'
+        };
+
+        /**
+         * 更新主设置页「通知路由矩阵」入口行的摘要文案（展示全局启用数与单服独立提示）。
+         */
+        function updateNotificationRoutesSummary() {
+            const summaryEl = document.getElementById('notification-routes-summary');
+            if (!summaryEl || !notificationRoutesData) return;
+            const globalRoutes = notificationRoutesData.global_routes || [];
+            const enabledCount = globalRoutes.filter(r => r.target_type && r.target_type !== 'disabled').length;
+            summaryEl.textContent = `全局已启用 ${enabledCount}/${globalRoutes.length} 项 · 单服通知请在上方服务器配置`;
+        }
+
+        /**
+         * 打开「通知路由矩阵」弹窗并确保路由表单处于最新状态。
+         */
+        function openNotificationRoutesModal() {
+            renderNotificationRoutesMatrix();
+            openModal('notification-routes-modal');
+        }
+
+        /**
+         * 打开「近 30 天运维告警」弹窗并刷新首屏告警记录。
+         */
+        function openOpsLogsModal() {
+            populateOpsServerFilter();
+            openModal('ops-logs-modal');
+            loadOpsLogs(0);
+        }
+
+        /**
+         * 页面初始化时轻量拉取近 30 天运维告警总数，用于填充主设置页紧凑入口摘要。
+         */
+        async function loadOpsLogsSummary() {
+            const summaryEl = document.getElementById('ops-logs-summary');
+            if (!summaryEl) return;
+            try {
+                const data = await api('/notifications/ops_logs?limit=1&offset=0');
+                const total = Number(data?.total || 0);
+                summaryEl.textContent = total > 0 ? `近 30 天共 ${total} 条记录` : '近 30 天暂无运维告警';
+            } catch (_err) {
+                summaryEl.textContent = '点击查看近 30 天告警记录';
+            }
+        }
 
         /**
          * 从指定输入框解析可空整数值，用于提交可选 chat_id / topic_id。
@@ -2995,6 +3114,31 @@
             if (Number.isNaN(d.getTime())) return String(isoStr);
             const pad = (n) => String(n).padStart(2, '0');
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        /**
+         * 将后端返回的测试投递目标编码（如 admin_dm:123、forum_topic:-100:8）格式化为可读中文文案。
+         * @param {string} rawTarget 原始投递目标标识。
+         * @returns {string} 面向管理员展示的中文投递目标说明。
+         */
+        function formatDeliveredTarget(rawTarget) {
+            const text = String(rawTarget || '');
+            const parts = text.split(':');
+            const kind = parts[0];
+            if (kind === 'admin_dm') {
+                return parts[1] ? `管理员私聊 (${parts[1]})` : '管理员私聊';
+            }
+            if (kind === 'forum_topic') {
+                if (parts[1] && parts[2]) return `论坛话题 (${parts[1]} / #${parts[2]})`;
+                return '论坛话题';
+            }
+            if (kind === 'main_chat') {
+                return parts[1] ? `主群 (${parts[1]})` : '主群';
+            }
+            if (kind === 'chat_or_channel') {
+                return parts[1] ? `独立群组 / 频道 (${parts[1]})` : '独立群组 / 频道';
+            }
+            return ROUTE_TARGET_LABELS[text] || text;
         }
 
         /**
@@ -3037,8 +3181,8 @@
                 ` : '';
 
                 const escalateHtml = meta.supports_escalate_admin_dm ? `
-                    <div class="item" style="padding:6px 0 0 0; border:none; background:transparent;">
-                        <span style="font-size:13px; color:var(--hint-color);">高危故障额外抄送管理员私聊 (escalate_admin_dm)</span>
+                    <div class="item" id="route-global-${escapeHtml(cat)}-escalate-wrap" style="padding:6px 0 0 0; border:none; background:transparent;">
+                        <span style="font-size:13px; color:var(--hint-color);">高危故障额外抄送管理员私聊</span>
                         <label class="switch">
                             <input type="checkbox" id="route-global-${escapeHtml(cat)}-escalate" ${route.escalate_admin_dm ? 'checked' : ''}>
                             <span class="slider"></span>
@@ -3047,14 +3191,16 @@
                 ` : '';
 
                 const bindCmd = `/bind global ${cat}`;
+                const targetLabel = ROUTE_TARGET_LABELS[route.target_type] || route.target_type;
+                const badgeCls = route.target_type === 'disabled' ? 'badge-muted' : 'badge-info';
                 return `
                     <div class="route-card" data-global-route-cat="${escapeHtml(cat)}">
                         <div class="route-header">
                             <div>
-                                <div class="item-title" style="font-size:15px; font-weight:600;">${escapeHtml(meta.label)} <code style="font-size:12px;">${escapeHtml(cat)}</code></div>
+                                <div class="item-title" style="font-size:15px; font-weight:600;">${escapeHtml(meta.label)}</div>
                                 <div class="item-subtitle" style="font-size:12px;">${escapeHtml(meta.description)}</div>
                             </div>
-                            <span class="route-badge badge-info">${escapeHtml(route.target_type)}</span>
+                            <span class="route-badge ${badgeCls}">${escapeHtml(targetLabel)}</span>
                         </div>
                         <select class="form-select" id="route-global-${escapeHtml(cat)}-target-type" onchange="onGlobalRouteTargetChange('${escapeHtml(cat)}')">
                             ${optionsHtml}
@@ -3074,7 +3220,7 @@
                         ${escalateHtml}
                         ${eventsHtml}
                         <div>
-                            <code class="bind-code-chip" onclick="copyCommand('${escapeHtml(bindCmd)}')">📋 复制话题绑定指令：${escapeHtml(bindCmd)}</code>
+                            <span class="bind-code-chip" title="${escapeHtml(bindCmd)}" onclick="copyCommand('${escapeHtml(bindCmd)}')">📋 复制话题绑定指令</span>
                         </div>
                         <div class="route-actions">
                             <button type="button" class="btn btn-sm" style="background:var(--button-color); color:#fff;" onclick="saveGlobalRoute('${escapeHtml(cat)}')">保存</button>
@@ -3088,7 +3234,7 @@
         }
 
         /**
-         * 根据全局路由目标类型切换 target_chat_id / target_topic_id 输入框可见性。
+         * 根据全局路由目标类型切换目标参数与高危抄送开关的可见性。
          * @param {string} cat 路由类别标识。
          */
         function onGlobalRouteTargetChange(cat) {
@@ -3096,11 +3242,15 @@
             const paramsWrap = document.getElementById(`route-global-${cat}-params`);
             const chatWrap = document.getElementById(`route-global-${cat}-chat-wrap`);
             const topicWrap = document.getElementById(`route-global-${cat}-topic-wrap`);
+            const escalateWrap = document.getElementById(`route-global-${cat}-escalate-wrap`);
             const showChat = targetType === 'forum_topic' || targetType === 'chat_or_channel';
             const showTopic = targetType === 'forum_topic';
             if (paramsWrap) paramsWrap.style.display = showChat ? 'grid' : 'none';
             if (chatWrap) chatWrap.style.display = showChat ? 'block' : 'none';
             if (topicWrap) topicWrap.style.display = showTopic ? 'block' : 'none';
+            if (escalateWrap) {
+                escalateWrap.style.display = (targetType === 'disabled' || targetType === 'admin_dm_group') ? 'none' : 'flex';
+            }
         }
 
         /**
@@ -3137,6 +3287,7 @@
             const res = await api('/notification_routes', 'PUT', payload);
             notificationRoutesData = await api('/notification_routes');
             renderNotificationRoutesMatrix();
+            updateNotificationRoutesSummary();
             if (currentServerId) {
                 const srv = allServers.find(x => x.id === currentServerId);
                 if (srv) renderServerRouteOverrides(srv.id, srv.server_type);
@@ -3158,14 +3309,14 @@
                 escalate_admin_dm: payload.escalate_admin_dm
             });
             const targetsText = (res.delivered_targets || []).length
-                ? `\n投递目标：${res.delivered_targets.join(', ')}`
+                ? `\n投递目标：${res.delivered_targets.map(formatDeliveredTarget).join('、')}`
                 : '';
             const prefix = res.success ? '✅ ' : '⚠️ ';
             tg.showAlert(prefix + (res.message || '') + targetsText);
         }
 
         /**
-         * 在服务器弹窗「高级」页签渲染单服覆盖路由配置面板（支持继承全局/禁用/话题/群组频道与单服测试发送）。
+         * 在服务器弹窗「通知」页签渲染单服独立通知配置面板（媒体入库/求片/运维告警默认关闭，不继承全局；账号审计可继承或覆盖）。
          * @param {number|null} serverId 服务器 ID（新建模式为 null）。
          * @param {string} serverType 服务器类型（emby/jellyfin/sonarr/radarr/qbittorrent）。
          */
@@ -3183,23 +3334,69 @@
 
             const srvOverview = (notificationRoutesData?.servers || []).find(s => s.server_id === serverId);
             const metasByCat = {};
-            (notificationRoutesData?.categories || []).forEach(m => { metasByCat[m.category] = m; });
-            const allowedCats = ['sonarr', 'radarr'].includes(serverType)
-                ? ['media_library', 'media_request', 'ops_alert']
-                : ['media_library', 'media_request', 'account_lifecycle', 'ops_alert'];
+            const metaSource = (notificationRoutesData?.server_categories && notificationRoutesData.server_categories.length)
+                ? notificationRoutesData.server_categories
+                : (notificationRoutesData?.categories || []);
+            metaSource.forEach(m => { metasByCat[m.category] = m; });
+            const allowedCats = SERVER_TYPE_ROUTE_CATS[serverType] || ['ops_alert'];
 
             listEl.innerHTML = allowedCats.map(cat => {
                 const state = srvOverview?.categories?.[cat];
-                const meta = metasByCat[cat] || { label: cat, optional_events: [] };
-                const mode = state?.is_override ? (state.override?.target_type || 'disabled') : 'inherit';
-                const activeCfg = state?.is_override ? state.override : null;
-                const sourceText = state?.source === 'server_override'
-                    ? '<span class="route-badge badge-info">显式单服覆盖</span>'
-                    : (state?.source === 'legacy_topic'
-                        ? `<span class="route-badge badge-warning">回退遗留话题: ${escapeHtml(state.legacy_topic_id)}</span>`
-                        : '<span class="route-badge badge-muted">继承全局默认</span>');
+                const meta = metasByCat[cat] || {
+                    label: cat,
+                    description: '',
+                    allowed_target_types: ['disabled', 'main_chat', 'forum_topic', 'chat_or_channel'],
+                    supports_escalate_admin_dm: cat === 'ops_alert',
+                    inherits_global: cat === 'account_lifecycle',
+                    optional_events: []
+                };
+                const inheritsGlobal = Boolean(meta.inherits_global);
 
-                const optEvents = meta.optional_events || [];
+                let mode = 'disabled';
+                let activeCfg = null;
+                if (inheritsGlobal) {
+                    mode = state?.is_override ? (state.override?.target_type || 'disabled') : 'inherit';
+                    activeCfg = state?.is_override ? state.override : null;
+                } else if (state?.source === 'server_override') {
+                    mode = state.override?.target_type || 'disabled';
+                    activeCfg = state.override;
+                } else if (state?.source === 'legacy_topic') {
+                    mode = state.effective?.target_type || 'disabled';
+                    activeCfg = state.effective;
+                } else {
+                    mode = 'disabled';
+                    activeCfg = null;
+                }
+
+                let sourceText = '<span class="route-badge badge-muted">默认关闭</span>';
+                if (inheritsGlobal) {
+                    sourceText = state?.source === 'server_override'
+                        ? '<span class="route-badge badge-info">已单独配置</span>'
+                        : '<span class="route-badge badge-muted">跟随全局</span>';
+                } else if (state?.source === 'server_override' && mode !== 'disabled') {
+                    sourceText = `<span class="route-badge badge-success">${escapeHtml(ROUTE_TARGET_LABELS[mode] || mode)}</span>`;
+                } else if (state?.source === 'legacy_topic') {
+                    sourceText = `<span class="route-badge badge-warning">遗留话题: ${escapeHtml(state.legacy_topic_id)}</span>`;
+                } else if (state?.source === 'server_override' && mode === 'disabled') {
+                    sourceText = '<span class="route-badge badge-muted">已关闭</span>';
+                }
+
+                const allowedTargets = (meta.allowed_target_types && meta.allowed_target_types.length)
+                    ? meta.allowed_target_types
+                    : ['disabled', 'main_chat', 'forum_topic', 'chat_or_channel'];
+                const inheritOption = inheritsGlobal
+                    ? `<option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>跟随全局默认</option>`
+                    : '';
+                const targetOptionsHtml = inheritOption + allowedTargets.map(tt => {
+                    const selected = mode === tt ? 'selected' : '';
+                    return `<option value="${escapeHtml(tt)}" ${selected}>${escapeHtml(ROUTE_TARGET_LABELS[tt] || tt)}</option>`;
+                }).join('');
+
+                const rawOptEvents = meta.optional_events || [];
+                const optEvents = rawOptEvents.filter(ev => {
+                    const srvTypes = ev.server_types || [];
+                    return !srvTypes.length || srvTypes.includes(serverType);
+                });
                 const enabledSet = new Set(activeCfg?.enabled_events || []);
                 const eventsHtml = optEvents.length ? `
                     <div class="checkbox-group" id="srv-route-${escapeHtml(cat)}-events">
@@ -3212,30 +3409,45 @@
                     </div>
                 ` : '';
 
-                const bindType = cat === 'media_library' ? 'notify' : (cat === 'media_request' ? 'request' : null);
-                const bindHint = bindType ? `
-                    <div>
-                        <code class="bind-code-chip" onclick="copyCommand('/bind ${serverId} ${bindType}')">📋 话题快捷绑定：/bind ${serverId} ${bindType}</code>
+                const escalateHtml = meta.supports_escalate_admin_dm ? `
+                    <div class="item" id="srv-route-${escapeHtml(cat)}-escalate-wrap" style="padding:8px 0 0 0; border:none; background:transparent;">
+                        <span style="font-size:13px; color:var(--hint-color);">高危故障额外抄送管理员私聊</span>
+                        <label class="switch">
+                            <input type="checkbox" id="srv-route-${escapeHtml(cat)}-escalate" ${activeCfg?.escalate_admin_dm ? 'checked' : ''}>
+                            <span class="slider"></span>
+                        </label>
                     </div>
                 ` : '';
 
+                const bindType = SERVER_BIND_TYPE_MAP[cat] || null;
+                const srvBindCmd = bindType ? `/bind ${serverId} ${bindType}` : '';
+                const bindHint = bindType ? `
+                    <div>
+                        <span class="bind-code-chip" title="${escapeHtml(srvBindCmd)}" onclick="copyCommand('${escapeHtml(srvBindCmd)}')">📋 复制话题绑定指令</span>
+                    </div>
+                ` : '';
+
+                const typeCopy = meta.server_type_labels?.[serverType];
+                const displayLabel = typeCopy?.label || meta.label;
+                const displayDesc = typeCopy?.description || meta.description;
+                const saveBtnLabel = inheritsGlobal ? '保存覆盖' : '保存通知配置';
                 return `
-                    <div class="card" style="padding:12px; margin-bottom:10px; border:1px solid var(--secondary-bg-color);">
+                    <div class="card" style="padding:12px; margin-bottom:10px; border:1px solid var(--secondary-bg-color);" data-server-route-cat="${escapeHtml(cat)}">
                         <div class="route-header">
-                            <span style="font-size:14px; font-weight:600;">${escapeHtml(meta.label)}</span>
+                            <div>
+                                <div style="font-size:14px; font-weight:600;">${escapeHtml(displayLabel)}</div>
+                                ${displayDesc ? `<div class="item-subtitle" style="font-size:12px;">${escapeHtml(displayDesc)}</div>` : ''}
+                            </div>
                             ${sourceText}
                         </div>
                         <select class="form-select" id="srv-route-${escapeHtml(cat)}-mode" onchange="onServerRouteModeChange('${escapeHtml(cat)}')">
-                            <option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>跟随全局默认 (inherit)</option>
-                            <option value="disabled" ${mode === 'disabled' ? 'selected' : ''}>禁用该服此通知 (disabled)</option>
-                            <option value="forum_topic" ${mode === 'forum_topic' ? 'selected' : ''}>指定论坛话题 (forum_topic)</option>
-                            <option value="chat_or_channel" ${mode === 'chat_or_channel' ? 'selected' : ''}>独立群组 / 频道 (chat_or_channel)</option>
+                            ${targetOptionsHtml}
                         </select>
                         <div class="route-fields-grid" id="srv-route-${escapeHtml(cat)}-params">
                             <div id="srv-route-${escapeHtml(cat)}-chat-wrap">
                                 <label class="form-label">目标群组 / 频道 ID（负数）</label>
                                 <input type="number" class="form-input" id="srv-route-${escapeHtml(cat)}-chat-id"
-                                    value="${activeCfg?.target_chat_id ?? ''}" placeholder="如 -100123456">
+                                    value="${activeCfg?.target_chat_id ?? ''}" placeholder="如 -100123456（话题留空走主群）">
                             </div>
                             <div id="srv-route-${escapeHtml(cat)}-topic-wrap">
                                 <label class="form-label">论坛话题 ID（正整数）</label>
@@ -3243,10 +3455,11 @@
                                     value="${activeCfg?.target_topic_id ?? ''}" placeholder="正整数 Topic ID">
                             </div>
                         </div>
+                        ${escalateHtml}
                         ${eventsHtml}
                         ${bindHint}
                         <div class="route-actions">
-                            <button type="button" class="btn btn-sm" style="background:var(--button-color); color:#fff;" onclick="saveServerRouteOverride('${escapeHtml(cat)}')">保存覆盖</button>
+                            <button type="button" class="btn btn-sm" style="background:var(--button-color); color:#fff;" onclick="saveServerRouteOverride('${escapeHtml(cat)}')">${saveBtnLabel}</button>
                             <button type="button" class="btn btn-sm" onclick="testServerRoute('${escapeHtml(cat)}')">🧪 测试发送</button>
                         </div>
                     </div>
@@ -3257,30 +3470,36 @@
         }
 
         /**
-         * 同步单服覆盖路由模式下参数与可选事件复选框的显隐状态。
+         * 同步单服通知模式下参数、高危抄送开关与可选事件复选框的显隐状态。
          * @param {string} cat 路由类别标识。
          */
         function onServerRouteModeChange(cat) {
-            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'disabled';
             const paramsWrap = document.getElementById(`srv-route-${cat}-params`);
             const chatWrap = document.getElementById(`srv-route-${cat}-chat-wrap`);
             const topicWrap = document.getElementById(`srv-route-${cat}-topic-wrap`);
             const eventsWrap = document.getElementById(`srv-route-${cat}-events`);
+            const escalateWrap = document.getElementById(`srv-route-${cat}-escalate-wrap`);
             const showChat = mode === 'forum_topic' || mode === 'chat_or_channel';
             const showTopic = mode === 'forum_topic';
             if (paramsWrap) paramsWrap.style.display = showChat ? 'grid' : 'none';
             if (chatWrap) chatWrap.style.display = showChat ? 'block' : 'none';
             if (topicWrap) topicWrap.style.display = showTopic ? 'block' : 'none';
             if (eventsWrap) eventsWrap.style.display = (mode === 'inherit' || mode === 'disabled') ? 'none' : 'flex';
+            if (escalateWrap) {
+                escalateWrap.style.display = (mode === 'inherit' || mode === 'disabled' || mode === 'admin_dm_group')
+                    ? 'none'
+                    : 'flex';
+            }
         }
 
         /**
-         * 保存或清除单台服务器的指定类别覆盖路由；选择 inherit 时调用 DELETE 恢复全局继承。
+         * 保存或清除单台服务器的指定类别通知路由；选择 inherit 时调用 DELETE 恢复全局继承。
          * @param {string} cat 路由类别标识。
          */
         async function saveServerRouteOverride(cat) {
             if (!currentServerId) return;
-            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'disabled';
             let res;
             if (mode === 'inherit') {
                 res = await api(`/notification_routes/server/${currentServerId}/${encodeURIComponent(cat)}`, 'DELETE');
@@ -3288,6 +3507,7 @@
                 const enabledEvents = Array.from(
                     document.querySelectorAll(`#srv-route-${cat}-events input[data-route-event]:checked`)
                 ).map(el => el.getAttribute('data-route-event')).filter(Boolean);
+                const escalateEl = document.getElementById(`srv-route-${cat}-escalate`);
                 res = await api('/notification_routes', 'PUT', {
                     scope_type: 'server',
                     server_id: currentServerId,
@@ -3295,14 +3515,14 @@
                     target_type: mode,
                     target_chat_id: parseNullableInt(`srv-route-${cat}-chat-id`),
                     target_topic_id: parseNullableInt(`srv-route-${cat}-topic-id`),
-                    escalate_admin_dm: false,
+                    escalate_admin_dm: Boolean(escalateEl && escalateEl.checked),
                     enabled_events: enabledEvents
                 });
             }
             notificationRoutesData = await api('/notification_routes');
             const srv = allServers.find(x => x.id === currentServerId);
             renderServerRouteOverrides(currentServerId, srv?.server_type || 'emby');
-            tg.showAlert('✅ ' + (res.message || '单服路由已更新'));
+            tg.showAlert('✅ ' + (res.message || '单服通知路由已更新'));
         }
 
         /**
@@ -3311,16 +3531,18 @@
          */
         async function testServerRoute(cat) {
             if (!currentServerId) return;
-            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'inherit';
+            const mode = document.getElementById(`srv-route-${cat}-mode`)?.value || 'disabled';
             const body = { category: cat, server_id: currentServerId };
             if (mode !== 'inherit') {
+                const escalateEl = document.getElementById(`srv-route-${cat}-escalate`);
                 body.target_type = mode;
                 body.target_chat_id = parseNullableInt(`srv-route-${cat}-chat-id`);
                 body.target_topic_id = parseNullableInt(`srv-route-${cat}-topic-id`);
+                body.escalate_admin_dm = Boolean(escalateEl && escalateEl.checked);
             }
             const res = await api('/notifications/test', 'POST', body);
             const targetsText = (res.delivered_targets || []).length
-                ? `\n投递目标：${res.delivered_targets.join(', ')}`
+                ? `\n投递目标：${res.delivered_targets.map(formatDeliveredTarget).join('、')}`
                 : '';
             tg.showAlert((res.success ? '✅ ' : '⚠️ ') + (res.message || '') + targetsText);
         }
@@ -3393,6 +3615,15 @@
             if (!listEl) return;
 
             const items = data.items || [];
+            const summaryEl = document.getElementById('ops-logs-summary');
+            const hasFilter = Boolean(
+                (document.getElementById('ops-log-filter-severity')?.value || '').trim()
+                || (document.getElementById('ops-log-filter-server')?.value || '').trim()
+                || (document.getElementById('ops-log-filter-event')?.value || '').trim()
+            );
+            if (summaryEl && !hasFilter) {
+                summaryEl.textContent = data.total > 0 ? `近 30 天共 ${data.total} 条记录` : '近 30 天暂无运维告警';
+            }
             if (totalEl) {
                 totalEl.textContent = `共 ${data.total} 条（第 ${Math.floor(data.offset / data.limit) + 1} 页）`;
             }
@@ -3406,11 +3637,13 @@
 
             listEl.innerHTML = items.map(item => {
                 const sev = item.severity || 'warning';
+                const sevLabel = OPS_SEVERITY_LABELS[sev] || sev;
                 const badgeCls = sev === 'critical' ? 'badge-critical' : (sev === 'info' ? 'badge-info' : 'badge-warning');
                 const srvLabel = item.server_name ? ` · ${escapeHtml(item.server_name)}` : '';
+                const statusLabel = OPS_DELIVERY_STATUS_LABELS[item.delivery_status] || item.delivery_status;
                 const targetsText = (item.delivered_targets || []).length
-                    ? `投递: ${escapeHtml(item.delivered_targets.join(', '))}`
-                    : `状态: ${escapeHtml(item.delivery_status)}`;
+                    ? `已投递 (${item.delivered_targets.length} 个目标)`
+                    : `状态: ${escapeHtml(statusLabel)}`;
                 const errHtml = item.error_message
                     ? `<div class="item-subtitle" style="color:var(--destructive-text-color);">错误: ${escapeHtml(item.error_message)}</div>`
                     : '';
@@ -3418,11 +3651,11 @@
                     <div class="ops-log-item">
                         <div class="route-header" style="margin-bottom:4px;">
                             <span style="font-size:14px; font-weight:600;">${escapeHtml(item.title)}</span>
-                            <span class="route-badge ${badgeCls}">${escapeHtml(sev)}</span>
+                            <span class="route-badge ${badgeCls}">${escapeHtml(sevLabel)}</span>
                         </div>
                         <div class="item-subtitle" style="margin-top:2px; white-space:pre-wrap; word-break:break-word;">${escapeHtml(item.body_text)}</div>
                         <div class="item-subtitle" style="font-size:12px;">
-                            ${escapeHtml(formatAlertDateTime(item.created_at))} · <code>${escapeHtml(item.event_type)}</code>${srvLabel} · ${targetsText}
+                            ${escapeHtml(formatAlertDateTime(item.created_at))}${srvLabel} · ${targetsText}
                         </div>
                         ${errHtml}
                     </div>

@@ -37,12 +37,14 @@ async def _emit_nfo_failure(
     nfo_kind: str,
     error_message: str,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """当主应用已初始化时通过统一通知管线发射 NFO 生成异常告警（隔离测试安全跳过）。"""
     app = resolve_active_app()
     if app is None:
         return
     try:
+        source_scope = f"{server_id}:" if server_id is not None else ""
         await NotificationService(app).emit(
             NfoProcessFailedPayload(
                 target_path=target_path,
@@ -50,7 +52,8 @@ async def _emit_nfo_failure(
                 error_message=error_message,
                 server_name=server_name,
             ),
-            source_key=f"nfo:{target_path}",
+            server_id=server_id,
+            source_key=f"nfo:{source_scope}{target_path}",
         )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning("发射 NFO 告警通知失败: {}", exc)
@@ -216,6 +219,7 @@ async def _generate_and_save_nfo(
     file_path: Path,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> bool:
     """通用 NFO 生成与安全保存逻辑：先校验目标路径为 .nfo，再通过同目录临时文件原子写入"""
     kind = (
@@ -230,6 +234,7 @@ async def _generate_and_save_nfo(
             nfo_kind=kind,
             error_message=str(e),
             server_name=server_name,
+            server_id=server_id,
         )
         return False
 
@@ -241,6 +246,7 @@ async def _generate_and_save_nfo(
             nfo_kind=kind,
             error_message=f"未知或空的 NFO 模板类型: {template_name}",
             server_name=server_name,
+            server_id=server_id,
         )
         return False
 
@@ -261,6 +267,7 @@ async def _generate_and_save_nfo(
             nfo_kind=kind,
             error_message=str(e) or type(e).__name__,
             server_name=server_name,
+            server_id=server_id,
         )
         return False
 
@@ -348,6 +355,7 @@ async def create_series_nfo_from_resource(
     is_override: bool = True,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """从剧集资源对象创建 NFO"""
     if not series.path:
@@ -376,6 +384,7 @@ async def create_series_nfo_from_resource(
             nfo_kind="tvshow",
             error_message=str(e) or type(e).__name__,
             server_name=server_name,
+            server_id=server_id,
         )
         return
 
@@ -396,7 +405,9 @@ async def create_series_nfo_from_resource(
         "tmdb_id": series.tmdbId,
     }
 
-    await _generate_and_save_nfo("tvshow", context, nfo_path, server_name=server_name)
+    await _generate_and_save_nfo(
+        "tvshow", context, nfo_path, server_name=server_name, server_id=server_id
+    )
 
 
 async def create_episode_nfo_from_resource(
@@ -407,6 +418,7 @@ async def create_episode_nfo_from_resource(
     is_override: bool = True,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """从 API 资源对象创建单集 NFO"""
     if not episode.hasFile or not episode.episodeFile or not episode.episodeFile.path:
@@ -426,15 +438,20 @@ async def create_episode_nfo_from_resource(
             nfo_kind="episode",
             error_message=str(e) or type(e).__name__,
             server_name=server_name,
+            server_id=server_id,
         )
         return
-    await _generate_and_save_nfo("episode", context, nfo_path, server_name=server_name)
+    await _generate_and_save_nfo(
+        "episode", context, nfo_path, server_name=server_name, server_id=server_id
+    )
 
 
 async def rebuild_sonarr_metadata_task(
     sonarr_client: SonarrClient,
     tmdb_client: TmdbClient | None,
     tvdb_client: TvdbClient | None,
+    *,
+    server_id: int | None = None,
 ) -> None:
     """遍历 Sonarr 库并重建所有 NFO"""
     if not tmdb_client:
@@ -462,6 +479,7 @@ async def rebuild_sonarr_metadata_task(
                 tmdb_client,
                 tvdb_client,
                 server_name=sonarr_client.server_name,
+                server_id=server_id,
             )
 
             episodes = await sonarr_client.get_episode_by_series_id(series.id)
@@ -474,6 +492,7 @@ async def rebuild_sonarr_metadata_task(
                             tmdb_client,
                             tvdb_client,
                             server_name=sonarr_client.server_name,
+                            server_id=server_id,
                         )
                         await asyncio.sleep(0.2)
 
@@ -488,6 +507,7 @@ async def rebuild_sonarr_metadata_task(
             nfo_kind="tvshow",
             error_message=str(e) or type(e).__name__,
             server_name=sonarr_client.server_name,
+            server_id=server_id,
         )
 
 
@@ -497,10 +517,16 @@ async def create_series_nfo(
     tvdb: TvdbClient | None = None,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """Webhook: 创建剧集 NFO"""
     await create_series_nfo_from_resource(
-        payload.series, tmdb, tvdb, False, server_name=server_name
+        payload.series,
+        tmdb,
+        tvdb,
+        False,
+        server_name=server_name,
+        server_id=server_id,
     )
 
 
@@ -510,6 +536,7 @@ async def create_episode_nfo(
     tvdb: TvdbClient | None = None,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """Webhook: 创建单集 NFO"""
     if not payload.episodes or not payload.episodeFile:
@@ -527,9 +554,12 @@ async def create_episode_nfo(
             nfo_kind="episode",
             error_message=str(e) or type(e).__name__,
             server_name=server_name,
+            server_id=server_id,
         )
         return
-    await _generate_and_save_nfo("episode", context, nfo_path, server_name=server_name)
+    await _generate_and_save_nfo(
+        "episode", context, nfo_path, server_name=server_name, server_id=server_id
+    )
 
 
 async def handle_series_add_metadata(
@@ -537,10 +567,18 @@ async def handle_series_add_metadata(
     payload: SonarrWebhookSeriesAddPayload,
     tmdb: TmdbClient,
     tvdb: TvdbClient | None = None,
+    *,
+    server_id: int | None = None,
 ) -> None:
     """处理剧集添加事件"""
     async with _temporary_ignore_file(Path(payload.series.path)):
-        await create_series_nfo(payload, tmdb, tvdb, server_name=client.server_name)
+        await create_series_nfo(
+            payload,
+            tmdb,
+            tvdb,
+            server_name=client.server_name,
+            server_id=server_id,
+        )
         await asyncio.sleep(60)
 
         logger.info("正在为新添加的剧集 {} 检查现有集数...", payload.series.title)
@@ -560,6 +598,7 @@ async def handle_series_add_metadata(
                             tvdb,
                             False,
                             server_name=client.server_name,
+                            server_id=server_id,
                         )
                         count += 1
 
@@ -576,6 +615,7 @@ async def handle_series_add_metadata(
                 nfo_kind="episode",
                 error_message=str(e) or type(e).__name__,
                 server_name=client.server_name,
+                server_id=server_id,
             )
 
 
@@ -586,6 +626,7 @@ async def create_movie_nfo(
     is_override: bool = True,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """生成电影 NFO（仅允许写入独立 .nfo 文件）"""
     try:
@@ -597,6 +638,7 @@ async def create_movie_nfo(
             nfo_kind="movie",
             error_message=str(e),
             server_name=server_name,
+            server_id=server_id,
         )
         return
     if not tmdb:
@@ -615,6 +657,7 @@ async def create_movie_nfo(
             nfo_kind="movie",
             error_message=str(e) or type(e).__name__,
             server_name=server_name,
+            server_id=server_id,
         )
         return
 
@@ -633,7 +676,9 @@ async def create_movie_nfo(
         "imdb_id": movie_info.imdb_id if movie_info else None,
         "tmdb_id": tmdb_id,
     }
-    await _generate_and_save_nfo("movie", context, nfo_path, server_name=server_name)
+    await _generate_and_save_nfo(
+        "movie", context, nfo_path, server_name=server_name, server_id=server_id
+    )
 
 
 def _iter_video_files(folder_path: Path) -> list[Path]:
@@ -650,6 +695,7 @@ async def handle_movie_add_metadata(
     tmdb: TmdbClient | None,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """处理电影添加事件"""
     folder_path = Path(payload.movie.folderPath)
@@ -664,6 +710,7 @@ async def handle_movie_add_metadata(
                     tmdb,
                     False,
                     server_name=server_name,
+                    server_id=server_id,
                 )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("为新电影生成 NFO 失败: {}", e)
@@ -672,6 +719,7 @@ async def handle_movie_add_metadata(
                 nfo_kind="movie",
                 error_message=str(e) or type(e).__name__,
                 server_name=server_name,
+                server_id=server_id,
             )
 
 
@@ -680,6 +728,7 @@ async def create_movie_nfo_from_resource(
     tmdb: TmdbClient,
     *,
     server_name: str = "",
+    server_id: int | None = None,
 ) -> None:
     """从资源创建电影 NFO"""
     if not movie.path or movie.tmdbId is None:
@@ -694,6 +743,7 @@ async def create_movie_nfo_from_resource(
                     movie.tmdbId,
                     tmdb,
                     server_name=server_name,
+                    server_id=server_id,
                 )
         except OSError as e:
             logger.error("为电影生成 NFO 失败: {}", e)
@@ -702,11 +752,15 @@ async def create_movie_nfo_from_resource(
                 nfo_kind="movie",
                 error_message=str(e) or type(e).__name__,
                 server_name=server_name,
+                server_id=server_id,
             )
 
 
 async def rebuild_radarr_metadata_task(
-    radarr_client: RadarrClient, tmdb_client: TmdbClient | None
+    radarr_client: RadarrClient,
+    tmdb_client: TmdbClient | None,
+    *,
+    server_id: int | None = None,
 ) -> None:
     """遍历 Radarr 库并重建所有 NFO"""
     if not tmdb_client:
@@ -738,7 +792,10 @@ async def rebuild_radarr_metadata_task(
                 movie.movieFile.path = mapped_path
 
             await create_movie_nfo_from_resource(
-                movie, tmdb_client, server_name=radarr_client.server_name
+                movie,
+                tmdb_client,
+                server_name=radarr_client.server_name,
+                server_id=server_id,
             )
 
         logger.info("Radarr ({}) 元数据重建完成。", radarr_client.server_name)
@@ -749,4 +806,5 @@ async def rebuild_radarr_metadata_task(
             nfo_kind="movie",
             error_message=str(e) or type(e).__name__,
             server_name=radarr_client.server_name,
+            server_id=server_id,
         )

@@ -29,6 +29,7 @@ from core.config import get_settings
 from core.telegram_manager import TelethonClientWarper
 from models.events import (
     DEFAULT_GLOBAL_ROUTE_TARGETS,
+    SERVER_OWNED_ROUTE_CATEGORIES,
     NotificationAudience,
     NotificationEvent,
     NotificationRouteCategory,
@@ -186,34 +187,36 @@ def resolve_server_route_precedence(
     legacy_topic_id: int | None,
     category: NotificationRouteCategory,
 ) -> tuple[str, Any | None]:
-    """按单服覆盖 -> 全局非禁用路由 -> 遗留话题 -> 全局禁用路由的优先级解析生效来源。
+    """按单服独立归属或可继承全局策略解析单台服务器的通知路由生效来源。
+
+    规则：
+        - ``media_library``、``media_request`` 与单服 ``ops_alert`` 不设全局总开关：
+          仅按「单服显式配置 -> 遗留话题（仅入库/求片）-> 默认关闭 (default_disabled)」解析，绝不回退全局路由；
+        - ``account_lifecycle`` 支持单服覆盖，未配置单服覆盖时继承全局默认路由。
 
     Args:
-        server_override: 单服覆盖路由对象或 DTO。
+        server_override: 单服通知路由对象或 DTO。
         global_route: 全局默认路由对象或 DTO。
         legacy_topic_id: ``ServerInstance`` 上的遗留话题 ID。
         category: 当前通知路由类别。
 
     Returns:
-        ``(source, chosen_route)``，其中 ``source`` 为 ``server_override``、``global`` 或 ``legacy_topic``。
+        ``(source, chosen_route)``，其中 ``source`` 为 ``server_override``、``legacy_topic``、
+        ``default_disabled`` 或 ``global``。
     """
     if server_override is not None:
         return "server_override", server_override
-    if (
-        global_route is not None
-        and NotificationTargetType(global_route.target_type)
-        != NotificationTargetType.DISABLED
-    ):
-        return "global", global_route
-    if (
-        category
-        in (
-            NotificationRouteCategory.MEDIA_LIBRARY,
-            NotificationRouteCategory.MEDIA_REQUEST,
-        )
-        and legacy_topic_id
-    ):
-        return "legacy_topic", None
+    if category in SERVER_OWNED_ROUTE_CATEGORIES:
+        if (
+            category
+            in (
+                NotificationRouteCategory.MEDIA_LIBRARY,
+                NotificationRouteCategory.MEDIA_REQUEST,
+            )
+            and legacy_topic_id
+        ):
+            return "legacy_topic", None
+        return "default_disabled", None
     return "global", global_route
 
 
@@ -659,19 +662,20 @@ class NotificationRuntime:
         )
         source_key = f"tg_degraded:{job.target.label}"
         try:
+            # 投递降级属于机器人全局通道故障，统一路由至系统全局 ops_alert（不依赖单服告警开关）
             factory = self.resolve_session_factory(job.fallback_session_factory)
             if factory is not None:
                 async with factory() as diag_session:
                     await NotificationService(self.app).emit(
                         payload,
-                        server_id=job.server_id,
+                        server_id=None,
                         source_key=source_key,
                         session=diag_session,
                     )
             else:
                 await NotificationService(self.app).emit(
                     payload,
-                    server_id=job.server_id,
+                    server_id=None,
                     source_key=source_key,
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -925,32 +929,53 @@ class NotificationService:
         category: NotificationRouteCategory,
         server_id: int | None,
     ) -> _ResolvedRouteConfig | None:
-        """按单服覆盖 -> 全局非禁用路由 -> 遗留话题字段 -> 全局禁用路由的顺序查询生效配置。"""
+        """按作用域解析通知路由配置：单服独立类别不回退全局，未配置时默认关闭。"""
         route_repo = NotificationRouteRepository(db)
-        server_route = None
-        if server_id is not None:
-            server_route = await route_repo.get_route(
-                scope_type=NotificationRouteScope.SERVER,
+
+        if server_id is None:
+            # 媒体入库与求片审核不设全局总开关，无 server_id 时默认关闭
+            if (
+                category in SERVER_OWNED_ROUTE_CATEGORIES
+                and category != NotificationRouteCategory.OPS_ALERT
+            ):
+                return _ResolvedRouteConfig(
+                    target_type=NotificationTargetType.DISABLED,
+                    target_chat_id=None,
+                    target_topic_id=None,
+                    escalate_admin_dm=False,
+                    enabled_events=frozenset(),
+                )
+            global_route = await route_repo.get_route(
+                scope_type=NotificationRouteScope.GLOBAL,
                 category=category,
-                server_id=server_id,
+                server_id=None,
+                fresh=True,
+            )
+            if global_route is not None:
+                return self._route_to_resolved_config(global_route)
+            return None
+
+        server_route = await route_repo.get_route(
+            scope_type=NotificationRouteScope.SERVER,
+            category=category,
+            server_id=server_id,
+            fresh=True,
+        )
+
+        # 单服独立类别（入库、求片、服务器运维告警）严禁回退全局路由
+        global_route = None
+        if category not in SERVER_OWNED_ROUTE_CATEGORIES:
+            global_route = await route_repo.get_route(
+                scope_type=NotificationRouteScope.GLOBAL,
+                category=category,
+                server_id=None,
                 fresh=True,
             )
 
-        global_route = await route_repo.get_route(
-            scope_type=NotificationRouteScope.GLOBAL,
-            category=category,
-            server_id=None,
-            fresh=True,
-        )
         legacy_topic: int | None = None
-        if (
-            server_route is None
-            and server_id is not None
-            and category
-            in (
-                NotificationRouteCategory.MEDIA_LIBRARY,
-                NotificationRouteCategory.MEDIA_REQUEST,
-            )
+        if server_route is None and category in (
+            NotificationRouteCategory.MEDIA_LIBRARY,
+            NotificationRouteCategory.MEDIA_REQUEST,
         ):
             server = await ServerRepository(db).get_by_id(server_id)
             if server is not None:
@@ -966,6 +991,14 @@ class NotificationService:
             legacy_topic_id=legacy_topic,
             category=category,
         )
+        if source == "default_disabled":
+            return _ResolvedRouteConfig(
+                target_type=NotificationTargetType.DISABLED,
+                target_chat_id=None,
+                target_topic_id=None,
+                escalate_admin_dm=False,
+                enabled_events=frozenset(),
+            )
         if source == "legacy_topic" and legacy_topic:
             return self._synthesize_legacy_topic_route(int(legacy_topic))
         if chosen is not None:
@@ -980,7 +1013,7 @@ class NotificationService:
         session: AsyncSession | None,
         fallback_factory: async_sessionmaker[AsyncSession] | None,
     ) -> _ResolvedRouteConfig:
-        """按单服覆盖 -> 全局默认 -> 遗留话题兜底 -> 内置默认优先级解析路由规则。"""
+        """解析生效通知路由规则；单服独立类别缺省为禁用，其余全局类别回退内置默认值。"""
         resolved: _ResolvedRouteConfig | None = None
         if session is not None:
             try:
@@ -1001,8 +1034,14 @@ class NotificationService:
                     logger.warning("查询通知路由失败，回退默认策略: {}", exc)
 
         if resolved is None:
+            if server_id is not None and category in SERVER_OWNED_ROUTE_CATEGORIES:
+                default_target = NotificationTargetType.DISABLED
+            else:
+                default_target = DEFAULT_GLOBAL_ROUTE_TARGETS.get(
+                    category, NotificationTargetType.DISABLED
+                )
             return _ResolvedRouteConfig(
-                target_type=DEFAULT_GLOBAL_ROUTE_TARGETS[category],
+                target_type=default_target,
                 target_chat_id=None,
                 target_topic_id=None,
                 escalate_admin_dm=False,
