@@ -882,6 +882,36 @@ class LibraryUpdatedEvent(BaseWebhookEvent):
 
 
 # ============================================================================
+# 媒体项交互事件 (Item Interaction Events)
+# ============================================================================
+
+
+class _ItemUserEventBase(BaseWebhookEvent):
+    """用户与媒体项交互事件的公共基类"""
+
+    item: BaseItemDto = Field(alias="Item")
+    user: NotificationUserDto = Field(alias="User")
+
+
+class ItemMarkPlayedEvent(_ItemUserEventBase):
+    """item.markplayed 事件 - 用户将媒体标记为已播放"""
+
+    event: Literal["item.markplayed"] = Field(alias="Event")
+
+
+class ItemMarkUnplayedEvent(_ItemUserEventBase):
+    """item.markunplayed 事件 - 用户将媒体标记为未播放"""
+
+    event: Literal["item.markunplayed"] = Field(alias="Event")
+
+
+class ItemRateEvent(_ItemUserEventBase):
+    """item.rate 事件 - 用户收藏或取消收藏媒体"""
+
+    event: Literal["item.rate"] = Field(alias="Event")
+
+
+# ============================================================================
 # 用户事件 (User Events)
 # ============================================================================
 
@@ -1154,6 +1184,10 @@ EmbyPayload = Annotated[
     | LibraryNewEvent
     | LibraryDeletedEvent
     | LibraryUpdatedEvent
+    # 媒体项交互事件
+    | ItemMarkPlayedEvent
+    | ItemMarkUnplayedEvent
+    | ItemRateEvent
     # 用户事件
     | UserAuthenticatedEvent
     | UserLockedOutEvent
@@ -1209,6 +1243,9 @@ __all__ = [
     "ExternalUrl",
     "GenericWebhookEvent",
     "ImageType",
+    "ItemMarkPlayedEvent",
+    "ItemMarkUnplayedEvent",
+    "ItemRateEvent",
     "KeepUntil",
     "LibraryDeletedEvent",
     "LibraryNewEvent",
